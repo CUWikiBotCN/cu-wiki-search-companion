@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import { focusEditorElement } from '../editor';
 import type { NamespaceInfo } from '../types';
 import type {
   ContentSearchResult,
@@ -234,7 +235,7 @@ export class SearchPanel {
     const returnFocus = this.returnFocus;
     this.returnFocus = undefined;
     if (returnFocus?.isConnected && !returnFocus.matches(':disabled')) {
-      returnFocus.focus();
+      focusEditorElement(returnFocus);
     } else {
       this.toggle.focus();
     }

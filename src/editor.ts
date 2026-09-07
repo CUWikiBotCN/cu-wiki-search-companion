@@ -8,6 +8,13 @@ interface CodeMirrorEditor {
 
 type CodeMirrorElement = HTMLElement & { CodeMirror?: CodeMirrorEditor };
 
+export function focusEditorElement(element: HTMLElement): void {
+  const codeMirror = element.closest<CodeMirrorElement>('.CodeMirror')?.CodeMirror;
+  // CodeMirror restores its native selection before focusing a contenteditable input.
+  if (codeMirror) codeMirror.focus();
+  else element.focus();
+}
+
 export function insertAtEditorSelection(text: string): 'codemirror' | 'textarea' {
   const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1');
   if (!textarea) throw new Error('未找到维基文本编辑器');
