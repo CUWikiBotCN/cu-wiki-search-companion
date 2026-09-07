@@ -495,11 +495,19 @@ SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过�
 
 新增三组关键回归覆盖：
 
-- `tests/fact-write-permission.test.ts`：显式/定时写入在活跃标签遇到事实格式升级时拒绝；排队取得锁后重新判断；派生版本差异不反复改契约；启动只读检查、锁内 legacy 登记、无锁不写，以及损坏/旧/未来契约的安全失败。
-- `tests/page-search-runtime.test.ts`：轻量初始化、同模式准备合并、远端 settlement 失败后的本地可用与重试、改名/内容替换/tombstone 重放、重建竞态的旧 handle 保护、无事实同步的本地重建和失败保留旧结果，以及未加载派生索引时强制同步不额外物化全库正文。
-- `tests/runtime-composition.test.ts`：真实入口的正常启动、数据库未就绪时早点击、无 Web Locks 时本地可搜索、隐藏标签广播延迟刷新，以及正文/Lua 按模式隔离。
+- `tests/integration/fact-write-permission.test.ts`：显式/定时写入在活跃标签遇到事实格式升级时拒绝；排队取得锁后重新判断；派生版本差异不反复改契约；启动只读检查、锁内 legacy 登记、无锁不写，以及损坏/旧/未来契约的安全失败。
+- `tests/runtime/page-search-runtime.test.ts`：轻量初始化、同模式准备合并、远端 settlement 失败后的本地可用与重试、改名/内容替换/tombstone 重放、重建竞态的旧 handle 保护、无事实同步的本地重建和失败保留旧结果，以及未加载派生索引时强制同步不额外物化全库正文。
+- `tests/integration/runtime-composition.test.ts`：真实入口的正常启动、数据库未就绪时早点击、无 Web Locks 时本地可搜索、隐藏标签广播延迟刷新，以及正文/Lua 按模式隔离。
 
-### 13.1 发布自动化不变量
+### 13.1 测试文件归属与执行边界
+
+- `src/` 只放生产实现，不再放 `*.test.ts`。Vitest 仅发现 `tests/**/*.test.ts`，普通测试不得依赖真实浏览器、站点账号或联网维护。
+- 单元测试放 `tests/<所属源码模块>/`，如 `tests/analyzer/`、`tests/runtime/`、`tests/search/`；对应 `src/` 根模块的测试可位于 `tests/` 根目录。文件名说明被测模块或行为，遇到同名套件应明确区分，不直接覆盖或合并断言。
+- 跨模块接线和一致性测试放 `tests/integration/`，构建元数据和工具契约放 `tests/tooling/`；共享辅助代码放 `tests/helpers/`，不使用 `.test.ts` 后缀。没有多个真实调用方时不要提前抽取辅助框架。
+- `scripts/` 保留安装、诊断、基准及真实浏览器验收工具，不作为 Vitest 测试目录。脚本应说明前提、网络或持久数据影响及清理范围；只有对应验收明确授权时才运行，不在日常单测中操作真实浏览器或数据库。
+- 移动测试只改路径和导入；独立提交并对照迁移前的测试文件数、用例数及发现范围，确认没有被新的 include 静默遗漏。文档同步当前路径，历史验收记录保留其原有时间点。
+
+### 13.2 发布自动化不变量
 
 push 工作流先在只读权限 job 中安装锁定依赖、运行测试和生产构建，再生成带 SHA-256 的资产。main 的滚动 Nightly job 按同一 ref 排队而不取消正在发布的任务；既有 release 的更新顺序固定为“上传已验证资产 → 成功编辑说明与 target → 最后 PATCH rolling tag”。若 release edit 失败，tag 必须仍指向上一次成功 Nightly，使下一次提交列表的比较基线不被污染。回归测试会在临时 Git 历史上实际执行这段 workflow shell，并用有状态的假 gh 验证失败与重试顺序。
 
