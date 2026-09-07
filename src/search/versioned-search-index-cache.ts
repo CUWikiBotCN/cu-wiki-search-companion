@@ -552,7 +552,8 @@ export class VersionedSearchIndexCache {
       const estimate = await this.storage.estimate();
       if (estimate.quota === undefined || estimate.usage === undefined) return true;
       return estimate.quota - estimate.usage >= payloadBytes * 1.2;
-    } catch {
+    } catch (error) {
+      console.warn('[CU Wiki Search] storage quota estimate failed; assuming snapshots may be saved', error);
       return true;
     }
   }

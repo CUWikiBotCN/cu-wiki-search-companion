@@ -42,6 +42,7 @@ import {
 } from './search/title-index';
 import { WikiSearchDatabase } from './storage/database';
 import { dataRulesPreference } from './storage/data-rules-preference';
+import { highlightPreference } from './storage/highlight-preference';
 import {
   FactWriteCompatibilityError,
   inspectVersionContract,
@@ -283,6 +284,11 @@ async function start(): Promise<void> {
       );
     },
     saveDataCodeRules: (source) => saveDataCodeRules(source),
+    saveHighlightPreferences: (preferences) => {
+      void highlightPreference.set(preferences).catch((error: unknown) => {
+        console.warn('[CU Wiki Search] failed to save highlight preferences', error);
+      });
+    },
     loadMaintenance: () => maintenance.inspect(),
     rebuildSearchIndexes: () => rebuildSearchIndexes(),
     rebuildContentQueue: async () => {
@@ -429,6 +435,7 @@ async function start(): Promise<void> {
     }
   }
   panel.setDataCodeRules(dataCodeRulesSource, DEFAULT_DATA_CODE_RULES);
+  panel.setHighlightPreferences(await highlightPreference.get());
   const committedReconciliationRefresh = new CommittedReconciliationRefresh({
     readState: () => readReconciliationSyncState(database),
     lastAppliedSequence: () => pageSearchRuntime?.state.throughLocalSeq ?? 0,

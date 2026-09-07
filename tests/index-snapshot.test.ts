@@ -943,6 +943,28 @@ describe('VersionedSearchIndexCache', () => {
     database.close();
     await database.delete();
   });
+
+  it('publishes with a diagnostic warning when the quota estimate rejects', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    await database.pages.put(page(1, '配额未知页面', '正文', 'wikitext', 1));
+    await database.syncState.put({ key: 'local-sequence', value: 1 });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const failingCache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => { throw new Error('estimate unavailable'); } },
+    });
+    const handle = await failingCache.restoreOrRebuild('title', analyzer);
+
+    expect(await failingCache.publish(handle)).toMatchObject({ status: 'published' });
+    expect(warning).toHaveBeenCalledWith(
+      '[CU Wiki Search] storage quota estimate failed; assuming snapshots may be saved',
+      expect.any(Error),
+    );
+
+    warning.mockRestore();
+    database.close();
+    await database.delete();
+  });
 });
 
 function page(

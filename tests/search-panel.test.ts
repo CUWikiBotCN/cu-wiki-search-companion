@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // @vitest-environment jsdom
 
+import type { ContentSearchResult } from '../src/search/content-index';
 import type { LuaModuleSearchResult } from '../src/search/lua-module-index';
 import type { TitleSearchResult } from '../src/search/title-index';
 import { SearchPanel } from '../src/ui/search-panel';
@@ -36,6 +37,7 @@ describe('SearchPanel file resource mode', () => {
       refresh: vi.fn(),
       refreshFiles: vi.fn(),
       saveDataCodeRules: vi.fn(async () => undefined),
+      saveHighlightPreferences: vi.fn(),
     };
     new SearchPanel(callbacks);
     const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
@@ -84,6 +86,7 @@ describe('SearchPanel Lua module mode', () => {
       refresh: vi.fn(),
       refreshFiles: vi.fn(),
       saveDataCodeRules: vi.fn(async () => undefined),
+      saveHighlightPreferences: vi.fn(),
     };
     new SearchPanel(callbacks);
     const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
@@ -133,7 +136,7 @@ describe('SearchPanel lazy search preparation', () => {
     expect(root.querySelector('.results')?.textContent).toContain(
       '输入中文名、英文代码片段或已配置字段值查找代码',
     );
-    expect(root.querySelector('.settings-help')?.textContent).toContain(
+    expect(root.querySelector('.settings .settings-help')?.textContent).toContain(
       '英文 id 本身始终可搜索',
     );
 
@@ -164,6 +167,7 @@ describe('SearchPanel local maintenance', () => {
       refresh: vi.fn(),
       refreshFiles: vi.fn(),
       saveDataCodeRules: vi.fn(async () => undefined),
+      saveHighlightPreferences: vi.fn(),
       loadMaintenance: vi.fn(async () => ({
         counts: { pages: 3, files: 1, dataCodes: 2, contentSources: 2, luaSources: 1 },
         jobs: { done: 2, pending: 1, running: 0, failed: 0 },
@@ -523,6 +527,219 @@ describe('SearchPanel keyboard lifecycle', () => {
   });
 });
 
+describe('SearchPanel full-text hit highlighting', () => {
+  const contentResult: ContentSearchResult = {
+    kind: 'content',
+    id: 7,
+    title: '紧急救治指南',
+    namespace: 0,
+    namespaceName: '（主）',
+    snippet: '使用紧急救治手段。',
+    score: 10,
+    highlights: [{ start: 2, end: 6 }],
+    titleHighlights: [{ start: 0, end: 4 }],
+  };
+
+  function mount(overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {}): {
+    callbacks: ConstructorParameters<typeof SearchPanel>[0];
+    panel: SearchPanel;
+    root: ShadowRoot;
+    mode: HTMLSelectElement;
+    input: HTMLInputElement;
+    host: HTMLDivElement;
+  } {
+    const callbacks = maintenanceCallbacks(overrides);
+    const panel = new SearchPanel(callbacks);
+    const host = document.querySelector<HTMLDivElement>('#cu-wiki-search-host');
+    const root = host?.shadowRoot;
+    const input = root?.querySelector<HTMLInputElement>('.query');
+    const mode = root?.querySelector<HTMLSelectElement>('.mode');
+    if (!host || !root || !input || !mode) throw new Error('搜索面板没有挂载');
+    return { callbacks, panel, root, mode, input, host };
+  }
+
+  it('shows highlight settings only in content mode with correct defaults', () => {
+    const { root, mode } = mount();
+    const section = root.querySelector<HTMLElement>('.highlight-settings');
+    if (!section) throw new Error('缺少高亮设置区');
+
+    expect(section.hidden).toBe(true);
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+    expect(section.hidden).toBe(false);
+    expect(root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked).toBe(false);
+    expect(root.querySelector<HTMLInputElement>('.content-highlight-toggle')?.checked).toBe(true);
+    expect(root.querySelector<HTMLInputElement>('.title-highlight-color')?.value).toBe('#aee2ff');
+    expect(root.querySelector<HTMLInputElement>('.content-highlight-color')?.value).toBe('#fff3a3');
+
+    mode.value = 'title';
+    mode.dispatchEvent(new Event('change'));
+    expect(section.hidden).toBe(true);
+  });
+
+  it('renders snippet marks by default and leaves the title plain', () => {
+    const { callbacks, root, mode, input } = mount({
+      searchContent: vi.fn(() => [contentResult]),
+    });
+
+    input.value = '紧急救治';
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+
+    const title = root.querySelector<HTMLElement>('.result-title');
+    const namespace = root.querySelector<HTMLElement>('.result-namespace');
+    if (!title || !namespace) throw new Error('结果行没有渲染');
+    expect(title.textContent).toBe('紧急救治指南');
+    expect(title.querySelectorAll('mark')).toHaveLength(0);
+    expect(namespace.textContent).toBe('（主） · 使用紧急救治手段。');
+    const marks = namespace.querySelectorAll('mark');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]?.textContent).toBe('紧急救治');
+    expect(callbacks.saveHighlightPreferences).not.toHaveBeenCalled();
+  });
+
+  it('applies toggles, persists preferences, and re-renders marks', () => {
+    const { callbacks, root, mode, input } = mount({
+      searchContent: vi.fn(() => [contentResult]),
+    });
+
+    input.value = '紧急救治';
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+
+    const titleToggle = root.querySelector<HTMLInputElement>('.title-highlight-toggle');
+    const contentToggle = root.querySelector<HTMLInputElement>('.content-highlight-toggle');
+    if (!titleToggle || !contentToggle) throw new Error('缺少高亮开关');
+
+    titleToggle.checked = true;
+    titleToggle.dispatchEvent(new Event('change'));
+    expect(callbacks.saveHighlightPreferences).toHaveBeenLastCalledWith({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#aee2ff',
+      contentColor: '#fff3a3',
+    });
+    const title = root.querySelector<HTMLElement>('.result-title');
+    expect(title?.querySelectorAll('mark')).toHaveLength(1);
+    expect(title?.querySelector('mark')?.textContent).toBe('紧急救治');
+
+    contentToggle.checked = false;
+    contentToggle.dispatchEvent(new Event('change'));
+    expect(callbacks.saveHighlightPreferences).toHaveBeenLastCalledWith({
+      titleEnabled: true,
+      contentEnabled: false,
+      titleColor: '#aee2ff',
+      contentColor: '#fff3a3',
+    });
+    const namespace = root.querySelector<HTMLElement>('.result-namespace');
+    expect(namespace?.querySelectorAll('mark')).toHaveLength(0);
+    expect(namespace?.textContent).toBe('（主） · 使用紧急救治手段。');
+  });
+
+  it('applies colors as CSS custom properties and persists on change only', () => {
+    const { callbacks, panel, root, mode, host, input } = mount({
+      searchContent: vi.fn(() => [contentResult]),
+    });
+
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#aee2ff',
+      contentColor: '#fff3a3',
+    });
+    expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#aee2ff');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#fff3a3');
+
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+    input.value = '紧急救治';
+    panel.refreshResults();
+    const result = root.querySelector<HTMLElement>('.result');
+    const titleMark = root.querySelector<HTMLElement>('.result-title mark');
+    const contentMark = root.querySelector<HTMLElement>('.result-namespace mark');
+    const titleColor = root.querySelector<HTMLInputElement>('.title-highlight-color');
+    const contentColor = root.querySelector<HTMLInputElement>('.content-highlight-color');
+    if (!result || !titleMark || !contentMark || !titleColor || !contentColor) {
+      throw new Error('高亮结果或颜色选择器没有挂载');
+    }
+
+    titleColor.value = '#c0ffec';
+    titleColor.dispatchEvent(new Event('input'));
+    expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#c0ffec');
+    expect(callbacks.saveHighlightPreferences).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLElement>('.result')).toBe(result);
+    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(titleMark);
+    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(contentMark);
+
+    titleColor.dispatchEvent(new Event('change'));
+    expect(callbacks.saveHighlightPreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ titleColor: '#c0ffec' }),
+    );
+
+    contentColor.value = '#ff8800';
+    contentColor.dispatchEvent(new Event('input'));
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ff8800');
+    expect(callbacks.saveHighlightPreferences).toHaveBeenCalledTimes(1);
+    expect(root.querySelector<HTMLElement>('.result')).toBe(result);
+    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(titleMark);
+    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(contentMark);
+
+    contentColor.dispatchEvent(new Event('change'));
+    expect(callbacks.saveHighlightPreferences).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contentColor: '#ff8800' }),
+    );
+  });
+
+  it('reflects injected preferences in controls and rendering', () => {
+    const { panel, root, mode, input, host } = mount({
+      searchContent: vi.fn(() => [contentResult]),
+    });
+
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: false,
+      titleColor: '#c0ffec',
+      contentColor: '#ffd6a5',
+    });
+    expect(root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked).toBe(true);
+    expect(root.querySelector<HTMLInputElement>('.content-highlight-toggle')?.checked).toBe(false);
+    expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#c0ffec');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ffd6a5');
+
+    input.value = '紧急救治';
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+    expect(root.querySelector<HTMLElement>('.result-title')?.querySelectorAll('mark')).toHaveLength(1);
+    expect(root.querySelector<HTMLElement>('.result-namespace')?.querySelectorAll('mark')).toHaveLength(0);
+  });
+
+  it('renders results without highlight data as plain text', () => {
+    const plain: ContentSearchResult = {
+      kind: 'content',
+      id: 9,
+      title: '普通页面',
+      namespace: 0,
+      namespaceName: '（主）',
+      snippet: '普通正文内容。',
+      score: 1,
+    };
+    const { root, mode, input } = mount({
+      searchContent: vi.fn(() => [plain]),
+    });
+
+    input.value = '普通';
+    mode.value = 'content';
+    mode.dispatchEvent(new Event('change'));
+
+    expect(root.querySelectorAll('.result-title mark')).toHaveLength(0);
+    expect(root.querySelectorAll('.result-namespace mark')).toHaveLength(0);
+    expect(root.querySelector<HTMLElement>('.result-title')?.textContent).toBe('普通页面');
+    expect(root.querySelector<HTMLElement>('.result-namespace')?.textContent).toBe(
+      '（主） · 普通正文内容。',
+    );
+  });
+});
+
 function maintenanceCallbacks(
   overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {},
 ): ConstructorParameters<typeof SearchPanel>[0] {
@@ -543,6 +760,7 @@ function maintenanceCallbacks(
     refresh: vi.fn(),
     refreshFiles: vi.fn(),
     saveDataCodeRules: vi.fn(async () => undefined),
+    saveHighlightPreferences: vi.fn(),
     loadMaintenance: vi.fn(async () => ({
       counts: { pages: 0, files: 0, dataCodes: 0, contentSources: 0, luaSources: 0 },
       jobs: { done: 0, pending: 0, running: 0, failed: 0 },

@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { NamespaceInfo } from '../types';
-import type { ContentSearchResult } from '../search/content-index';
+import type {
+  ContentSearchResult,
+  SearchTextHighlight,
+} from '../search/content-index';
 import type { DataCodeSearchResult } from '../search/data-code-index';
 import type {
   LuaModuleSearchResult,
   LuaSymbolKind,
 } from '../search/lua-module-index';
 import type { TitleSearchResult } from '../search/title-index';
+import type {
+  HighlightPreferences,
+} from '../storage/highlight-preference';
+import { DEFAULT_HIGHLIGHT_PREFERENCES } from '../storage/highlight-preference';
 import type {
   LocalDataDiagnostics,
   PersistenceRequestResult,
@@ -48,6 +55,7 @@ export interface SearchPanelCallbacks {
   refresh(): void;
   refreshFiles(): void;
   saveDataCodeRules(source: string): Promise<void>;
+  saveHighlightPreferences(preferences: HighlightPreferences): void;
   loadMaintenance?(): Promise<LocalDataDiagnostics>;
   rebuildSearchIndexes?(): Promise<void | MaintenanceActionFeedback>;
   rebuildContentQueue?(): Promise<void>;
@@ -81,9 +89,17 @@ export class SearchPanel {
   private readonly configure: HTMLButtonElement;
   private readonly settings: HTMLElement;
   private readonly dataRules: HTMLTextAreaElement;
+  private readonly highlightSettings: HTMLElement;
+  private readonly titleHighlightToggle: HTMLInputElement;
+  private readonly contentHighlightToggle: HTMLInputElement;
+  private readonly titleHighlightColor: HTMLInputElement;
+  private readonly contentHighlightColor: HTMLInputElement;
   private readonly maintenance: HTMLElement;
   private readonly maintenanceOutput: HTMLElement;
   private defaultDataRules = '';
+  private highlightPreferences: HighlightPreferences = {
+    ...DEFAULT_HIGHLIGHT_PREFERENCES,
+  };
   private results: SearchPanelResult[] = [];
   private selectedIndex = -1;
   private insertMode = true;
@@ -110,10 +126,17 @@ export class SearchPanel {
     this.configure = this.requireElement<HTMLButtonElement>('.configure');
     this.settings = this.requireElement<HTMLElement>('.settings');
     this.dataRules = this.requireElement<HTMLTextAreaElement>('.data-rules');
+    this.highlightSettings = this.requireElement<HTMLElement>('.highlight-settings');
+    this.titleHighlightToggle = this.requireElement<HTMLInputElement>('.title-highlight-toggle');
+    this.contentHighlightToggle = this.requireElement<HTMLInputElement>('.content-highlight-toggle');
+    this.titleHighlightColor = this.requireElement<HTMLInputElement>('.title-highlight-color');
+    this.contentHighlightColor = this.requireElement<HTMLInputElement>('.content-highlight-color');
     this.maintenance = this.requireElement<HTMLElement>('.maintenance');
     this.maintenanceOutput = this.requireElement<HTMLElement>('.maintenance-output');
     this.bindEvents();
     this.updateModePresentation();
+    this.syncHighlightControls();
+    this.applyHighlightColors();
   }
 
   setStatus(message: string, tone: 'normal' | 'error' | 'success' = 'normal'): void {
@@ -140,6 +163,13 @@ export class SearchPanel {
   setDataCodeRules(source: string, defaultSource: string): void {
     this.dataRules.value = source;
     this.defaultDataRules = defaultSource;
+  }
+
+  setHighlightPreferences(preferences: HighlightPreferences): void {
+    this.highlightPreferences = { ...preferences };
+    this.syncHighlightControls();
+    this.applyHighlightColors();
+    this.renderResults();
   }
 
   setStartupFailure(message: string, reload: () => void): void {
@@ -210,6 +240,28 @@ export class SearchPanel {
       this.dataRules.value = this.defaultDataRules;
       void this.saveDataRules(this.defaultDataRules);
     });
+    this.titleHighlightToggle.addEventListener('change', () => {
+      this.highlightPreferences.titleEnabled = this.titleHighlightToggle.checked;
+      this.applyHighlightPreferences();
+    });
+    this.contentHighlightToggle.addEventListener('change', () => {
+      this.highlightPreferences.contentEnabled = this.contentHighlightToggle.checked;
+      this.applyHighlightPreferences();
+    });
+    this.titleHighlightColor.addEventListener('input', () => {
+      this.highlightPreferences.titleColor = this.titleHighlightColor.value;
+      this.applyHighlightColors();
+    });
+    this.titleHighlightColor.addEventListener('change', () =>
+      this.persistHighlightPreferences(),
+    );
+    this.contentHighlightColor.addEventListener('input', () => {
+      this.highlightPreferences.contentColor = this.contentHighlightColor.value;
+      this.applyHighlightColors();
+    });
+    this.contentHighlightColor.addEventListener('change', () =>
+      this.persistHighlightPreferences(),
+    );
     this.bindMaintenanceAction('.rebuild-indexes', '正在从本地页面重建搜索索引…', () =>
       this.callbacks.rebuildSearchIndexes?.(),
     );
@@ -380,10 +432,24 @@ export class SearchPanel {
         );
       } else {
         insertButton.title = this.insertMode ? '插入维基链接' : '复制页面标题';
-        title.textContent = result.title;
-        namespace.textContent = isContentResult(result)
-          ? `${result.namespaceName || '主命名空间'} · ${result.snippet}`
-          : result.namespaceName || '主命名空间';
+        if (isContentResult(result)) {
+          this.appendResultText(
+            title,
+            result.title,
+            this.highlightPreferences.titleEnabled ? result.titleHighlights : undefined,
+          );
+          namespace.append(
+            document.createTextNode(`${result.namespaceName || '主命名空间'} · `),
+          );
+          this.appendResultText(
+            namespace,
+            result.snippet,
+            this.highlightPreferences.contentEnabled ? result.highlights : undefined,
+          );
+        } else {
+          title.textContent = result.title;
+          namespace.textContent = result.namespaceName || '主命名空间';
+        }
         actions.append(
           this.actionButton('复制', '复制维基链接', () =>
             this.callbacks.copy(result, this.input.value),
@@ -482,6 +548,7 @@ export class SearchPanel {
     }
     this.configure.hidden = !this.codeMode;
     if (!this.codeMode) this.settings.hidden = true;
+    this.highlightSettings.hidden = !this.contentMode;
   }
 
   private get codeMode(): boolean {
@@ -549,6 +616,60 @@ export class SearchPanel {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.setStatus(`Data 代码检索配置无效或刷新失败：${message}`, 'error');
+    }
+  }
+
+  private applyHighlightPreferences(): void {
+    this.syncHighlightControls();
+    this.applyHighlightColors();
+    this.persistHighlightPreferences();
+    this.renderResults();
+  }
+
+  private syncHighlightControls(): void {
+    this.titleHighlightToggle.checked = this.highlightPreferences.titleEnabled;
+    this.contentHighlightToggle.checked = this.highlightPreferences.contentEnabled;
+    this.titleHighlightColor.value = this.highlightPreferences.titleColor;
+    this.contentHighlightColor.value = this.highlightPreferences.contentColor;
+  }
+
+  private applyHighlightColors(): void {
+    this.host.style.setProperty('--cu-title-highlight', this.highlightPreferences.titleColor);
+    this.host.style.setProperty(
+      '--cu-content-highlight',
+      this.highlightPreferences.contentColor,
+    );
+  }
+
+  private persistHighlightPreferences(): void {
+    this.callbacks.saveHighlightPreferences({ ...this.highlightPreferences });
+  }
+
+  private appendResultText(
+    parent: HTMLElement,
+    text: string,
+    highlights?: readonly SearchTextHighlight[],
+  ): void {
+    const ranges = (highlights ?? [])
+      .map((range) => ({
+        start: Math.max(0, Math.min(range.start, text.length)),
+        end: Math.min(range.end, text.length),
+      }))
+      .filter((range) => range.end > range.start)
+      .sort((left, right) => left.start - right.start);
+    let cursor = 0;
+    for (const range of ranges) {
+      if (range.start < cursor) continue;
+      if (range.start > cursor) {
+        parent.append(document.createTextNode(text.slice(cursor, range.start)));
+      }
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(range.start, range.end);
+      parent.append(mark);
+      cursor = range.end;
+    }
+    if (cursor < text.length) {
+      parent.append(document.createTextNode(text.slice(cursor)));
     }
   }
 
@@ -736,6 +857,14 @@ const markup = `
     .settings-actions { display: flex; justify-content: flex-end; gap: 7px; }
     .settings-action { border: 1px solid #b9cbc5; border-radius: 6px; padding: 5px 9px; background: #fff; color: #24483e; cursor: pointer; }
     .save-rules { border-color: #29715e; background: #29715e; color: #fff; }
+    .highlight-settings {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+      margin: 0 14px 10px; padding: 8px 10px;
+      border: 1px solid #d8dedb; border-radius: 9px; background: #f4f7f5;
+    }
+    .highlight-settings[hidden] { display: none; }
+    .highlight-option { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #24483e; }
+    .highlight-color { width: 26px; height: 20px; padding: 0; border: 1px solid #bcc8c3; border-radius: 5px; background: #fff; cursor: pointer; }
     .maintenance { margin: 0 14px 10px; padding: 10px; border: 1px solid #d8dedb; border-radius: 9px; background: #f4f7f5; max-height: min(58vh, 520px); overflow: auto; }
     .maintenance[hidden], .danger-confirmation[hidden] { display: none; }
     .maintenance-title { margin: 0 0 7px; font-size: 13px; }
@@ -750,6 +879,9 @@ const markup = `
     .results { list-style: none; padding: 0 8px; margin: 0; max-height: min(52vh, 430px); overflow: auto; }
     .result { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 9px; }
     .result[data-selected="true"] { background: #e7f0ed; }
+    mark { border-radius: 2px; padding: 0 1px; color: inherit; }
+    .result-title mark { background: var(--cu-title-highlight, #aee2ff); }
+    .result-namespace mark { background: var(--cu-content-highlight, #fff3a3); }
     .insert { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; border: 0; padding: 9px 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
     .result-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
     .result-namespace { font-size: 11px; color: #718079; }
@@ -789,6 +921,13 @@ const markup = `
       </select>
       <select class="namespace" aria-label="筛选命名空间"><option value="">全部命名空间</option></select>
     </div>
+    <section class="highlight-settings" hidden aria-label="命中高亮设置">
+      <label class="highlight-option"><input class="title-highlight-toggle" type="checkbox">标题命中高亮</label>
+      <input class="highlight-color title-highlight-color" type="color" value="#aee2ff" aria-label="标题高亮颜色" title="标题命中高亮颜色">
+      <label class="highlight-option"><input class="content-highlight-toggle" type="checkbox" checked>正文命中高亮</label>
+      <input class="highlight-color content-highlight-color" type="color" value="#fff3a3" aria-label="正文高亮颜色" title="正文命中高亮颜色">
+      <span class="settings-help">命中的字词按上述颜色标注；仅作用于“页面正文”模式。</span>
+    </section>
     <section class="settings" hidden>
       <label class="settings-label" for="cu-data-rules">Data 代码检索字段</label>
       <textarea class="data-rules" id="cu-data-rules" spellcheck="false" aria-label="Data 代码检索字段"></textarea>

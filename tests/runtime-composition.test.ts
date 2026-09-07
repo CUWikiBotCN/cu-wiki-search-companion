@@ -40,7 +40,7 @@ it.each(['normal', 'early-click', 'no-locks'])('boots the real entrypoint and pr
     close(): void {}
   }
   vi.stubGlobal('crypto', webcrypto);
-  vi.stubGlobal('GM_info', { script: { version: '0.3.3' } });
+  vi.stubGlobal('GM_info', { script: { version: '0.3.4' } });
   vi.stubGlobal('__CU_WIKI_BUILD_ID__', 'test-composition');
   vi.stubGlobal('GM_getValue', () => DEFAULT_DATA_CODE_RULES);
   vi.stubGlobal('GM_setValue', vi.fn());

@@ -162,6 +162,156 @@ describe('wikitext content search', () => {
     expect(snippet).not.toContain('ＴＡＲＧＥＴ');
   });
 
+  it('aligns highlight ranges with the snippet for direct matches', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(1, '医疗指导', `${'背景'.repeat(40)}使用紧急救治手段。`),
+    ]);
+
+    const result = index.search('紧急救治')[0]!;
+
+    expect(result.highlights).toEqual([
+      { start: result.snippet.indexOf('紧急救治'), end: result.snippet.indexOf('紧急救治') + 4 },
+    ]);
+    expect(result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end)).toBe(
+      '紧急救治',
+    );
+    expect(result.titleHighlights).toEqual([]);
+  });
+
+  it('highlights the original title when the whole query is locatable there', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(1, '紧急救治指南', '收录紧急救治流程。'),
+      page(2, '紧急处置手册', '紧急救治需快速反应。'),
+    ]);
+
+    const results = index.search('紧急救治');
+    const hit = results.find(({ title }) => title === '紧急救治指南')!;
+    const miss = results.find(({ title }) => title === '紧急处置手册')!;
+
+    expect(hit.titleHighlights).toEqual([{ start: 0, end: 4 }]);
+    expect(hit.title.slice(hit.titleHighlights![0]!.start, hit.titleHighlights![0]!.end)).toBe(
+      '紧急救治',
+    );
+    expect(miss.titleHighlights).toEqual([]);
+  });
+
+  it('keeps highlight ranges aligned for case, width, and variant insensitive matches', () => {
+    const index = new ContentIndex(analyzer);
+    const distantPrefix = '无关前言'.repeat(30);
+    index.rebuild([
+      page(1, '繁简页面', `${distantPrefix}紧急救治发生在这里。`),
+      page(2, '全角页面', `${distantPrefix}设备编号 ABC123 位于这里。`),
+    ]);
+
+    const variant = index.search('緊急救治')[0]!;
+    expect(variant.snippet.slice(variant.highlights![0]!.start, variant.highlights![0]!.end)).toBe(
+      '紧急救治',
+    );
+
+    const fullwidth = index.search('ＡＢＣ１２３')[0]!;
+    expect(fullwidth.snippet.slice(fullwidth.highlights![0]!.start, fullwidth.highlights![0]!.end)).toBe(
+      'ABC123',
+    );
+  });
+
+  it('highlights the normalized fallback text at the query position', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(1, '归一化页面', `${'无关前言'.repeat(30)} ＴＡＲＧＥＴ 尾声`),
+    ]);
+
+    const result = index.search('target')[0]!;
+
+    const at = result.snippet.indexOf('target');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(result.highlights).toEqual([{ start: at, end: at + 'target'.length }]);
+    expect(result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end)).toBe(
+      'target',
+    );
+  });
+
+  it('falls back to per-term highlights when only the OR search matches', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([page(1, '武器指导', '手枪使用九毫米子弹。')]);
+
+    const result = index.search('手枪子弹')[0]!;
+
+    const slices = (result.highlights ?? []).map(({ start, end }) => result.snippet.slice(start, end));
+    expect(slices).toContain('手枪');
+    expect(slices).toContain('子弹');
+    const sorted = [...(result.highlights ?? [])].sort((l, r) => l.start - r.start);
+    expect(sorted.every((range, at) => at === 0 || range.start >= sorted[at - 1]!.end)).toBe(true);
+    expect(sorted.every((range) => range.end <= result.snippet.length)).toBe(true);
+  });
+
+  it.each([
+    [
+      '中文',
+      `${'无关前言'.repeat(30)}手枪使用九毫米子弹。`,
+      '手枪子弹',
+      ['手枪', '子弹'],
+    ],
+    [
+      '英文',
+      `${'irrelevant preface '.repeat(30)}alpha appears near beta.`,
+      'alpha beta',
+      ['alpha', 'beta'],
+    ],
+  ])('在%s长正文中以实际逐词命中定位摘要', (_label, content, query, expected) => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([page(1, '定位页面', content)]);
+
+    const result = index.search(query)[0]!;
+    const slices = result.highlights!.map(({ start, end }) =>
+      result.snippet.slice(start, end),
+    );
+
+    expect(result.snippet.startsWith('…')).toBe(true);
+    expect(expected.every((term) => slices.includes(term))).toBe(true);
+  });
+
+  it('不让窗口外的重复词耗尽可见命中额度', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(1, '重复词页面', `子弹在这里。${'背景'.repeat(35)}${'手 '.repeat(12)}`),
+    ]);
+
+    const result = index.search('手枪子弹')[0]!;
+    const slices = result.highlights!.map(({ start, end }) =>
+      result.snippet.slice(start, end),
+    );
+
+    expect(result.snippet.startsWith('子弹')).toBe(true);
+    expect(slices).toContain('子弹');
+  });
+
+  it('先合并窗口内命中再限制六处并保持省略号坐标', () => {
+    const index = new ContentIndex(analyzer);
+    const combined = `${'手'.repeat(12)}子弹`;
+    index.rebuild([
+      page(
+        1,
+        '合并页面',
+        `${'无关前言'.repeat(30)}${combined} ${'手 '.repeat(8)}收尾`,
+      ),
+    ]);
+
+    const result = index.search('手枪子弹')[0]!;
+
+    expect(result.snippet.startsWith('…')).toBe(true);
+    expect(result.highlights).toHaveLength(6);
+    expect(
+      result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end),
+    ).toBe(combined);
+    expect(
+      result.highlights!.every(
+        ({ start, end }) => result.snippet.slice(start, end).length > 0,
+      ),
+    ).toBe(true);
+  });
+
   it('fetches wikitext and BSON in ordinary-user-sized batches and resumes from cache', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {

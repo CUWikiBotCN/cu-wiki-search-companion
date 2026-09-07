@@ -126,6 +126,8 @@ function parsePath(source: string, lineNumber: number): PathPattern {
       continue;
     }
     if (source.startsWith('["', cursor)) {
+      // 已知限制：括号键以首个字面 `"]` 终止，无法表示含该序列的键。
+      // 当前 Data 字段规则接受这一限制，不额外引入转义语法。
       const end = source.indexOf('"]', cursor + 2);
       if (end < 0) throw new Error(`Data 代码配置第 ${lineNumber} 行括号未闭合：${source}`);
       const quoted = source.slice(cursor + 1, end + 1);

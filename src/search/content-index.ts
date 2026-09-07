@@ -23,6 +23,11 @@ interface IndexedContent {
   tokens: string;
 }
 
+export interface SearchTextHighlight {
+  start: number;
+  end: number;
+}
+
 export interface ContentSearchResult {
   kind: 'content';
   id: number;
@@ -31,6 +36,10 @@ export interface ContentSearchResult {
   namespaceName: string;
   snippet: string;
   score: number;
+  /** Hit ranges inside `snippet`, sharing its coordinate space. */
+  highlights?: readonly SearchTextHighlight[];
+  /** Hit ranges inside `title`, only produced when the whole query is locatable in the original title. */
+  titleHighlights?: readonly SearchTextHighlight[];
 }
 
 interface ContentIndexState {
@@ -178,14 +187,20 @@ export class ContentIndex {
       })
       .sort((left, right) => right.score - left.score || left.id - right.id)
       .slice(0, limit)
-      .map((result) => ({
-        ...result,
-        snippet: makeSnippet(
+      .map((result) => {
+        const snippet = makeSnippet(
           extractedById.get(result.id) ?? '',
           normalizedQuery,
           this.analyzer,
-        ),
-      }));
+          terms,
+        );
+        return {
+          ...result,
+          snippet: snippet.text,
+          highlights: snippet.highlights,
+          titleHighlights: titleHighlights(result.title, normalizedQuery),
+        };
+      });
   }
 
   get size(): number {
@@ -248,9 +263,23 @@ function isStringMapEntries(value: unknown): value is Array<[number, string]> {
   );
 }
 
-function makeSnippet(text: string, normalizedQuery: string, analyzer: Analyzer): string {
+interface Snippet {
+  text: string;
+  highlights: SearchTextHighlight[];
+}
+
+const SNIPPET_CONTEXT_BEFORE = 36;
+const SNIPPET_CONTEXT_AFTER = 64;
+const MAX_HIGHLIGHT_RANGES = 6;
+
+function makeSnippet(
+  text: string,
+  normalizedQuery: string,
+  analyzer: Analyzer,
+  matchedTerms: readonly string[],
+): Snippet {
   const compactText = text.replace(/\s+/g, ' ').trim();
-  if (!compactText) return '';
+  if (!compactText) return { text: '', highlights: [] };
   const directPosition = compactText.indexOf(normalizedQuery);
   const insensitiveMatch =
     directPosition < 0
@@ -261,19 +290,96 @@ function makeSnippet(text: string, normalizedQuery: string, analyzer: Analyzer):
   if (originalPosition >= 0) {
     const matchLength =
       directPosition >= 0 ? normalizedQuery.length : insensitiveMatch![0].length;
-    const start = Math.max(0, originalPosition - 36);
-    const end = Math.min(compactText.length, originalPosition + matchLength + 64);
-    return `${start > 0 ? '…' : ''}${compactText.slice(start, end)}${end < compactText.length ? '…' : ''}`;
+    const start = Math.max(0, originalPosition - SNIPPET_CONTEXT_BEFORE);
+    const end = Math.min(
+      compactText.length,
+      originalPosition + matchLength + SNIPPET_CONTEXT_AFTER,
+    );
+    const prefix = start > 0 ? '…' : '';
+    const matchStart = prefix.length + (originalPosition - start);
+    return {
+      text: `${prefix}${compactText.slice(start, end)}${end < compactText.length ? '…' : ''}`,
+      highlights: [{ start: matchStart, end: matchStart + matchLength }],
+    };
   }
   const normalizedText = analyzer.normalize(compactText);
   const displayText = normalizedText || compactText;
   const position = normalizedText.indexOf(normalizedQuery);
-  const start = Math.max(0, (position >= 0 ? position : 0) - 36);
+  let anchor =
+    position >= 0
+      ? { start: position, end: position + normalizedQuery.length }
+      : undefined;
+  if (!anchor) {
+    for (const term of matchedTerms) {
+      if (!term) continue;
+      const at = displayText.indexOf(term);
+      if (
+        at >= 0 &&
+        (!anchor || at < anchor.start || (at === anchor.start && term.length > anchor.end - anchor.start))
+      ) {
+        anchor = { start: at, end: at + term.length };
+      }
+    }
+  }
+  const start = Math.max(0, (anchor?.start ?? 0) - SNIPPET_CONTEXT_BEFORE);
   const end = Math.min(
     displayText.length,
-    (position >= 0 ? position + normalizedQuery.length : 0) + 64,
+    (anchor?.end ?? 0) + SNIPPET_CONTEXT_AFTER,
   );
-  return `${start > 0 ? '…' : ''}${displayText.slice(start, end)}${end < displayText.length ? '…' : ''}`;
+  const prefixLength = start > 0 ? 1 : 0;
+  const highlights =
+    position >= 0
+      ? [{ start: prefixLength + position - start, end: prefixLength + position - start + normalizedQuery.length }]
+      : collectTermHighlights(displayText.slice(start, end), matchedTerms).map(
+          (range) => ({
+            start: range.start + prefixLength,
+            end: range.end + prefixLength,
+          }),
+        );
+  return {
+    text: `${start > 0 ? '…' : ''}${displayText.slice(start, end)}${end < displayText.length ? '…' : ''}`,
+    highlights,
+  };
+}
+
+function titleHighlights(title: string, normalizedQuery: string): SearchTextHighlight[] {
+  // Titles must keep their original text, and normalization (NFKC/OpenCC) is not
+  // an invertible mapping — so only a direct case-insensitive hit is highlighted.
+  const match = new RegExp(escapeRegExp(normalizedQuery), 'iu').exec(title);
+  if (!match) return [];
+  return [{ start: match.index, end: match.index + match[0].length }];
+}
+
+function collectTermHighlights(
+  text: string,
+  terms: readonly string[],
+): SearchTextHighlight[] {
+  const ranges: SearchTextHighlight[] = [];
+  for (const term of terms) {
+    if (!term) continue;
+    let cursor = 0;
+    while (true) {
+      const at = text.indexOf(term, cursor);
+      if (at < 0) break;
+      ranges.push({ start: at, end: at + term.length });
+      cursor = at + 1;
+    }
+  }
+  return mergeRanges(ranges).slice(0, MAX_HIGHLIGHT_RANGES);
+}
+
+function mergeRanges(ranges: SearchTextHighlight[]): SearchTextHighlight[] {
+  const sorted = [...ranges].sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: SearchTextHighlight[] = [];
+  for (const range of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
 }
 
 function escapeRegExp(value: string): string {

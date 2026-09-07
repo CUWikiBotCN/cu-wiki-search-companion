@@ -1,6 +1,6 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.3 架构，面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文对应 0.3.4 架构，面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
@@ -138,7 +138,7 @@ SearchPanel 按当前模式触发 `PageSearchRuntime` 的准备函数，单例 P
 | Data 代码事实缓存 | dataCodes | 由 Data REST 接口与字段规则生成；可单独刷新 |
 | 工作事实 | jobs | 正文下载队列；可从 pages 修复 |
 | 同步契约 | syncState 中的游标、generation、版本和调度状态 | 与事实事务一起提交；索引升级不得重置 |
-| 用户偏好 | Tampermonkey preference 中的 Data 字段规则 | 完整重置默认保留 |
+| 用户偏好 | Tampermonkey preference 中的 Data 字段规则与全文高亮设置 | 完整重置默认保留 |
 | 派生索引 | 内存中的 MiniSearch / 线性索引 | 可从事实重建 |
 | 索引快照 | indexSnapshots | 可删除；校验失败时自动本地重建 |
 
@@ -414,6 +414,8 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 ## 11. UI、编辑器与维护
 
 SearchPanel 挂在开放 Shadow DOM 中，隔离站点 CSS。快捷键为 Alt+K；中文 IME composition 期间不触发搜索，普通输入 120ms 防抖。
+
+全文（页面正文）模式的结果支持命中高亮：ContentIndex 在生成 snippet 的同一坐标系内计算命中区间（整词组优先；无法定位整词组时围绕查询词命中选择摘要，在摘要内逐词定位、合并并限制为最多 6 处；标题行只标注原文中可定位的整词组），随结果返回 `highlights` / `titleHighlights`，不进入索引快照。面板用 `mark` 元素加文本节点拼装渲染，不引入 innerHTML。标题行与正文片段行各有独立开关与颜色（CSS 自定义属性 `--cu-title-highlight` / `--cu-content-highlight`），设置仅在该模式显示，经 `highlight-preference.ts` 以 GM preference 持久化；标题高亮默认关闭，正文高亮默认开启。调色只更新 CSS 变量，开关变化才重新渲染结果。
 
 结果主动作按类型区分：
 
