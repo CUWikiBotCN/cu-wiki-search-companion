@@ -68,6 +68,7 @@ export interface SearchPanelCallbacks {
 export class SearchPanel {
   private static shortcutOwner?: WeakRef<SearchPanel>;
   private static shortcutWindow?: Window;
+  private static layoutOwner?: WeakRef<SearchPanel>;
   private static readonly globalShortcutKeydown = (event: KeyboardEvent): void => {
     const owner = SearchPanel.shortcutOwner?.deref();
     if (!owner?.host.isConnected) {
@@ -80,12 +81,16 @@ export class SearchPanel {
   private readonly host: HTMLDivElement;
   private readonly root: ShadowRoot;
   private readonly panel: HTMLElement;
+  private readonly panelBody: HTMLElement;
   private readonly input: HTMLInputElement;
   private readonly modeSelect: HTMLSelectElement;
   private readonly namespaceSelect: HTMLSelectElement;
   private readonly resultList: HTMLUListElement;
   private readonly status: HTMLElement;
+  private readonly statusDetails: HTMLElement;
+  private readonly statusDetailsToggle: HTMLButtonElement;
   private readonly toggle: HTMLButtonElement;
+  private readonly dragHandle: HTMLElement;
   private readonly configure: HTMLButtonElement;
   private readonly settings: HTMLElement;
   private readonly dataRules: HTMLTextAreaElement;
@@ -108,6 +113,22 @@ export class SearchPanel {
   private startupFailed = false;
   private searchTimer?: number;
   private returnFocus?: HTMLElement;
+  private positioned = false;
+  private drag?: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+    wasPositioned: boolean;
+  };
+  private resizeObserver?: ResizeObserver;
+  private disconnectObserver?: MutationObserver;
+  private layoutFrame?: number;
+  private readonly handleViewportResize = (): void => {
+    this.syncViewportBounds();
+    this.scheduleLayoutUpdate();
+  };
 
   constructor(private readonly callbacks: SearchPanelCallbacks) {
     this.host = document.createElement('div');
@@ -117,12 +138,17 @@ export class SearchPanel {
     document.documentElement.append(this.host);
 
     this.panel = this.requireElement<HTMLElement>('.panel');
+    this.panelBody = this.requireElement<HTMLElement>('.panel-body');
     this.input = this.requireElement<HTMLInputElement>('.query');
     this.modeSelect = this.requireElement<HTMLSelectElement>('.mode');
     this.namespaceSelect = this.requireElement<HTMLSelectElement>('.namespace');
     this.resultList = this.requireElement<HTMLUListElement>('.results');
     this.status = this.requireElement<HTMLElement>('.status');
+    this.statusDetails = this.requireElement<HTMLElement>('.status-details');
+    this.statusDetailsToggle =
+      this.requireElement<HTMLButtonElement>('.status-details-toggle');
     this.toggle = this.requireElement<HTMLButtonElement>('.toggle');
+    this.dragHandle = this.requireElement<HTMLElement>('.drag-handle');
     this.configure = this.requireElement<HTMLButtonElement>('.configure');
     this.settings = this.requireElement<HTMLElement>('.settings');
     this.dataRules = this.requireElement<HTMLTextAreaElement>('.data-rules');
@@ -134,14 +160,19 @@ export class SearchPanel {
     this.maintenance = this.requireElement<HTMLElement>('.maintenance');
     this.maintenanceOutput = this.requireElement<HTMLElement>('.maintenance-output');
     this.bindEvents();
+    this.bindLayout();
     this.updateModePresentation();
     this.syncHighlightControls();
     this.applyHighlightColors();
+    this.statusDetails.textContent = this.status.textContent;
   }
 
   setStatus(message: string, tone: 'normal' | 'error' | 'success' = 'normal'): void {
     this.status.textContent = message;
+    this.statusDetails.textContent = message;
     this.status.dataset.tone = tone;
+    this.statusDetails.dataset.tone = tone;
+    this.scheduleLayoutUpdate();
   }
 
   setNamespaces(namespaces: NamespaceInfo[]): void {
@@ -189,12 +220,14 @@ export class SearchPanel {
     }
     this.panel.hidden = false;
     this.toggle.setAttribute('aria-expanded', 'true');
+    this.scheduleLayoutUpdate();
     this.input.focus();
     this.input.select();
   }
 
   close(): void {
     if (this.panel.hidden) return;
+    this.finishDrag(false);
     this.panel.hidden = true;
     this.toggle.setAttribute('aria-expanded', 'false');
     const returnFocus = this.returnFocus;
@@ -227,11 +260,29 @@ export class SearchPanel {
     });
     this.requireElement<HTMLButtonElement>('.maintenance-toggle').addEventListener(
       'click',
-      () => {
+      (event) => {
         this.maintenance.hidden = !this.maintenance.hidden;
         this.settings.hidden = true;
-        if (!this.maintenance.hidden) void this.loadMaintenance();
+        (event.currentTarget as HTMLButtonElement).setAttribute(
+          'aria-expanded',
+          String(!this.maintenance.hidden),
+        );
+        if (!this.maintenance.hidden) {
+          this.scheduleBodyScroll(this.maintenance, 'start');
+          void this.loadMaintenance();
+        }
       },
+    );
+    this.statusDetailsToggle.addEventListener('click', () => {
+      this.statusDetails.hidden = !this.statusDetails.hidden;
+      const expanded = !this.statusDetails.hidden;
+      this.statusDetailsToggle.textContent = expanded ? '收起完整状态' : '查看完整状态';
+      this.statusDetailsToggle.setAttribute('aria-expanded', String(expanded));
+      if (expanded) this.scheduleBodyScroll(this.statusDetails, 'nearest');
+    });
+    this.requireElement<HTMLButtonElement>('.reset-position').addEventListener(
+      'click',
+      () => this.resetPosition(),
     );
     this.requireElement<HTMLButtonElement>('.save-rules').addEventListener('click', () => {
       void this.saveDataRules(this.dataRules.value);
@@ -315,7 +366,62 @@ export class SearchPanel {
       this.performSearch();
     });
     this.panel.addEventListener('keydown', (event) => this.handleKeydown(event));
+    this.dragHandle.addEventListener('keydown', (event) =>
+      this.handleDragHandleKeydown(event),
+    );
+    this.dragHandle.addEventListener('pointerdown', (event) =>
+      this.startDrag(event),
+    );
+    this.dragHandle.addEventListener('pointermove', (event) => this.moveDrag(event));
+    this.dragHandle.addEventListener('pointerup', (event) => {
+      if (event.pointerId === this.drag?.pointerId) this.finishDrag(false);
+    });
+    this.dragHandle.addEventListener('pointercancel', (event) => {
+      if (event.pointerId === this.drag?.pointerId) this.finishDrag(true);
+    });
     SearchPanel.claimGlobalShortcut(this);
+  }
+
+  private bindLayout(): void {
+    SearchPanel.layoutOwner?.deref()?.disconnectLayoutTracking();
+    SearchPanel.layoutOwner = new WeakRef(this);
+    this.syncViewportBounds();
+    window.addEventListener('resize', this.handleViewportResize);
+    window.visualViewport?.addEventListener('resize', this.handleViewportResize);
+    if (typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(() => this.scheduleLayoutUpdate());
+      this.resizeObserver.observe(this.panel);
+    }
+    if (typeof MutationObserver === 'function') {
+      this.disconnectObserver = new MutationObserver(() => {
+        if (!this.host.isConnected) this.disconnectLayoutTracking();
+      });
+      this.disconnectObserver.observe(document.documentElement, { childList: true });
+    }
+  }
+
+  private disconnectLayoutTracking(): void {
+    window.removeEventListener('resize', this.handleViewportResize);
+    window.visualViewport?.removeEventListener('resize', this.handleViewportResize);
+    this.resizeObserver?.disconnect();
+    this.disconnectObserver?.disconnect();
+    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = undefined;
+    this.finishDrag(false);
+  }
+
+  private scheduleLayoutUpdate(): void {
+    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = window.requestAnimationFrame(() => {
+      this.layoutFrame = undefined;
+      if (!this.host.isConnected) {
+        this.disconnectLayoutTracking();
+        return;
+      }
+      if (this.panel.hidden) return;
+      this.reclampPosition();
+      this.syncStatusPresentation();
+    });
   }
 
   private static claimGlobalShortcut(panel: SearchPanel): void {
@@ -470,6 +576,10 @@ export class SearchPanel {
     if (this.composing || event.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
+      if (this.drag) {
+        this.finishDrag(true);
+        return;
+      }
       this.close();
       return;
     }
@@ -572,7 +682,151 @@ export class SearchPanel {
     items.forEach((item, index) => {
       item.dataset.selected = String(index === this.selectedIndex);
     });
-    items[this.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    const selected = items[this.selectedIndex];
+    if (selected) this.scrollBodyTo(selected, 'nearest');
+  }
+
+  private handleDragHandleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.drag) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.finishDrag(true);
+      return;
+    }
+    if (this.viewportBounds().width <= 640 || !event.key.startsWith('Arrow')) return;
+    const directions: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    const rect = this.panel.getBoundingClientRect();
+    const step = event.shiftKey ? 1 : 10;
+    this.positionPanel(rect.left + direction[0] * step, rect.top + direction[1] * step);
+  }
+
+  private startDrag(event: PointerEvent): void {
+    if (
+      event.button !== 0 ||
+      this.viewportBounds().width <= 640 ||
+      typeof window.matchMedia !== 'function' ||
+      !window.matchMedia('(pointer: fine)').matches
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const rect = this.panel.getBoundingClientRect();
+    this.drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      wasPositioned: this.positioned,
+    };
+    this.panel.dataset.dragging = 'true';
+    this.dragHandle.setPointerCapture(event.pointerId);
+  }
+
+  private moveDrag(event: PointerEvent): void {
+    if (event.pointerId !== this.drag?.pointerId) return;
+    event.preventDefault();
+    this.positionPanel(
+      this.drag.startLeft + event.clientX - this.drag.startX,
+      this.drag.startTop + event.clientY - this.drag.startY,
+    );
+  }
+
+  private finishDrag(cancel: boolean): void {
+    const drag = this.drag;
+    if (!drag) return;
+    this.drag = undefined;
+    delete this.panel.dataset.dragging;
+    if (this.dragHandle.hasPointerCapture(drag.pointerId)) {
+      this.dragHandle.releasePointerCapture(drag.pointerId);
+    }
+    if (cancel) {
+      if (drag.wasPositioned) this.positionPanel(drag.startLeft, drag.startTop);
+      else this.resetPosition();
+    }
+  }
+
+  private positionPanel(left: number, top: number): void {
+    const rect = this.panel.getBoundingClientRect();
+    const viewport = this.viewportBounds();
+    const margin = 12;
+    const maxLeft = Math.max(margin, viewport.width - rect.width - margin);
+    const maxTop = Math.max(margin, viewport.height - rect.height - margin);
+    this.panel.style.left = `${Math.min(Math.max(left, margin), maxLeft)}px`;
+    this.panel.style.top = `${Math.min(Math.max(top, margin), maxTop)}px`;
+    this.panel.style.right = 'auto';
+    this.panel.style.bottom = 'auto';
+    this.panel.dataset.positioned = 'true';
+    this.positioned = true;
+  }
+
+  private reclampPosition(): void {
+    if (!this.positioned || this.viewportBounds().width <= 640) return;
+    const rect = this.panel.getBoundingClientRect();
+    this.positionPanel(rect.left, rect.top);
+  }
+
+  private viewportBounds(): { width: number; height: number } {
+    const layoutWidth = document.documentElement.clientWidth || window.innerWidth;
+    const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
+    return {
+      width: Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth),
+      height: Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight),
+    };
+  }
+
+  private syncViewportBounds(): void {
+    const { width, height } = this.viewportBounds();
+    this.host.style.setProperty('--cu-panel-fluid-width', `${width * 0.36}px`);
+    this.host.style.setProperty('--cu-panel-max-width', `${Math.max(0, width - 24)}px`);
+    this.host.style.setProperty('--cu-panel-max-height', `${Math.max(0, height - 84)}px`);
+    this.host.style.setProperty('--cu-panel-mobile-max-height', `${Math.max(0, height - 80)}px`);
+    this.host.toggleAttribute('data-narrow', width <= 640);
+  }
+
+  private resetPosition(): void {
+    this.panel.style.removeProperty('left');
+    this.panel.style.removeProperty('top');
+    this.panel.style.removeProperty('right');
+    this.panel.style.removeProperty('bottom');
+    delete this.panel.dataset.positioned;
+    this.positioned = false;
+  }
+
+  private scheduleBodyScroll(element: HTMLElement, block: 'nearest' | 'start'): void {
+    window.requestAnimationFrame(() => {
+      if (element.isConnected && !element.hidden) this.scrollBodyTo(element, block);
+    });
+  }
+
+  private scrollBodyTo(element: HTMLElement, block: 'nearest' | 'start'): void {
+    const bodyRect = this.panelBody.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    if (block === 'start' || elementRect.top < bodyRect.top) {
+      this.panelBody.scrollTop += elementRect.top - bodyRect.top;
+    } else if (elementRect.bottom > bodyRect.bottom) {
+      this.panelBody.scrollTop += elementRect.bottom - bodyRect.bottom;
+    }
+  }
+
+  private syncStatusPresentation(): void {
+    const clipped =
+      this.status.scrollHeight > this.status.clientHeight + 1 ||
+      this.status.scrollWidth > this.status.clientWidth + 1;
+    this.statusDetailsToggle.hidden = !clipped;
+    if (!clipped) {
+      this.statusDetails.hidden = true;
+      this.statusDetailsToggle.textContent = '查看完整状态';
+      this.statusDetailsToggle.setAttribute('aria-expanded', 'false');
+    }
   }
 
   private currentReturnFocus(): HTMLElement {
@@ -636,8 +890,16 @@ export class SearchPanel {
   private applyHighlightColors(): void {
     this.host.style.setProperty('--cu-title-highlight', this.highlightPreferences.titleColor);
     this.host.style.setProperty(
+      '--cu-title-highlight-color',
+      contrastTextColor(this.highlightPreferences.titleColor),
+    );
+    this.host.style.setProperty(
       '--cu-content-highlight',
       this.highlightPreferences.contentColor,
+    );
+    this.host.style.setProperty(
+      '--cu-content-highlight-color',
+      contrastTextColor(this.highlightPreferences.contentColor),
     );
   }
 
@@ -815,99 +1077,165 @@ function formatBytes(value: number | undefined): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+function contrastTextColor(hex: string): '#000' | '#fff' {
+  const rgb = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  const luminance = rgb
+    .map((value) => value / 255)
+    .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+    .reduce(
+      (sum, value, index) => sum + value * ([0.2126, 0.7152, 0.0722][index] ?? 0),
+      0,
+    );
+  return luminance > 0.179 ? '#000' : '#fff';
+}
+
 const markup = `
   <style>
-    :host { all: initial; color-scheme: light; }
+    :host { all: initial; color-scheme: dark; }
     * { box-sizing: border-box; }
-    button, input, select { font: inherit; }
+    button, input, select, textarea { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--brand-primary, #d6c484); outline-offset: 1px;
+    }
     .toggle {
       position: fixed; right: 22px; bottom: 22px; z-index: 2147483646;
       border: 0; border-radius: 999px; padding: 10px 16px;
-      background: #173f35; color: #fff; box-shadow: 0 8px 24px #102a2360;
-      cursor: pointer; font: 600 14px/20px system-ui, sans-serif;
+      background: var(--brand-primary, #d6c484); color: #141414;
+      box-shadow: 0 8px 24px #0008; cursor: pointer;
+      font: 600 14px/20px "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
     }
-    .toggle:hover { background: #21584a; transform: translateY(-1px); }
+    .toggle:hover { filter: brightness(1.08); transform: translateY(-1px); }
     .panel {
       position: fixed; right: 22px; bottom: 72px; z-index: 2147483647;
-      width: min(430px, calc(100vw - 28px)); overflow: hidden;
-      border: 1px solid #d8dedb; border-radius: 14px; background: #fbfcfb;
-      box-shadow: 0 18px 54px #102a2340; color: #18231f;
-      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+      display: flex; flex-direction: column;
+      width: min(clamp(420px, var(--cu-panel-fluid-width, 36vw), 960px), var(--cu-panel-max-width, calc(100vw - 24px)));
+      max-height: var(--cu-panel-max-height, calc(100dvh - 84px)); overflow: hidden;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 14px;
+      background: var(--detail-bg, #141414); box-shadow: 0 18px 54px #000a;
+      color: var(--detail-color, #babdc4);
+      font: 14px/1.4 "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
     }
     .panel[hidden] { display: none; }
-    .header { display: flex; align-items: center; padding: 12px 14px 8px; gap: 8px; }
-    .heading { flex: 1; font-weight: 700; letter-spacing: .02em; }
-    .icon { border: 0; background: transparent; color: #53635d; cursor: pointer; padding: 4px 7px; border-radius: 6px; }
-    .icon:hover { background: #e9efec; color: #173f35; }
+    .panel > *, .panel-body > *, .result > * { min-width: 0; }
+    .header { flex: none; display: flex; align-items: center; padding: 12px 14px 8px; gap: 6px; }
+    .heading {
+      flex: 1; padding: 4px 2px; border-radius: 5px; overflow-wrap: anywhere;
+      font-weight: 700; letter-spacing: .02em;
+    }
+    .icon {
+      flex: none; border: 0; background: transparent; color: var(--detail-color, #babdc4);
+      cursor: pointer; padding: 4px 7px; border-radius: 6px;
+    }
+    .icon:hover { background: var(--detail-inner-bg, #202020); color: var(--detail-a, #ffd96a); }
     .icon[hidden] { display: none; }
-    .controls { display: grid; grid-template-columns: 1fr 112px 124px; gap: 8px; padding: 0 14px 10px; }
+    .reset-position { font-size: 11px; }
+    .controls {
+      flex: none; display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 112px) minmax(0, 124px);
+      gap: 8px; padding: 0 14px 10px;
+    }
     .query, .mode, .namespace {
-      min-width: 0; height: 38px; border: 1px solid #bcc8c3; border-radius: 8px;
-      background: #fff; color: #18231f; outline: none;
+      min-width: 0; max-width: 100%; height: 38px;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 8px;
+      background: var(--detail-inner-bg, #202020); color: var(--detail-color, #babdc4);
     }
     .query { padding: 0 11px; }
     .mode, .namespace { padding: 0 7px; }
     .mode[hidden], .namespace[hidden] { display: none; }
-    .query:focus, .mode:focus, .namespace:focus { border-color: #29715e; box-shadow: 0 0 0 3px #29715e22; }
-    .settings { margin: 0 14px 10px; padding: 10px; border: 1px solid #d8dedb; border-radius: 9px; background: #f4f7f5; }
+    .panel-body { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .settings {
+      margin: 0 14px 10px; padding: 10px;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
+      background: var(--detail-inner-bg, #202020);
+    }
     .settings[hidden] { display: none; }
     .settings-label { display: block; margin-bottom: 6px; font-weight: 650; }
-    .settings-help { display: block; margin: 6px 0; color: #65736e; font-size: 11px; }
-    .data-rules { width: 100%; min-height: 180px; resize: vertical; border: 1px solid #bcc8c3; border-radius: 7px; padding: 8px; background: #fff; color: #18231f; font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .settings-help { display: block; margin: 6px 0; color: var(--detail-color, #babdc4); font-size: 11px; overflow-wrap: anywhere; }
+    .data-rules {
+      width: 100%; min-height: 180px; resize: vertical;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 7px;
+      padding: 8px; background: var(--detail-bg, #141414); color: var(--detail-color, #babdc4);
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
     .settings-actions { display: flex; justify-content: flex-end; gap: 7px; }
-    .settings-action { border: 1px solid #b9cbc5; border-radius: 6px; padding: 5px 9px; background: #fff; color: #24483e; cursor: pointer; }
-    .save-rules { border-color: #29715e; background: #29715e; color: #fff; }
+    .settings-action {
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 6px;
+      padding: 5px 9px; background: var(--detail-bg, #141414);
+      color: var(--detail-a, #ffd96a); cursor: pointer;
+    }
+    .save-rules { border-color: var(--brand-primary, #d6c484); background: var(--brand-primary, #d6c484); color: #141414; }
     .highlight-settings {
       display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
       margin: 0 14px 10px; padding: 8px 10px;
-      border: 1px solid #d8dedb; border-radius: 9px; background: #f4f7f5;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
+      background: var(--detail-inner-bg, #202020);
     }
     .highlight-settings[hidden] { display: none; }
-    .highlight-option { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #24483e; }
-    .highlight-color { width: 26px; height: 20px; padding: 0; border: 1px solid #bcc8c3; border-radius: 5px; background: #fff; cursor: pointer; }
-    .maintenance { margin: 0 14px 10px; padding: 10px; border: 1px solid #d8dedb; border-radius: 9px; background: #f4f7f5; max-height: min(58vh, 520px); overflow: auto; }
+    .highlight-option { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--detail-color, #babdc4); }
+    .highlight-color { width: 26px; height: 20px; padding: 0; border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 5px; background: var(--detail-bg, #141414); cursor: pointer; }
+    .maintenance {
+      margin: 0 14px 10px; padding: 10px;
+      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
+      background: var(--detail-inner-bg, #202020); overflow-wrap: anywhere;
+    }
     .maintenance[hidden], .danger-confirmation[hidden] { display: none; }
     .maintenance-title { margin: 0 0 7px; font-size: 13px; }
-    .maintenance-output { margin: 0 0 9px; white-space: pre-wrap; color: #52635d; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .maintenance-output { margin: 0 0 9px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--detail-color, #babdc4); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .maintenance-actions { display: grid; gap: 6px; }
-    .maintenance-action { border: 1px solid #b9cbc5; border-radius: 7px; padding: 7px 9px; background: #fff; color: #24483e; cursor: pointer; text-align: left; }
-    .network-note { color: #8a5a18; font-size: 11px; }
-    .danger-zone { margin-top: 10px; padding-top: 9px; border-top: 1px solid #e2c9c5; }
-    .danger { border-color: #c98c82; color: #8a2f25; }
-    .danger-copy { display: block; margin: 7px 0; color: #7c433d; font-size: 11px; }
+    .maintenance-action { border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 7px; padding: 7px 9px; background: var(--detail-bg, #141414); color: var(--detail-a, #ffd96a); cursor: pointer; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+    .maintenance-action:disabled { opacity: .55; cursor: wait; }
+    .network-note { color: var(--brand-primary, #d6c484); font-size: 11px; }
+    .danger-zone { margin-top: 10px; padding-top: 9px; border-top: 1px solid #70443e; }
+    .danger { border-color: #a85f55; color: #ff9b8e; }
+    .danger-copy { display: block; margin: 7px 0; color: #f0aaa1; font-size: 11px; }
     .reset-rules-option { display: block; margin: 7px 0; font-size: 11px; }
-    .results { list-style: none; padding: 0 8px; margin: 0; max-height: min(52vh, 430px); overflow: auto; }
-    .result { display: grid; grid-template-columns: 1fr auto; align-items: center; border-radius: 9px; }
-    .result[data-selected="true"] { background: #e7f0ed; }
-    mark { border-radius: 2px; padding: 0 1px; color: inherit; }
+    .results { list-style: none; padding: 0 8px; margin: 0; }
+    .result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 9px; }
+    .result[data-selected="true"] { background: var(--detail-inner-bg, #202020); }
+    mark { border-radius: 2px; padding: 0 1px; }
     .result-title mark { background: var(--cu-title-highlight, #aee2ff); }
-    .result-namespace mark { background: var(--cu-content-highlight, #fff3a3); }
+    .result-title mark { color: var(--cu-title-highlight-color, #000); }
+    .result-namespace mark { background: var(--cu-content-highlight, #fff3a3); color: var(--cu-content-highlight-color, #000); }
     .insert { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; border: 0; padding: 9px 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-    .result-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-    .result-namespace { font-size: 11px; color: #718079; }
+    .result-title { max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
+    .result-namespace { max-width: 100%; overflow-wrap: anywhere; font-size: 11px; color: var(--detail-color, #babdc4); }
     .actions { display: flex; gap: 3px; padding-right: 6px; }
-    .action { border: 1px solid transparent; border-radius: 6px; background: transparent; color: #41665b; cursor: pointer; padding: 4px 6px; font-size: 12px; }
-    .action:hover { border-color: #b9cbc5; background: #fff; }
-    .message { padding: 28px 12px; color: #718079; text-align: center; }
-    .footer { display: flex; gap: 8px; align-items: center; min-height: 36px; padding: 8px 14px 10px; border-top: 1px solid #e5e9e7; color: #65736e; font-size: 11px; }
-    .status { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .status[data-tone="error"] { color: #a1382e; }
-    .status[data-tone="success"] { color: #246b48; }
-    kbd { border: 1px solid #cfd7d3; border-bottom-width: 2px; border-radius: 4px; background: #fff; padding: 1px 4px; font: 10px/1.2 system-ui, sans-serif; }
-    @media (max-width: 520px) {
-      .panel { right: 14px; bottom: 68px; }
-      .toggle { right: 14px; bottom: 14px; }
-      .controls { grid-template-columns: 1fr; }
+    .action { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; padding: 4px 6px; font-size: 12px; }
+    .action:hover { border-color: var(--cu-color-border-soft, #45484e); background: var(--detail-bg, #141414); }
+    .message { padding: 28px 12px; color: var(--detail-color, #babdc4); text-align: center; overflow-wrap: anywhere; }
+    .status-details { margin: 10px 14px; padding: 10px; border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px; background: var(--detail-inner-bg, #202020); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .status-details[hidden] { display: none; }
+    .footer { flex: none; display: flex; gap: 8px; align-items: flex-start; min-height: 36px; padding: 8px 14px 10px; border-top: 1px solid var(--cu-color-border-soft, #45484e); color: var(--detail-color, #babdc4); font-size: 11px; }
+    .status { flex: 1; display: -webkit-box; max-height: 2.8em; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .status-details-toggle { flex: none; border: 0; padding: 1px 3px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; font-size: 11px; }
+    .status-details-toggle[hidden] { display: none; }
+    .status[data-tone="error"], .status-details[data-tone="error"] { color: #ff9b8e; }
+    .status[data-tone="success"], .status-details[data-tone="success"] { color: #8fd6ab; }
+    kbd { border: 1px solid var(--cu-color-border-soft, #45484e); border-bottom-width: 2px; border-radius: 4px; background: var(--detail-inner-bg, #202020); padding: 1px 4px; font: 10px/1.2 "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif; }
+    @media (pointer: fine) {
+      :host(:not([data-narrow])) .drag-handle { cursor: grab; user-select: none; touch-action: none; }
+      :host(:not([data-narrow])) .panel[data-dragging="true"] .drag-handle { cursor: grabbing; }
     }
+    :host([data-narrow]) .panel {
+      left: auto !important; top: auto !important; right: 12px !important; bottom: 68px !important;
+      width: var(--cu-panel-max-width, calc(100vw - 24px));
+      max-height: var(--cu-panel-mobile-max-height, calc(100dvh - 80px));
+    }
+    :host([data-narrow]) .toggle { right: 12px; bottom: 12px; }
+    :host([data-narrow]) .reset-position { display: none; }
+    :host([data-narrow]) .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    :host([data-narrow]) .query { grid-column: 1 / -1; }
   </style>
   <button class="toggle" type="button" aria-expanded="false">本地搜索</button>
   <section class="panel" hidden aria-label="未知伤亡维基本地搜索">
     <header class="header">
-      <span class="heading">插入维基链接</span>
+      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调">插入维基链接</span>
       <button class="icon reload-startup" type="button" title="重新加载页面" hidden>重新加载</button>
       <button class="icon configure" type="button" title="配置 Data 代码检索字段" hidden>⚙</button>
-      <button class="icon maintenance-toggle" type="button" title="本地数据与维护">▤</button>
+      <button class="icon maintenance-toggle" type="button" title="本地数据与维护" aria-expanded="false">▤</button>
       <button class="icon refresh" type="button" title="重新同步本地数据">↻</button>
+      <button class="icon reset-position" type="button" title="恢复默认位置">恢复默认位置</button>
       <button class="icon close" type="button" title="关闭">✕</button>
     </header>
     <div class="controls">
@@ -921,6 +1249,7 @@ const markup = `
       </select>
       <select class="namespace" aria-label="筛选命名空间"><option value="">全部命名空间</option></select>
     </div>
+    <div class="panel-body">
     <section class="highlight-settings" hidden aria-label="命中高亮设置">
       <label class="highlight-option"><input class="title-highlight-toggle" type="checkbox">标题命中高亮</label>
       <input class="highlight-color title-highlight-color" type="color" value="#aee2ff" aria-label="标题高亮颜色" title="标题命中高亮颜色">
@@ -957,6 +1286,8 @@ const markup = `
       </div>
     </section>
     <ul class="results"><li class="message">输入标题关键词开始搜索</li></ul>
-    <footer class="footer"><span class="status">正在启动…</span><span><kbd>Alt</kbd> + <kbd>K</kbd></span></footer>
+    <pre class="status-details" id="cu-status-details" tabindex="0" hidden>正在启动…</pre>
+    </div>
+    <footer class="footer"><span class="status">正在启动…</span><button class="status-details-toggle" type="button" aria-expanded="false" aria-controls="cu-status-details" hidden>查看完整状态</button><span><kbd>Alt</kbd> + <kbd>K</kbd></span></footer>
   </section>
 `;

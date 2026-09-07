@@ -413,7 +413,11 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 ## 11. UI、编辑器与维护
 
-SearchPanel 挂在开放 Shadow DOM 中，隔离站点 CSS。快捷键为 Alt+K；中文 IME composition 期间不触发搜索，普通输入 120ms 防抖。
+SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过继承的 CSS 自定义属性复用本站主题色。快捷键为 Alt+K；中文 IME composition 期间不触发搜索，普通输入 120ms 防抖。
+
+面板布局和位置属于 SearchPanel 的页面内状态，不进入 main.ts、索引或 GM preference。整体按视口限高，标题/搜索/状态区域不随内容滚动，设置、维护和结果共享一个可收缩滚动区。宽屏取实际可用视口宽度的 36%，下限 420px、上限 960px；640px 及以下随可用宽度排列。布局与拖动共用扣除滚动条后的可用视口尺寸，避免直接使用 100vw 导致窄窗口越界。拖动和键盘移动仅在宽屏启用，内容/视口变化时保持位置在边界内；位置只在当前页面关闭重开时保留。长状态以两行预览加完整文本展开呈现，不积累状态历史。
+
+高亮配色继续只更新 CSS 变量，同时根据底色设置黑/白前景以保证对比度；不引入主题配置或用户 CSS 覆盖协议。UI 几何验收使用固定结果和诊断数据复用实际组件，不依赖线上检索数量，也不把 jsdom 的模拟布局当作浏览器排版证据。`scripts/test-search-panel-layout.playwright.js` 提供独立测试标签页的可重跑验收，临时构建和运行命令见脚本开头；不接入真实维护回调。
 
 全文（页面正文）模式的结果支持命中高亮：ContentIndex 在生成 snippet 的同一坐标系内计算命中区间（整词组优先；无法定位整词组时围绕查询词命中选择摘要，在摘要内逐词定位、合并并限制为最多 6 处；标题行只标注原文中可定位的整词组），随结果返回 `highlights` / `titleHighlights`，不进入索引快照。面板用 `mark` 元素加文本节点拼装渲染，不引入 innerHTML。标题行与正文片段行各有独立开关与颜色（CSS 自定义属性 `--cu-title-highlight` / `--cu-content-highlight`），设置仅在该模式显示，经 `highlight-preference.ts` 以 GM preference 持久化；标题高亮默认关闭，正文高亮默认开启。调色只更新 CSS 变量，开关变化才重新渲染结果。
 

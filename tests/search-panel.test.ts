@@ -740,6 +740,243 @@ describe('SearchPanel full-text hit highlighting', () => {
   });
 });
 
+describe('SearchPanel layout contract', () => {
+  it('keeps settings, maintenance, results, and details in one body scroller', () => {
+    const { root } = mountLayoutPanel();
+    const body = root.querySelector<HTMLElement>('.panel-body');
+    const header = root.querySelector<HTMLElement>('.header');
+    const controls = root.querySelector<HTMLElement>('.controls');
+    const footer = root.querySelector<HTMLElement>('.footer');
+    if (!body || !header || !controls || !footer) throw new Error('面板布局没有挂载');
+
+    for (const selector of ['.settings', '.maintenance', '.results', '.status-details']) {
+      const element = root.querySelector<HTMLElement>(selector);
+      if (!element) throw new Error(`缺少 ${selector}`);
+      expect(body.contains(element)).toBe(true);
+    }
+    expect(body.contains(header)).toBe(false);
+    expect(body.contains(controls)).toBe(false);
+    expect(body.contains(footer)).toBe(false);
+    expect(root.querySelectorAll('.panel-body')).toHaveLength(1);
+  });
+
+  it('mirrors long status text and expands it only after measured overflow', async () => {
+    const { panel, root } = mountLayoutPanel();
+    const panelElement = root.querySelector<HTMLElement>('.panel');
+    const status = root.querySelector<HTMLElement>('.status');
+    const details = root.querySelector<HTMLElement>('.status-details');
+    const detailsToggle = root.querySelector<HTMLButtonElement>('.status-details-toggle');
+    if (!panelElement || !status || !details || !detailsToggle) {
+      throw new Error('状态控件没有挂载');
+    }
+    Object.defineProperties(status, {
+      clientHeight: { configurable: true, value: 28 },
+      scrollHeight: { configurable: true, value: 84 },
+      clientWidth: { configurable: true, value: 280 },
+      scrollWidth: { configurable: true, value: 280 },
+    });
+
+    panel.open();
+    const longStatus = '第一行诊断\n第二行诊断\n第三行诊断：正文队列仍在处理';
+    panel.setStatus(longStatus, 'error');
+    await vi.waitFor(() => expect(detailsToggle.hidden).toBe(false));
+
+    expect(status.textContent).toBe(longStatus);
+    expect(details.textContent).toBe(longStatus);
+    expect(details.hidden).toBe(true);
+    expect(detailsToggle.textContent).toBe('查看完整状态');
+
+    detailsToggle.click();
+    expect(details.hidden).toBe(false);
+    expect(details.textContent).toBe(longStatus);
+    expect(detailsToggle.textContent).toBe('收起完整状态');
+    expect(detailsToggle.getAttribute('aria-expanded')).toBe('true');
+
+    panel.setStatus('后续状态已同步');
+    expect(status.textContent).toBe('后续状态已同步');
+    expect(details.textContent).toBe('后续状态已同步');
+
+    detailsToggle.click();
+    expect(details.hidden).toBe(true);
+    expect(detailsToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(panelElement.hidden).toBe(false);
+  });
+
+  it('clamps drag and keyboard movement, cancels to origin, resets, and preserves reopen position', () => {
+    const restoreViewport = setLayoutViewport(1200, 800);
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: (query: string) =>
+        ({
+          matches: query.includes('pointer: fine'),
+          media: query,
+          onchange: null,
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          dispatchEvent: () => false,
+        }) as MediaQueryList,
+    });
+
+    try {
+      const { panel, root } = mountLayoutPanel();
+      const panelElement = root.querySelector<HTMLElement>('.panel');
+      const handle = root.querySelector<HTMLElement>('.drag-handle');
+      const close = root.querySelector<HTMLButtonElement>('.close');
+      const reset = root.querySelector<HTMLButtonElement>('.reset-position');
+      if (!panelElement || !handle || !close || !reset) {
+        throw new Error('拖动控件没有挂载');
+      }
+
+      const pointerCapture = { active: false };
+      Object.defineProperties(handle, {
+        setPointerCapture: {
+          configurable: true,
+          value: vi.fn(() => {
+            pointerCapture.active = true;
+          }),
+        },
+        hasPointerCapture: {
+          configurable: true,
+          value: vi.fn(() => pointerCapture.active),
+        },
+        releasePointerCapture: {
+          configurable: true,
+          value: vi.fn(() => {
+            pointerCapture.active = false;
+          }),
+        },
+      });
+
+      const width = 480;
+      const height = 300;
+      vi.spyOn(panelElement, 'getBoundingClientRect').mockImplementation(() => {
+        const left = Number.parseFloat(panelElement.style.left) || 100;
+        const top = Number.parseFloat(panelElement.style.top) || 120;
+        return makeLayoutRect(left, top, width, height);
+      });
+
+      panel.open();
+      const position = () => {
+        const rect = panelElement.getBoundingClientRect();
+        return { left: rect.left, top: rect.top };
+      };
+      const origin = position();
+
+      handle.focus();
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      expect(position().left).toBe(origin.left + 10);
+      handle.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+      );
+      expect(position().left).toBe(origin.left + 11);
+
+      reset.click();
+      expect(panelElement.style.left).toBe('');
+      expect(panelElement.style.top).toBe('');
+
+      dispatchLayoutPointer(handle, 'pointerdown', {
+        pointerId: 1,
+        clientX: origin.left,
+        clientY: origin.top,
+      });
+      dispatchLayoutPointer(handle, 'pointermove', {
+        pointerId: 1,
+        clientX: 2_000,
+        clientY: 2_000,
+      });
+      expect(position().left).toBe(1200 - width - 12);
+      expect(position().top).toBe(800 - height - 12);
+
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(panelElement.hidden).toBe(false);
+      expect(position()).toEqual(origin);
+
+      dispatchLayoutPointer(handle, 'pointerdown', {
+        pointerId: 2,
+        clientX: origin.left,
+        clientY: origin.top,
+      });
+      dispatchLayoutPointer(handle, 'pointermove', {
+        pointerId: 2,
+        clientX: origin.left + 90,
+        clientY: origin.top + 70,
+      });
+      dispatchLayoutPointer(handle, 'pointercancel', {
+        pointerId: 2,
+        clientX: origin.left + 90,
+        clientY: origin.top + 70,
+      });
+      expect(position()).toEqual(origin);
+
+      dispatchLayoutPointer(handle, 'pointerdown', {
+        pointerId: 3,
+        clientX: origin.left,
+        clientY: origin.top,
+      });
+      dispatchLayoutPointer(handle, 'pointermove', {
+        pointerId: 3,
+        clientX: origin.left + 90,
+        clientY: origin.top + 70,
+      });
+      dispatchLayoutPointer(handle, 'pointerup', {
+        pointerId: 3,
+        clientX: origin.left + 90,
+        clientY: origin.top + 70,
+      });
+      const committed = position();
+      expect(committed).toEqual({ left: origin.left + 90, top: origin.top + 70 });
+
+      close.click();
+      expect(panelElement.hidden).toBe(true);
+      panel.open();
+      expect(position()).toEqual(committed);
+
+      reset.click();
+      expect(panelElement.style.left).toBe('');
+      expect(panelElement.style.top).toBe('');
+      expect(panelElement.style.right).toBe('');
+      expect(panelElement.style.bottom).toBe('');
+    } finally {
+      restoreViewport();
+      if (originalMatchMedia) {
+        Object.defineProperty(window, 'matchMedia', {
+          configurable: true,
+          value: originalMatchMedia,
+        });
+      } else {
+        Reflect.deleteProperty(window, 'matchMedia');
+      }
+    }
+  });
+
+  it('retains highlight backgrounds and derives readable foreground colors', () => {
+    const { panel, host } = mountLayoutPanel();
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#000000',
+      contentColor: '#ffffff',
+    });
+
+    expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#000000');
+    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe('#fff');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ffffff');
+    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe('#000');
+
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#ffffff',
+      contentColor: '#000000',
+    });
+    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe('#000');
+    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe('#fff');
+  });
+});
+
 function maintenanceCallbacks(
   overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {},
 ): ConstructorParameters<typeof SearchPanel>[0] {
@@ -775,4 +1012,55 @@ function maintenanceCallbacks(
     resetLocalMirror: vi.fn(async () => undefined),
     ...overrides,
   };
+}
+
+function mountLayoutPanel(
+  overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {},
+): { panel: SearchPanel; root: ShadowRoot; host: HTMLDivElement } {
+  const panel = new SearchPanel(maintenanceCallbacks(overrides));
+  const host = document.querySelector<HTMLDivElement>('#cu-wiki-search-host');
+  const root = host?.shadowRoot;
+  if (!host || !root) throw new Error('搜索面板没有挂载');
+  return { panel, root, host };
+}
+
+function setLayoutViewport(width: number, height: number): () => void {
+  const previousWidth = window.innerWidth;
+  const previousHeight = window.innerHeight;
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+  return () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: previousHeight });
+  };
+}
+
+function makeLayoutRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+function dispatchLayoutPointer(
+  target: EventTarget,
+  type: string,
+  values: { pointerId: number; clientX: number; clientY: number },
+): void {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  for (const [key, value] of Object.entries({
+    ...values,
+    button: 0,
+    pointerType: 'mouse',
+  })) {
+    Object.defineProperty(event, key, { configurable: true, value });
+  }
+  target.dispatchEvent(event);
 }
