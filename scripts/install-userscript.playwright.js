@@ -5,7 +5,8 @@ async (page, configuredUserscriptUrl) => {
     environment.CU_WIKI_ORIGIN ?? 'https://casualtiesunknown.huijiwiki.com'
   ).replace(/\/+$/, '');
   const editTarget =
-    environment.CU_WIKI_INSTALL_EDIT_PATH ?? '/wiki/首页?action=edit';
+    environment.CU_WIKI_INSTALL_EDIT_PATH ??
+    '/index.php?title=12%E5%8F%B7%E9%B9%BF%E5%BC%B9&action=edit';
   const editUrl = /^https?:\/\//i.test(editTarget)
     ? editTarget
     : `${wikiOrigin.replace(/\/+$/, '')}/${editTarget.replace(/^\/+/, '')}`;
@@ -14,7 +15,7 @@ async (page, configuredUserscriptUrl) => {
     environment.CU_WIKI_USERSCRIPT_URL ??
     'http://127.0.0.1:8788/cu-wiki-local-search.user.js';
   const context = page.context();
-  const sourceResponse = await context.request.get(userscriptUrl);
+  const sourceResponse = await context.request.get(userscriptUrl, { timeout: 10_000 });
   if (!sourceResponse.ok()) {
     throw new Error(`无法读取待安装 userscript：HTTP ${sourceResponse.status()}`);
   }
@@ -30,22 +31,16 @@ async (page, configuredUserscriptUrl) => {
   }
   const initialPages = new Set(context.pages());
   let wikiPage;
-  for (const candidate of context.pages()) {
-    if (await isActivatedWikiPage(candidate)) {
-      wikiPage = candidate;
-      break;
-    }
-  }
-  if (!wikiPage) {
-    wikiPage = await context.newPage();
-    await wikiPage.goto(
-      editUrl,
-      { waitUntil: 'domcontentloaded', timeout: 30_000 },
-    );
-  }
   let bridgePage;
   let askPage;
   try {
+    wikiPage = await context.newPage();
+    await wikiPage.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000,
+    });
+    await wikiPage.bringToFront();
+
     bridgePage = await context.newPage();
     await bridgePage.goto(userscriptUrl, {
       waitUntil: 'domcontentloaded',
@@ -97,29 +92,19 @@ async (page, configuredUserscriptUrl) => {
     if (!bridgePage.isClosed()) await bridgePage.close();
     bridgePage = undefined;
     await wikiPage.bringToFront();
-    let readyError;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      await wikiPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-      try {
-        await wikiPage.waitForFunction(
-          ({ version, buildId }) => {
-            const debug = window.__CU_WIKI_SEARCH__;
-            return (
-              debug?.ready === true &&
-              debug.scriptVersion === version &&
-              debug.buildId === buildId
-            );
-          },
-          { version: expectedVersion, buildId: expectedBuildId },
-          { timeout: 60_000 },
+    await wikiPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await wikiPage.waitForFunction(
+      ({ version, buildId }) => {
+        const debug = window.__CU_WIKI_SEARCH__;
+        return (
+          debug?.ready === true &&
+          debug.scriptVersion === version &&
+          debug.buildId === buildId
         );
-        readyError = undefined;
-        break;
-      } catch (error) {
-        readyError = error;
-      }
-    }
-    if (readyError) throw readyError;
+      },
+      { version: expectedVersion, buildId: expectedBuildId },
+      { timeout: 60_000 },
+    );
     return {
       installed: true,
       wikiUrl: wikiPage.url(),
@@ -130,28 +115,11 @@ async (page, configuredUserscriptUrl) => {
       buildId: await wikiPage.evaluate(() => window.__CU_WIKI_SEARCH__?.buildId),
     };
   } finally {
-    for (const candidate of [askPage, bridgePage]) {
+    for (const candidate of [askPage, bridgePage, wikiPage]) {
       if (candidate && !candidate.isClosed() && !initialPages.has(candidate)) {
         await candidate.close().catch(() => undefined);
       }
     }
-  }
-
-  async function isActivatedWikiPage(candidate) {
-    if (!candidate.url().startsWith(`${wikiOrigin}/`)) return false;
-    try {
-      return await candidate.evaluate(() => {
-        const urlAction = new URLSearchParams(location.search).get('action');
-        const configuredAction = window.mw?.config?.get('wgAction');
-        return (
-          urlAction === 'edit' ||
-          urlAction === 'submit' ||
-          configuredAction === 'edit' ||
-          configuredAction === 'submit'
-        );
-      });
-    } catch {
-      return false;
-    }
+    if (!page.isClosed()) await page.bringToFront().catch(() => undefined);
   }
 }

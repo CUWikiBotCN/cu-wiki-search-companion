@@ -227,8 +227,7 @@ async function start(): Promise<void> {
     searchCodes: (query) => dataCodeIndex?.search(query) ?? [],
     insert: (result, query) => {
       if (!canInsertWikiText) {
-        GM_setClipboard(result.title, 'text');
-        panel.setStatus(`当前为 ${contentModel}，已复制标题：${result.title}`, 'success');
+        panel.setStatus(`当前为 ${contentModel}，不支持插入维基链接`, 'error');
         return;
       }
       const link = wikiLink(
@@ -251,9 +250,9 @@ async function start(): Promise<void> {
     open: (result) => {
       GM_openInTab(pageUrl(result.title), { active: true });
     },
-    selectCode: (result) => {
-      GM_setClipboard(result.code, 'text');
-      panel.setStatus(`已复制代码名：${result.code}`, 'success');
+    copyTitle: (result) => {
+      GM_setClipboard(result.title, 'text');
+      panel.setStatus(`已复制标题：${result.title}`, 'success');
     },
     copyCode: (result) => {
       GM_setClipboard(result.code, 'text');

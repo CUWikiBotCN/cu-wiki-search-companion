@@ -93,12 +93,15 @@ describe('browser tooling scripts', () => {
     expect(context.requestedUrls).toEqual([
       'http://127.0.0.1:8788/cu-wiki-local-search.user.js',
     ]);
+    expect(context.requestTimeouts).toEqual([10_000]);
     expect(context.createdPages).toHaveLength(3);
     const [dedicatedWikiPage, bridgePage, askPage] = context.createdPages;
     expect(dedicatedWikiPage?.navigations).toEqual([
-      'https://casualtiesunknown.huijiwiki.com/wiki/首页?action=edit',
+      'https://casualtiesunknown.huijiwiki.com/index.php?title=12%E5%8F%B7%E9%B9%BF%E5%BC%B9&action=edit',
     ]);
-    expect(dedicatedWikiPage?.closed).toBe(false);
+    expect(dedicatedWikiPage?.closed).toBe(true);
+    expect(dedicatedWikiPage?.reloads).toBe(1);
+    expect(dedicatedWikiPage?.bringToFrontCalls).toBe(2);
     expect(dedicatedWikiPage?.readyChecks).toEqual([
       expect.objectContaining({
         argument: {
@@ -110,10 +113,11 @@ describe('browser tooling scripts', () => {
     ]);
     expect(bridgePage?.closed).toBe(true);
     expect(askPage?.closed).toBe(true);
+    expect(reader.bringToFrontCalls).toBe(1);
   });
 
-  it('selects an existing query edit page when the outer run-code sandbox has no URL global', async () => {
-    const context = new InstallContext();
+  it('does not reuse existing pages or retry readiness and cleans up owned pages on failure', async () => {
+    const context = new InstallContext(new Error('ready timeout'));
     const reader = context.addInitial(
       'https://casualtiesunknown.huijiwiki.com/wiki/首页',
     );
@@ -122,29 +126,21 @@ describe('browser tooling scripts', () => {
     );
     const install = await loadRunCodeScript('install-userscript.playwright.js');
 
-    vi.stubGlobal('URL', undefined);
-    try {
-      await install(reader);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    await expect(install(reader)).rejects.toThrow('ready timeout');
 
+    expect(reader.navigations).toEqual([]);
+    expect(reader.closed).toBe(false);
     expect(reader.readyChecks).toEqual([]);
     expect(editor.navigations).toEqual([]);
     expect(editor.closed).toBe(false);
-    expect(editor.activationChecks).toEqual([
-      expect.stringMatching(/location\.search/),
-    ]);
-    expect(editor.readyChecks).toEqual([
-      expect.objectContaining({
-        argument: {
-          version: '0.2.0',
-          buildId: 'CU_WIKI_BUILD_ID:test-build',
-        },
-      }),
-    ]);
-    expect(context.createdPages).toHaveLength(2);
+    expect(editor.activationChecks).toEqual([]);
+    expect(editor.readyChecks).toEqual([]);
+    expect(context.createdPages).toHaveLength(3);
     expect(context.createdPages.every((page) => page.closed)).toBe(true);
+    const dedicatedWikiPage = context.createdPages[0];
+    expect(dedicatedWikiPage?.reloads).toBe(1);
+    expect(dedicatedWikiPage?.readyChecks).toHaveLength(1);
+    expect(reader.bringToFrontCalls).toBe(1);
   });
 
   it('uses an explicit non-default userscript URL', async () => {
@@ -298,9 +294,11 @@ async function loadRunCodeScript(name: string): Promise<RunCodeScript> {
 class InstallContext {
   readonly createdPages: InstallPage[] = [];
   readonly requestedUrls: string[] = [];
+  readonly requestTimeouts: Array<number | undefined> = [];
   readonly request = {
-    get: async (url: string) => {
+    get: async (url: string, options?: { timeout?: number }) => {
       this.requestedUrls.push(url);
+      this.requestTimeouts.push(options?.timeout);
       return {
         ok: () => true,
         status: () => 200,
@@ -310,6 +308,8 @@ class InstallContext {
     },
   };
   private readonly allPages: InstallPage[] = [];
+
+  constructor(readonly readyFailure?: Error) {}
 
   addInitial(url: string): InstallPage {
     const page = new InstallPage(this, url);
@@ -337,6 +337,8 @@ class InstallContext {
 
 class InstallPage {
   closed = false;
+  bringToFrontCalls = 0;
+  reloads = 0;
   readonly navigations: string[] = [];
   readonly readyChecks: Array<{ predicate: string; argument: unknown }> = [];
   readonly activationChecks: string[] = [];
@@ -382,15 +384,20 @@ class InstallPage {
     return new InstallControls();
   }
 
-  async bringToFront(): Promise<void> {}
+  async bringToFront(): Promise<void> {
+    this.bringToFrontCalls += 1;
+  }
 
-  async reload(): Promise<void> {}
+  async reload(): Promise<void> {
+    this.reloads += 1;
+  }
 
   async waitForFunction(
     predicate: (...args: never[]) => unknown,
     argument: unknown,
   ): Promise<void> {
     this.readyChecks.push({ predicate: predicate.toString(), argument });
+    if (this.installContext.readyFailure) throw this.installContext.readyFailure;
   }
 
   async evaluate<T>(callback: (...args: never[]) => T): Promise<T> {

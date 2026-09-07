@@ -61,7 +61,10 @@ async page => {
         snapshots: [],
         storage: { usage: 4096, quota: 16384, persisted: false },
       };
-      const state = { refreshes: 0, maintenanceLoads: 0 };
+      const state = { refreshes: 0, maintenanceLoads: 0, siteTabs: 0 };
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'Tab') state.siteTabs += 1;
+      });
       const callbacks = {
         prepareSearch: () => undefined,
         prepareFiles: () => undefined,
@@ -71,7 +74,7 @@ async page => {
         searchContent: (query) => (query ? results : []),
         searchCodes: () => [],
         insert: () => undefined,
-        selectCode: () => undefined,
+        copyTitle: () => undefined,
         copy: () => undefined,
         copyCode: () => undefined,
         open: () => undefined,
@@ -316,6 +319,51 @@ async page => {
       { timeout: 5_000 },
     );
     const query = host.locator('.query');
+    const firstFocusable = host.locator('.drag-handle');
+    const lastFocusable = host.locator('.status-details-toggle');
+    await query.focus();
+    await fixturePage.keyboard.press('Tab');
+    const internalTab = await fixturePage.evaluate(() => {
+      const root = document.querySelector('#cu-wiki-search-layout-test')?.shadowRoot;
+      return {
+        activeClass: root?.activeElement?.className ?? '',
+        siteTabs: window.__CU_WIKI_LAYOUT_ACCEPTANCE__.state.siteTabs,
+      };
+    });
+    if (!internalTab.activeClass.includes('mode') || internalTab.siteTabs !== 0) {
+      throw new Error(`普通 Tab 未留在面板内：${JSON.stringify(internalTab)}`);
+    }
+
+    await lastFocusable.focus();
+    await fixturePage.keyboard.press('Tab');
+    const forwardWrap = await fixturePage.evaluate(() => {
+      const root = document.querySelector('#cu-wiki-search-layout-test')?.shadowRoot;
+      return {
+        activeClass: root?.activeElement?.className ?? '',
+        siteTabs: window.__CU_WIKI_LAYOUT_ACCEPTANCE__.state.siteTabs,
+      };
+    });
+    if (!forwardWrap.activeClass.includes('drag-handle') || forwardWrap.siteTabs !== 0) {
+      throw new Error(`末项 Tab 未循环到首项：${JSON.stringify(forwardWrap)}`);
+    }
+
+    await firstFocusable.focus();
+    await fixturePage.keyboard.press('Shift+Tab');
+    const backwardWrap = await fixturePage.evaluate(() => {
+      const root = document.querySelector('#cu-wiki-search-layout-test')?.shadowRoot;
+      return {
+        activeClass: root?.activeElement?.className ?? '',
+        siteTabs: window.__CU_WIKI_LAYOUT_ACCEPTANCE__.state.siteTabs,
+      };
+    });
+    if (
+      !backwardWrap.activeClass.includes('status-details-toggle') ||
+      backwardWrap.siteTabs !== 0
+    ) {
+      throw new Error(`首项 Shift+Tab 未循环到末项：${JSON.stringify(backwardWrap)}`);
+    }
+    const keyboardAcceptance = { internalTab, forwardWrap, backwardWrap };
+
     await query.fill('');
     await fixturePage.waitForFunction(
       () => {
@@ -473,7 +521,7 @@ async page => {
       expectedArrowLeft,
       reset,
     };
-    return { reports, nativeDrag };
+    return { reports, keyboardAcceptance, nativeDrag };
   } finally {
     if (fixturePage && !fixturePage.isClosed()) await fixturePage.close();
     await page.bringToFront();

@@ -2,6 +2,7 @@
 // @vitest-environment jsdom
 
 import type { ContentSearchResult } from '../src/search/content-index';
+import type { DataCodeSearchResult } from '../src/search/data-code-index';
 import type { LuaModuleSearchResult } from '../src/search/lua-module-index';
 import type { TitleSearchResult } from '../src/search/title-index';
 import { SearchPanel } from '../src/ui/search-panel';
@@ -29,7 +30,7 @@ describe('SearchPanel file resource mode', () => {
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
-      selectCode: vi.fn(),
+      copyTitle: vi.fn(),
       copy: vi.fn(),
       copyCode: vi.fn(),
       open: vi.fn(),
@@ -59,7 +60,7 @@ describe('SearchPanel file resource mode', () => {
 });
 
 describe('SearchPanel Lua module mode', () => {
-  it('routes only to structured Lua search and opens the selected module in a new tab', () => {
+  it('routes only to structured Lua search, copies the primary title, and only offers source opening', () => {
     const luaResult: LuaModuleSearchResult = {
       kind: 'lua',
       id: 828,
@@ -78,7 +79,7 @@ describe('SearchPanel Lua module mode', () => {
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
-      selectCode: vi.fn(),
+      copyTitle: vi.fn(),
       copy: vi.fn(),
       copyCode: vi.fn(),
       open: vi.fn(),
@@ -106,9 +107,90 @@ describe('SearchPanel Lua module mode', () => {
     expect(root.querySelector<HTMLElement>('.namespace')?.hidden).toBe(true);
     expect(root.querySelector('.results')?.textContent).toContain('函数 · p.main');
 
-    root.querySelector<HTMLButtonElement>('.insert')?.click();
-    expect(callbacks.open).toHaveBeenCalledWith(luaResult);
+    root.querySelector<HTMLButtonElement>('.result-primary')?.click();
+    expect(callbacks.copyTitle).toHaveBeenCalledWith(luaResult);
     expect(callbacks.insert).not.toHaveBeenCalled();
+    expect(root.querySelectorAll('.copy-result, .insert-result')).toHaveLength(0);
+    root.querySelector<HTMLButtonElement>('.open-result')?.click();
+    expect(callbacks.open).toHaveBeenCalledWith(luaResult);
+  });
+});
+
+describe('SearchPanel result actions', () => {
+  it('copies page titles from the primary action and orders the available secondary actions', () => {
+    const result: TitleSearchResult = {
+      id: 12,
+      title: '12号鹿弹',
+      namespace: 0,
+      namespaceName: '',
+      score: 100,
+    };
+    const callbacks = maintenanceCallbacks({ search: vi.fn(() => [result]) });
+    const panel = new SearchPanel(callbacks);
+    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const panelElement = root?.querySelector<HTMLElement>('.panel');
+    const input = root?.querySelector<HTMLInputElement>('.query');
+    if (!root || !panelElement || !input) throw new Error('搜索面板没有挂载');
+
+    panel.open();
+    input.value = '鹿弹';
+    panel.refreshResults();
+    expect(
+      [...root.querySelectorAll<HTMLElement>('.result .action')].map(
+        (action) => action.textContent,
+      ),
+    ).toEqual(['打开', '复制插入内容', '插入']);
+
+    const primary = root.querySelector<HTMLButtonElement>('.insert.result-primary');
+    if (!primary) throw new Error('结果主按钮没有挂载');
+    primary.click();
+    expect(callbacks.copyTitle).toHaveBeenCalledWith(result);
+    expect(panelElement.hidden).toBe(false);
+
+    root.querySelector<HTMLButtonElement>('.open-result')?.click();
+    expect(callbacks.open).toHaveBeenCalledWith(result);
+    root.querySelector<HTMLButtonElement>('.copy-result')?.click();
+    expect(callbacks.copy).toHaveBeenCalledWith(result, '鹿弹');
+    root.querySelector<HTMLButtonElement>('.insert-result')?.click();
+    expect(callbacks.insert).toHaveBeenCalledWith(result, '鹿弹');
+    expect(panelElement.hidden).toBe(true);
+    panel.open();
+    panel.setInsertMode(false);
+    panel.refreshResults();
+    expect(root.querySelector('.insert-result')).toBeNull();
+  });
+
+  it('copies Data codes from the primary action and only offers opening the source', () => {
+    const result: DataCodeSearchResult = {
+      kind: 'data-code',
+      source: 'Data:Item.json',
+      chineseName: '鹿弹代码',
+      code: 'buckshot_12',
+      dataType: 'item',
+      score: 100,
+    };
+    const callbacks = maintenanceCallbacks({ searchCodes: vi.fn(() => [result]) });
+    const panel = new SearchPanel(callbacks);
+    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const input = root?.querySelector<HTMLInputElement>('.query');
+    const mode = root?.querySelector<HTMLSelectElement>('.mode');
+    if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
+
+    panel.open();
+    input.value = 'buckshot';
+    mode.value = 'data-code';
+    mode.dispatchEvent(new Event('change'));
+
+    root.querySelector<HTMLButtonElement>('.result-primary')?.click();
+    expect(callbacks.copyCode).toHaveBeenCalledWith(result);
+    expect(callbacks.copyTitle).not.toHaveBeenCalled();
+    expect(
+      [...root.querySelectorAll<HTMLElement>('.result .action')].map(
+        (action) => action.textContent,
+      ),
+    ).toEqual(['打开来源']);
+    root.querySelector<HTMLButtonElement>('.open-result')?.click();
+    expect(callbacks.openCode).toHaveBeenCalledWith(result);
   });
 });
 
@@ -159,7 +241,7 @@ describe('SearchPanel local maintenance', () => {
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
-      selectCode: vi.fn(),
+      copyTitle: vi.fn(),
       copy: vi.fn(),
       copyCode: vi.fn(),
       open: vi.fn(),
@@ -374,6 +456,9 @@ describe('SearchPanel keyboard lifecycle', () => {
     window.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'k', altKey: true, metaKey: true }),
     );
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', altKey: true, shiftKey: true }),
+    );
     const altGraph = new KeyboardEvent('keydown', { key: 'k', altKey: true });
     vi.spyOn(altGraph, 'getModifierState').mockImplementation(
       (key) => key === 'AltGraph',
@@ -436,7 +521,7 @@ describe('SearchPanel keyboard lifecycle', () => {
     expect(panelElement.hidden).toBe(true);
   });
 
-  it('keeps result arrows and Enter scoped to the query input', () => {
+  it('preserves modified input arrows and dispatches only defined query shortcuts', () => {
     const first: TitleSearchResult = {
       id: 1,
       title: '第一页',
@@ -460,16 +545,177 @@ describe('SearchPanel keyboard lifecycle', () => {
     panel.open();
     input.value = '页面';
     panel.refreshResults();
-    for (const item of root.querySelectorAll<HTMLElement>('.result')) {
-      item.scrollIntoView = vi.fn();
-    }
-
     mode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(callbacks.insert).not.toHaveBeenCalled();
+    expect(callbacks.copyTitle).not.toHaveBeenCalled();
+
+    const shiftArrow = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const controlArrow = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(input.dispatchEvent(shiftArrow)).toBe(true);
+    expect(input.dispatchEvent(controlArrow)).toBe(true);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(callbacks.copyTitle).toHaveBeenLastCalledWith(first);
+    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(false);
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(callbacks.copyTitle).toHaveBeenLastCalledWith(second);
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }),
+    );
+    expect(callbacks.open).toHaveBeenCalledTimes(2);
+    expect(callbacks.open).toHaveBeenLastCalledWith(second);
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true }),
+    );
+    expect(callbacks.copyTitle).toHaveBeenCalledTimes(2);
+    expect(callbacks.open).toHaveBeenCalledTimes(2);
+    expect(callbacks.insert).not.toHaveBeenCalled();
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
     expect(callbacks.insert).toHaveBeenCalledWith(second, '页面');
+    expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(true);
+  });
+
+  it('uses the focused result for primary shortcuts and restores query focus before refresh removes it', () => {
+    const first: TitleSearchResult = {
+      id: 1,
+      title: '第一页',
+      namespace: 0,
+      namespaceName: '',
+      score: 2,
+    };
+    const second: TitleSearchResult = {
+      id: 2,
+      title: '第二页',
+      namespace: 0,
+      namespaceName: '',
+      score: 1,
+    };
+    let results = [first, second];
+    const callbacks = maintenanceCallbacks({ search: vi.fn(() => results) });
+    const panel = new SearchPanel(callbacks);
+    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const input = root?.querySelector<HTMLInputElement>('.query');
+    if (!root || !input) throw new Error('搜索面板没有挂载');
+    panel.open();
+    input.value = '页面';
+    panel.refreshResults();
+    const primaries = [...root.querySelectorAll<HTMLButtonElement>('.result-primary')];
+    const items = [...root.querySelectorAll<HTMLElement>('.result')];
+    if (primaries.length !== 2 || items.length !== 2) throw new Error('结果按钮没有挂载');
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    primaries[0]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    );
+    expect(callbacks.open).toHaveBeenLastCalledWith(first);
+
+    primaries[1]?.focus();
+    expect(items[1]?.dataset.selected).toBe('true');
+    primaries[0]?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
+    expect(callbacks.copyTitle).toHaveBeenLastCalledWith(first);
+
+    const secondary = root.querySelector<HTMLButtonElement>('.open-result');
+    if (!secondary) throw new Error('打开结果按钮没有挂载');
+    const nativeEnter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(secondary.dispatchEvent(nativeEnter)).toBe(true);
+
+    primaries[1]?.focus();
+    results = [];
+    panel.refreshResults();
+    expect(root.activeElement).toBe(input);
+  });
+
+  it('cycles Tab inside the panel, skips unavailable controls, and stops site propagation', () => {
+    const panel = new SearchPanel(maintenanceCallbacks());
+    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const handle = root?.querySelector<HTMLElement>('.drag-handle');
+    const input = root?.querySelector<HTMLInputElement>('.query');
+    const mode = root?.querySelector<HTMLSelectElement>('.mode');
+    const namespace = root?.querySelector<HTMLSelectElement>('.namespace');
+    if (!root || !handle || !input || !mode || !namespace) {
+      throw new Error('搜索面板没有挂载');
+    }
+    panel.open();
+    namespace.disabled = true;
+    for (const control of root.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, [tabindex]',
+    )) {
+      vi.spyOn(control, 'getClientRects').mockReturnValue(
+        [makeLayoutRect(0, 0, 10, 10)] as unknown as DOMRectList,
+      );
+    }
+
+    const siteKeydown = vi.fn();
+    window.addEventListener('keydown', siteKeydown);
+    try {
+      input.focus();
+      const internalTab = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(internalTab);
+      expect(internalTab.defaultPrevented).toBe(false);
+      expect(siteKeydown).not.toHaveBeenCalled();
+
+      handle.focus();
+      const backward = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      handle.dispatchEvent(backward);
+      expect(backward.defaultPrevented).toBe(true);
+      expect(root.activeElement).toBe(mode);
+
+      const forward = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      });
+      mode.dispatchEvent(forward);
+      expect(forward.defaultPrevented).toBe(true);
+      expect(root.activeElement).toBe(handle);
+      expect(siteKeydown).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', siteKeydown);
+    }
   });
 
   it('leaves Escape to the active IME and restores the editor focus when closing later', () => {
@@ -496,7 +742,7 @@ describe('SearchPanel keyboard lifecycle', () => {
     expect(document.activeElement).toBe(editor);
   });
 
-  it('keeps editor focus established by a mouse result action', () => {
+  it('keeps editor focus established by the explicit insert action', () => {
     const editor = document.createElement('textarea');
     editor.id = 'editor-focus-target';
     document.body.append(editor);
@@ -520,7 +766,7 @@ describe('SearchPanel keyboard lifecycle', () => {
     toggle.click();
     input.value = '鹿弹';
     panel.refreshResults();
-    root.querySelector<HTMLButtonElement>('.insert')?.click();
+    root.querySelector<HTMLButtonElement>('.insert-result')?.click();
 
     expect(callbacks.insert).toHaveBeenCalledWith(result, '鹿弹');
     expect(document.activeElement).toBe(editor);
@@ -989,7 +1235,7 @@ function maintenanceCallbacks(
     searchContent: vi.fn(() => []),
     searchCodes: vi.fn(() => []),
     insert: vi.fn(),
-    selectCode: vi.fn(),
+    copyTitle: vi.fn(),
     copy: vi.fn(),
     copyCode: vi.fn(),
     open: vi.fn(),

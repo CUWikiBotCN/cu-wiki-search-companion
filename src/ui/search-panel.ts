@@ -47,7 +47,7 @@ export interface SearchPanelCallbacks {
   searchContent(query: string, namespace?: number): ContentSearchResult[];
   searchCodes(query: string): DataCodeSearchResult[];
   insert(result: WikiPageSearchResult, query: string): void;
-  selectCode(result: DataCodeSearchResult): void;
+  copyTitle(result: WikiPageSearchResult): void;
   copy(result: WikiPageSearchResult, query: string): void;
   copyCode(result: DataCodeSearchResult): void;
   open(result: WikiPageSearchResult): void;
@@ -189,6 +189,7 @@ export class SearchPanel {
   setInsertMode(enabled: boolean): void {
     this.insertMode = enabled;
     this.updateModePresentation();
+    this.renderResults();
   }
 
   setDataCodeRules(source: string, defaultSource: string): void {
@@ -468,6 +469,8 @@ export class SearchPanel {
   }
 
   private renderResults(): void {
+    // A background refresh must not leave keyboard focus on a removed result.
+    if (this.resultList.contains(this.root.activeElement)) this.input.focus();
     this.resultList.replaceChildren();
     if (!this.input.value.trim()) {
       this.resultList.append(
@@ -507,37 +510,37 @@ export class SearchPanel {
       item.className = 'result';
       item.dataset.selected = String(index === this.selectedIndex);
 
-      const insertButton = document.createElement('button');
-      insertButton.className = 'insert';
-      insertButton.type = 'button';
+      const primaryButton = document.createElement('button');
+      primaryButton.className = 'insert result-primary';
+      primaryButton.type = 'button';
+      primaryButton.dataset.index = String(index);
       const title = document.createElement('span');
       title.className = 'result-title';
       const namespace = document.createElement('span');
       namespace.className = 'result-namespace';
-      insertButton.append(title, namespace);
-      insertButton.addEventListener('click', () => this.insert(result));
+      primaryButton.append(title, namespace);
+      primaryButton.addEventListener('click', () => this.copyResult(result));
 
       const actions = document.createElement('span');
       actions.className = 'actions';
       if (isDataCodeResult(result)) {
-        insertButton.title = '复制代码名';
+        primaryButton.title = `复制代码名：${result.code}（Enter）`;
         title.textContent = result.chineseName;
         namespace.textContent = `${result.code} · ${result.dataType}`;
         actions.append(
-          this.actionButton('复制', '复制代码名', () => this.callbacks.copyCode(result)),
-          this.actionButton('↗', '打开 Data 页面', () => this.callbacks.openCode(result)),
+          this.actionButton('open', '打开来源', '在新标签页打开 Data 来源', () => this.openResult(result)),
         );
       } else if (isLuaResult(result)) {
-        insertButton.title = '在新标签页打开模块';
+        primaryButton.title = `复制模块标题：${result.title}（Enter）`;
         title.textContent = result.title;
         namespace.textContent = result.matches
           .map((match) => `${luaKindLabel(match.kind)} · ${match.value}`)
           .join(' · ');
         actions.append(
-          this.actionButton('↗', '在新标签页打开模块', () => this.callbacks.open(result)),
+          this.actionButton('open', '打开', '在新标签页打开模块', () => this.openResult(result)),
         );
       } else {
-        insertButton.title = this.insertMode ? '插入维基链接' : '复制页面标题';
+        primaryButton.title = `复制页面标题：${result.title}（Enter）`;
         if (isContentResult(result)) {
           this.appendResultText(
             title,
@@ -557,25 +560,38 @@ export class SearchPanel {
           namespace.textContent = result.namespaceName || '主命名空间';
         }
         actions.append(
-          this.actionButton('复制', '复制维基链接', () =>
+          this.actionButton('open', '打开', '在新标签页打开', () => this.openResult(result)),
+          this.actionButton('copy', '复制插入内容', '复制包含 [[ ]] 的维基链接', () =>
             this.callbacks.copy(result, this.input.value),
           ),
-          this.actionButton('↗', '在新标签页打开', () => this.callbacks.open(result)),
         );
+        if (this.insertMode) {
+          actions.append(
+            this.actionButton('insert', '插入', '插入维基链接并返回编辑器', () => this.insert(result)),
+          );
+        }
       }
-      item.append(insertButton, actions);
-      item.addEventListener('mouseenter', () => {
+      primaryButton.setAttribute('aria-label', primaryButton.title);
+      item.append(primaryButton, actions);
+      const select = (): void => {
         this.selectedIndex = index;
         this.updateSelection();
-      });
+      };
+      item.addEventListener('mouseenter', select);
+      item.addEventListener('focusin', select);
       this.resultList.append(item);
     });
   }
 
   private handleKeydown(event: KeyboardEvent): void {
-    if (this.composing || event.isComposing) return;
+    if (this.panel.hidden || this.composing || event.isComposing) return;
+    if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      this.cycleFocus(event);
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       if (this.drag) {
         this.finishDrag(true);
         return;
@@ -583,20 +599,57 @@ export class SearchPanel {
       this.close();
       return;
     }
-    if (event.target !== this.input) return;
+    const primary = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>('.result-primary')
+      : null;
+    if (event.key === 'Enter' && (event.target === this.input || primary)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (
+        event.altKey || event.getModifierState('AltGraph') ||
+        (event.ctrlKey && event.metaKey) ||
+        (event.shiftKey && (event.ctrlKey || event.metaKey))
+      ) return;
+      const result = this.results[primary ? Number(primary.dataset.index) : this.selectedIndex];
+      if (!result) return;
+      if (event.ctrlKey || event.metaKey) this.openResult(result);
+      else if (event.shiftKey) this.insert(result);
+      else this.copyResult(result);
+      return;
+    }
+    if (
+      event.target !== this.input || event.altKey || event.ctrlKey ||
+      event.metaKey || event.shiftKey
+    ) return;
     if (!this.results.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
+      event.stopPropagation();
       this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
       this.updateSelection();
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
+      event.stopPropagation();
       this.selectedIndex = (this.selectedIndex - 1 + this.results.length) % this.results.length;
       this.updateSelection();
-    } else if (event.key === 'Enter') {
+    }
+  }
+
+  private cycleFocus(event: KeyboardEvent): void {
+    event.stopPropagation();
+    const controls = [...this.panel.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, a[href], [tabindex]',
+    )].filter((element) =>
+      element.tabIndex >= 0 && !element.matches(':disabled') &&
+      !element.closest('[hidden], [inert]') && element.getClientRects().length > 0 &&
+      getComputedStyle(element).visibility === 'visible',
+    );
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    const active = this.root.activeElement;
+    if (active === (event.shiftKey ? first : last) || !controls.some((element) => element === active)) {
       event.preventDefault();
-      const result = this.results[this.selectedIndex];
-      if (result) this.insert(result);
+      (event.shiftKey ? last : first)?.focus();
     }
   }
 
@@ -607,21 +660,35 @@ export class SearchPanel {
       !event.altKey ||
       event.ctrlKey ||
       event.metaKey ||
+      event.shiftKey ||
       event.getModifierState('AltGraph') ||
       event.key.toLocaleLowerCase() !== 'k'
     ) {
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
     if (this.panel.hidden) this.open();
     else this.close();
   }
 
+  private copyResult(result: SearchPanelResult): void {
+    if (isDataCodeResult(result)) this.callbacks.copyCode(result);
+    else this.callbacks.copyTitle(result);
+  }
+
+  private openResult(result: SearchPanelResult): void {
+    if (isDataCodeResult(result)) this.callbacks.openCode(result);
+    else this.callbacks.open(result);
+  }
+
   private insert(result: SearchPanelResult): void {
+    if (!this.insertMode || isDataCodeResult(result) || isLuaResult(result)) {
+      this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
+      return;
+    }
     this.close();
-    if (isDataCodeResult(result)) this.callbacks.selectCode(result);
-    else if (isLuaResult(result)) this.callbacks.open(result);
-    else this.callbacks.insert(result, this.input.value);
+    this.callbacks.insert(result, this.input.value);
   }
 
   private updateModePresentation(): void {
@@ -651,7 +718,7 @@ export class SearchPanel {
       this.input.setAttribute('aria-label', '搜索页面正文');
       this.namespaceSelect.hidden = false;
     } else {
-      heading.textContent = this.insertMode ? '插入维基链接' : '搜索并复制标题';
+      heading.textContent = '搜索页面标题';
       this.input.placeholder = '标题、片段或英文中缀';
       this.input.setAttribute('aria-label', '搜索页面标题');
       this.namespaceSelect.hidden = false;
@@ -703,6 +770,7 @@ export class SearchPanel {
     const direction = directions[event.key];
     if (!direction) return;
     event.preventDefault();
+    event.stopPropagation();
     const rect = this.panel.getBoundingClientRect();
     const step = event.shiftKey ? 1 : 10;
     this.positionPanel(rect.left + direction[0] * step, rect.top + direction[1] * step);
@@ -821,6 +889,10 @@ export class SearchPanel {
     const clipped =
       this.status.scrollHeight > this.status.clientHeight + 1 ||
       this.status.scrollWidth > this.status.clientWidth + 1;
+    if (!clipped && (
+      this.root.activeElement === this.statusDetailsToggle ||
+      this.statusDetails.contains(this.root.activeElement)
+    )) this.input.focus();
     this.statusDetailsToggle.hidden = !clipped;
     if (!clipped) {
       this.statusDetails.hidden = true;
@@ -849,9 +921,14 @@ export class SearchPanel {
     return item;
   }
 
-  private actionButton(label: string, title: string, action: () => void): HTMLButtonElement {
+  private actionButton(
+    kind: 'open' | 'copy' | 'insert',
+    label: string,
+    title: string,
+    action: () => void,
+  ): HTMLButtonElement {
     const button = document.createElement('button');
-    button.className = 'action';
+    button.className = `action ${kind}-result`;
     button.type = 'button';
     button.textContent = label;
     button.title = title;
@@ -866,6 +943,7 @@ export class SearchPanel {
     try {
       this.setStatus('正在按配置刷新 Data 代码缓存…');
       await this.callbacks.saveDataCodeRules(source);
+      if (this.settings.contains(this.root.activeElement)) this.configure.focus();
       this.settings.hidden = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -977,6 +1055,9 @@ export class SearchPanel {
   }
 
   private setMaintenanceDisabled(disabled: boolean): void {
+    if (disabled && this.root.activeElement?.matches('.maintenance-action')) {
+      this.requireElement<HTMLButtonElement>('.maintenance-toggle').focus();
+    }
     for (const button of this.root.querySelectorAll<HTMLButtonElement>(
       '.maintenance-action',
     )) {
@@ -1200,13 +1281,15 @@ const markup = `
     .insert { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; border: 0; padding: 9px 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
     .result-title { max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
     .result-namespace { max-width: 100%; overflow-wrap: anywhere; font-size: 11px; color: var(--detail-color, #babdc4); }
-    .actions { display: flex; gap: 3px; padding-right: 6px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 3px; padding-right: 6px; }
     .action { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; padding: 4px 6px; font-size: 12px; }
+    .open-result { font-weight: 650; }
     .action:hover { border-color: var(--cu-color-border-soft, #45484e); background: var(--detail-bg, #141414); }
     .message { padding: 28px 12px; color: var(--detail-color, #babdc4); text-align: center; overflow-wrap: anywhere; }
     .status-details { margin: 10px 14px; padding: 10px; border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px; background: var(--detail-inner-bg, #202020); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .status-details[hidden] { display: none; }
-    .footer { flex: none; display: flex; gap: 8px; align-items: flex-start; min-height: 36px; padding: 8px 14px 10px; border-top: 1px solid var(--cu-color-border-soft, #45484e); color: var(--detail-color, #babdc4); font-size: 11px; }
+    .footer { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 8px; align-items: start; min-height: 36px; padding: 8px 14px 10px; border-top: 1px solid var(--cu-color-border-soft, #45484e); color: var(--detail-color, #babdc4); font-size: 11px; }
+    .keyboard-hint { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; }
     .status { flex: 1; display: -webkit-box; max-height: 2.8em; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .status-details-toggle { flex: none; border: 0; padding: 1px 3px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; font-size: 11px; }
     .status-details-toggle[hidden] { display: none; }
@@ -1226,11 +1309,13 @@ const markup = `
     :host([data-narrow]) .reset-position { display: none; }
     :host([data-narrow]) .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     :host([data-narrow]) .query { grid-column: 1 / -1; }
+    :host([data-narrow]) .result { grid-template-columns: minmax(0, 1fr); }
+    :host([data-narrow]) .actions { justify-content: flex-end; padding: 0 8px 7px; }
   </style>
   <button class="toggle" type="button" aria-expanded="false">本地搜索</button>
-  <section class="panel" hidden aria-label="未知伤亡维基本地搜索">
+  <section class="panel" role="dialog" hidden aria-label="未知伤亡维基本地搜索">
     <header class="header">
-      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调">插入维基链接</span>
+      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调">搜索页面标题</span>
       <button class="icon reload-startup" type="button" title="重新加载页面" hidden>重新加载</button>
       <button class="icon configure" type="button" title="配置 Data 代码检索字段" hidden>⚙</button>
       <button class="icon maintenance-toggle" type="button" title="本地数据与维护" aria-expanded="false">▤</button>
@@ -1239,7 +1324,7 @@ const markup = `
       <button class="icon close" type="button" title="关闭">✕</button>
     </header>
     <div class="controls">
-      <input class="query" type="search" autocomplete="off" placeholder="标题、片段或英文中缀" aria-label="搜索页面标题">
+      <input class="query" type="search" autocomplete="off" placeholder="标题、片段或英文中缀" aria-label="搜索页面标题" aria-describedby="cu-keyboard-hint">
       <select class="mode" aria-label="搜索类型">
         <option value="title">页面标题</option>
         <option value="content">页面正文</option>
@@ -1288,6 +1373,14 @@ const markup = `
     <ul class="results"><li class="message">输入标题关键词开始搜索</li></ul>
     <pre class="status-details" id="cu-status-details" tabindex="0" hidden>正在启动…</pre>
     </div>
-    <footer class="footer"><span class="status">正在启动…</span><button class="status-details-toggle" type="button" aria-expanded="false" aria-controls="cu-status-details" hidden>查看完整状态</button><span><kbd>Alt</kbd> + <kbd>K</kbd></span></footer>
+    <footer class="footer">
+      <span class="status" role="status">正在启动…</span>
+      <button class="status-details-toggle" type="button" aria-expanded="false" aria-controls="cu-status-details" hidden>查看完整状态</button>
+      <span class="keyboard-hint" id="cu-keyboard-hint">
+        <span><kbd>Alt+K</kbd> 开关</span><span><kbd>Enter</kbd> 复制</span>
+        <span><kbd>Ctrl/Cmd+Enter</kbd> 打开</span><span><kbd>Shift+Enter</kbd> 插入</span>
+        <span><kbd>Tab</kbd> 切换焦点</span><span><kbd>Esc</kbd> 关闭</span>
+      </span>
+    </footer>
   </section>
 `;
