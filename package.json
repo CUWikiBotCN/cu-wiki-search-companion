@@ -10,7 +10,8 @@
     "install:userscript": "bash scripts/install-userscript.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "vite"
+    "dev": "vite",
+    "browser:start": "node scripts/start-browser.mjs"
   },
   "dependencies": {
     "dexie": "4.4.5",
@@ -19,6 +20,7 @@
     "opencc-js": "1.4.2"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
     "fake-indexeddb": "6.2.4",
     "jsdom": "30.0.1",
     "typescript": "7.0.2",

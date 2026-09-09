@@ -58,7 +58,7 @@ it.each(['normal', 'early-click', 'no-locks'])('boots the real entrypoint and pr
       callback({ name: 'composition-test', mode: 'exclusive' }) },
   });
   if (noLocks) vi.spyOn(console, 'error').mockImplementation(() => undefined);
-  vi.spyOn(window, 'setInterval').mockReturnValue(1);
+  vi.spyOn(window, 'setInterval').mockImplementation(vi.fn());
   vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, timeout, ...args) => {
     const timer = originalTimeout(handler, timeout, ...args);
     timers.push(timer);

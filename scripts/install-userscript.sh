@@ -8,36 +8,57 @@ playwright_script="$(mktemp)"
 server_host="${CU_WIKI_DEV_SERVER_HOST:-127.0.0.1}"
 server_port="${CU_WIKI_DEV_SERVER_PORT:-8788}"
 server_url="${CU_WIKI_USERSCRIPT_URL:-http://${server_host}:${server_port}/cu-wiki-local-search.user.js}"
-server_unit="${CU_WIKI_DEV_SERVER_UNIT:-cu-wiki-search-dev-server}"
+server_pid=""
 
 cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
   rm -f "$served_file" "$playwright_script"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cd "$project_dir"
 build_id="${CU_WIKI_BUILD_ID:-install-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 export CU_WIKI_BUILD_ID="$build_id"
 npm run build
 
-if ! curl --fail --silent --show-error "$server_url" --output "$served_file" 2>/dev/null; then
-  # 这是开发期供 Tampermonkey 重装复用的常驻服务。它只监听 WSL loopback，
-  # 安装脚本退出时不终止；Playwright 会话仍由包装脚本在 trap 中 detach。
-  python_bin="$(command -v python3)"
-  if systemctl --user is-system-running >/dev/null 2>&1; then
-    systemd-run --user --quiet --collect --unit="$server_unit" \
-      --property=Restart=on-failure --property=RestartSec=1s \
-      "$python_bin" -m http.server "$server_port" --bind "$server_host" \
-      --directory "$project_dir/dist"
-    echo "已启动常驻 dist 服务：$server_url（user unit $server_unit）"
-  else
-    nohup setsid "$python_bin" -m http.server "$server_port" --bind "$server_host" \
-      --directory "$project_dir/dist" </dev/null \
-      >/dev/null 2>&1 &
-    echo "已启动常驻 dist 服务：$server_url（PID $!）"
+if ! curl --connect-timeout 3 --max-time 15 --fail --silent --show-error "$server_url" --output "$served_file" 2>/dev/null; then
+  if [[ -n "${CU_WIKI_USERSCRIPT_URL:-}" ]]; then
+    echo "配置的 userscript URL 不可达：$server_url" >&2
+    exit 1
   fi
+  # Serve only this build and only for this install; never stop a pre-existing server.
+  node --input-type=module - "$project_dir/dist/cu-wiki-local-search.user.js" \
+    "$server_host" "$server_port" <<'NODE' &
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+const [path, host, port] = process.argv.slice(2);
+createServer(async (request, response) => {
+  if (request.method !== 'GET' || request.url?.split('?')[0] !== '/cu-wiki-local-search.user.js') {
+    response.writeHead(404).end();
+    return;
+  }
+  try {
+    const source = await readFile(path);
+    response.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(source);
+  } catch {
+    response.writeHead(500).end();
+  }
+}).listen(Number(port), host);
+NODE
+  server_pid=$!
+  echo "已启动临时安装服务：$server_url（PID $server_pid，退出时清理）"
   for _ in {1..50}; do
-    if curl --fail --silent --show-error \
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      echo "临时安装服务启动失败：$server_url" >&2
+      exit 1
+    fi
+    if curl --connect-timeout 3 --max-time 15 --fail --silent --show-error \
       "$server_url" --output "$served_file" 2>/dev/null; then
       break
     fi
@@ -64,5 +85,5 @@ fs.writeFileSync(
   `async page => (\n${source}\n)(page, ${JSON.stringify(userscriptUrl)})\n`,
 );
 NODE
-bash "$project_dir/scripts/run-edge-playwright.sh" \
+bash "$project_dir/scripts/run-browser-playwright.sh" \
   "$playwright_script"

@@ -42,10 +42,18 @@ async (page, configuredUserscriptUrl) => {
     await wikiPage.bringToFront();
 
     bridgePage = await context.newPage();
-    await bridgePage.goto(userscriptUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30_000,
-    });
+    let navigationError;
+    try {
+      await bridgePage.goto(userscriptUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30_000,
+      });
+    } catch (error) {
+      // Extension interception can abort navigation even though its confirmation opened.
+      // The confirmation and exact installed build remain mandatory below.
+      if (!/ERR_NETWORK_CHANGED|ERR_ABORTED|NS_ERROR_ABORT/.test(String(error))) throw error;
+      navigationError = error;
+    }
 
     for (let attempt = 0; attempt < 40; attempt += 1) {
       askPage = context
@@ -57,7 +65,7 @@ async (page, configuredUserscriptUrl) => {
       if (askPage) break;
       await bridgePage.waitForTimeout(250);
     }
-    if (!askPage) throw new Error('Tampermonkey 安装确认页未出现');
+    if (!askPage) throw navigationError ?? new Error('Tampermonkey 安装确认页未出现');
 
     await askPage.waitForSelector(
       'button, input[type="button"], input[type="submit"]',

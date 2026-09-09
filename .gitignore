@@ -3,6 +3,7 @@ dist/
 coverage/
 .vite/
 .playwright-cli/
+/.local/
 *.tsbuildinfo
 
 # Local-only research, handoff notes, raw site captures and prototype artifacts.
