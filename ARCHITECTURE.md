@@ -1,6 +1,6 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.5 架构，面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文对应 0.3.6 架构（包含 2026-09-09 的 Vue 3 视图迁移），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
@@ -22,7 +22,7 @@
 ~~~mermaid
 flowchart LR
   MW[MediaWiki 编辑页] --> Entry[src/main.ts]
-  Entry --> UI[SearchPanel / Shadow DOM]
+  Entry --> UI[SearchPanel / Vue 3 / Shadow DOM]
   Entry --> API[WikiApi]
   Entry --> DB[(Dexie / IndexedDB)]
   Entry --> Pref[GM Data 字段规则]
@@ -65,10 +65,10 @@ src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，�
 
 入口只在 wgAction 或 URL action 为 edit / submit 时启动。阅读页不打开数据库、不注入面板，也不做后台同步。
 
-页面 content model 决定主动作：
+结果主动作始终复制纯标题或代码名。页面 content model 只决定是否允许额外的插入动作：
 
-- wikitext 或未知模型：把 Wiki 链接插入 CodeMirror 5 或 textarea 当前选择处。
-- 其他模型：不写编辑器，复制标题到剪贴板。
+- wikitext 或未知模型：普通页面结果可通过插入按钮或 Shift+Enter，把 Wiki 链接插入 CodeMirror 5 或 textarea 当前选择处；Data/Lua 不提供插入。
+- 其他模型：隐藏插入按钮，插入快捷键提示不支持；复制和打开仍可用。
 
 浏览器自动化只验证搜索与编辑器插入，不得点击页面的保存或提交操作。
 
