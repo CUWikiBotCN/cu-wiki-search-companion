@@ -89,8 +89,11 @@ Data 和 Lua 只提供复制主体与打开来源，不自动生成模板或模�
 ```bash
 npm ci
 npm test
+npm run typecheck
 npm run build
 ```
+
+界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。当前类型工具链固定 TypeScript 6.0.3，因为已验证的 `vue-tsc` 尚不能加载 TypeScript 7 的编译器入口；升级时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。
 
 `dist/` 中生成可安装的 `cu-wiki-local-search.user.js`、更新元数据和第三方许可清单；构建产物不进入 Git。
 

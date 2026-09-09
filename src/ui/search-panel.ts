@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
+import { createApp, nextTick, reactive, shallowReactive, type App } from 'vue';
+import SearchPanelView from './SearchPanelView.vue';
+import styles from './search-panel.css?inline';
 import { focusEditorElement } from '../editor';
 import type { NamespaceInfo } from '../types';
 import type {
   ContentSearchResult,
-  SearchTextHighlight,
 } from '../search/content-index';
 import type { DataCodeSearchResult } from '../search/data-code-index';
 import type {
   LuaModuleSearchResult,
-  LuaSymbolKind,
 } from '../search/lua-module-index';
 import type { TitleSearchResult } from '../search/title-index';
 import type {
@@ -20,11 +21,6 @@ import type {
   PersistenceRequestResult,
 } from '../maintenance/local-data-maintenance';
 
-const MIRROR_REFRESH_HELP =
-  '重新同步本地数据（需要联网）：执行全量页面对账，刷新 Data 代码缓存，并修复或续传正文与 Lua 队列；不会清空本地镜像，也不会修改 wiki 页面。';
-const FILE_REFRESH_HELP =
-  '重新同步文件资源（需要联网）：重新枚举文件命名空间并更新本地文件缓存与索引；不会影响普通页面、正文、Data 代码或 Lua，也不会修改 wiki 页面。';
-
 export type SearchPreparationKind = 'title' | 'content' | 'lua';
 
 export interface MaintenanceActionFeedback {
@@ -32,7 +28,7 @@ export interface MaintenanceActionFeedback {
   tone?: 'normal' | 'error' | 'success';
 }
 
-type SearchPanelResult =
+export type SearchPanelResult =
   | TitleSearchResult
   | DataCodeSearchResult
   | ContentSearchResult
@@ -69,7 +65,6 @@ export interface SearchPanelCallbacks {
 export class SearchPanel {
   private static shortcutOwner?: WeakRef<SearchPanel>;
   private static shortcutWindow?: Window;
-  private static layoutOwner?: WeakRef<SearchPanel>;
   private static readonly globalShortcutKeydown = (event: KeyboardEvent): void => {
     const owner = SearchPanel.shortcutOwner?.deref();
     if (!owner?.host.isConnected) {
@@ -79,39 +74,42 @@ export class SearchPanel {
     owner.handleGlobalShortcut(event);
   };
 
+  readonly state = shallowReactive({
+    visible: false,
+    mode: 'title',
+    query: '',
+    namespace: '',
+    namespaces: [] as NamespaceInfo[],
+    results: [] as SearchPanelResult[],
+    selectedIndex: -1,
+    insertMode: true,
+    settingsOpen: false,
+    dataRules: '',
+    maintenanceOpen: false,
+    maintenanceBusy: false,
+    maintenanceOutput: '尚未读取诊断',
+    dangerOpen: false,
+    resetDataRules: false,
+    status: '正在启动…',
+    tone: 'normal' as 'normal' | 'error' | 'success',
+    statusClipped: false,
+    detailsOpen: false,
+    reload: undefined as (() => void) | undefined,
+    highlights: reactive({ ...DEFAULT_HIGHLIGHT_PREFERENCES }),
+  });
+  private readonly app: App;
   private readonly host: HTMLDivElement;
   private readonly root: ShadowRoot;
   private readonly panel: HTMLElement;
   private readonly panelBody: HTMLElement;
   private readonly input: HTMLInputElement;
-  private readonly modeSelect: HTMLSelectElement;
-  private readonly namespaceSelect: HTMLSelectElement;
   private readonly resultList: HTMLUListElement;
-  private readonly status: HTMLElement;
-  private readonly statusDetails: HTMLElement;
-  private readonly statusDetailsToggle: HTMLButtonElement;
   private readonly toggle: HTMLButtonElement;
   private readonly dragHandle: HTMLElement;
-  private readonly configure: HTMLButtonElement;
-  private readonly settings: HTMLElement;
-  private readonly dataRules: HTMLTextAreaElement;
-  private readonly highlightSettings: HTMLElement;
-  private readonly titleHighlightToggle: HTMLInputElement;
-  private readonly contentHighlightToggle: HTMLInputElement;
-  private readonly titleHighlightColor: HTMLInputElement;
-  private readonly contentHighlightColor: HTMLInputElement;
-  private readonly maintenance: HTMLElement;
-  private readonly maintenanceOutput: HTMLElement;
   private defaultDataRules = '';
-  private highlightPreferences: HighlightPreferences = {
-    ...DEFAULT_HIGHLIGHT_PREFERENCES,
-  };
-  private results: SearchPanelResult[] = [];
-  private selectedIndex = -1;
-  private insertMode = true;
   private composing = false;
-  private maintenanceBusy = false;
   private startupFailed = false;
+  private destroyed = false;
   private searchTimer?: number;
   private returnFocus?: HTMLElement;
   private positioned = false;
@@ -135,103 +133,76 @@ export class SearchPanel {
     this.host = document.createElement('div');
     this.host.id = 'cu-wiki-search-host';
     this.root = this.host.attachShadow({ mode: 'open' });
-    this.root.innerHTML = markup;
     document.documentElement.append(this.host);
-
-    this.panel = this.requireElement<HTMLElement>('.panel');
-    this.panelBody = this.requireElement<HTMLElement>('.panel-body');
-    this.input = this.requireElement<HTMLInputElement>('.query');
-    this.modeSelect = this.requireElement<HTMLSelectElement>('.mode');
-    this.namespaceSelect = this.requireElement<HTMLSelectElement>('.namespace');
-    this.resultList = this.requireElement<HTMLUListElement>('.results');
-    this.status = this.requireElement<HTMLElement>('.status');
-    this.statusDetails = this.requireElement<HTMLElement>('.status-details');
-    this.statusDetailsToggle =
-      this.requireElement<HTMLButtonElement>('.status-details-toggle');
-    this.toggle = this.requireElement<HTMLButtonElement>('.toggle');
-    this.dragHandle = this.requireElement<HTMLElement>('.drag-handle');
-    this.configure = this.requireElement<HTMLButtonElement>('.configure');
-    this.settings = this.requireElement<HTMLElement>('.settings');
-    this.dataRules = this.requireElement<HTMLTextAreaElement>('.data-rules');
-    this.highlightSettings = this.requireElement<HTMLElement>('.highlight-settings');
-    this.titleHighlightToggle = this.requireElement<HTMLInputElement>('.title-highlight-toggle');
-    this.contentHighlightToggle = this.requireElement<HTMLInputElement>('.content-highlight-toggle');
-    this.titleHighlightColor = this.requireElement<HTMLInputElement>('.title-highlight-color');
-    this.contentHighlightColor = this.requireElement<HTMLInputElement>('.content-highlight-color');
-    this.maintenance = this.requireElement<HTMLElement>('.maintenance');
-    this.maintenanceOutput = this.requireElement<HTMLElement>('.maintenance-output');
-    this.bindEvents();
+    this.app = createApp(SearchPanelView, { state: this.state, actions: this.actions });
+    this.app.mount(this.root);
+    const style = document.createElement('style');
+    style.textContent = styles;
+    this.root.prepend(style);
+    this.panel = this.requireElement('.panel');
+    this.panelBody = this.requireElement('.panel-body');
+    this.input = this.requireElement('.query');
+    this.resultList = this.requireElement('.results');
+    this.toggle = this.requireElement('.toggle');
+    this.dragHandle = this.requireElement('.drag-handle');
+    SearchPanel.claimGlobalShortcut(this);
     this.bindLayout();
-    this.updateModePresentation();
-    this.syncHighlightControls();
     this.applyHighlightColors();
-    this.statusDetails.textContent = this.status.textContent;
   }
 
   setStatus(message: string, tone: 'normal' | 'error' | 'success' = 'normal'): void {
-    this.status.textContent = message;
-    this.statusDetails.textContent = message;
-    this.status.dataset.tone = tone;
-    this.statusDetails.dataset.tone = tone;
+    if (this.destroyed) return;
+    this.state.status = message;
+    this.state.tone = tone;
     this.scheduleLayoutUpdate();
   }
 
   setNamespaces(namespaces: NamespaceInfo[]): void {
-    const selected = this.namespaceSelect.value;
-    this.namespaceSelect.replaceChildren(new Option('全部命名空间', ''));
-    for (const namespace of namespaces.sort((left, right) => left.id - right.id)) {
-      this.namespaceSelect.add(new Option(namespace.name || '（主）', String(namespace.id)));
-    }
-    if ([...this.namespaceSelect.options].some((option) => option.value === selected)) {
-      this.namespaceSelect.value = selected;
+    this.state.namespaces = [...namespaces].sort((left, right) => left.id - right.id);
+    if (!namespaces.some((namespace) => String(namespace.id) === this.state.namespace)) {
+      this.state.namespace = '';
     }
   }
 
   setInsertMode(enabled: boolean): void {
-    this.insertMode = enabled;
-    this.updateModePresentation();
-    this.renderResults();
+    if (!enabled && this.root.activeElement?.matches('.insert-result')) this.input.focus();
+    this.state.insertMode = enabled;
   }
 
   setDataCodeRules(source: string, defaultSource: string): void {
-    this.dataRules.value = source;
+    this.state.dataRules = source;
     this.defaultDataRules = defaultSource;
   }
 
   setHighlightPreferences(preferences: HighlightPreferences): void {
-    this.highlightPreferences = { ...preferences };
-    this.syncHighlightControls();
+    Object.assign(this.state.highlights, preferences);
     this.applyHighlightColors();
-    this.renderResults();
   }
 
   setStartupFailure(message: string, reload: () => void): void {
     this.startupFailed = true;
     this.setStatus(`本地搜索启动失败：${message}。可重新加载页面重试。`, 'error');
-    const reloadButton = this.requireElement<HTMLButtonElement>('.reload-startup');
-    reloadButton.hidden = false;
-    reloadButton.onclick = reload;
+    this.state.reload = reload;
   }
 
   open(returnFocus?: HTMLElement): void {
-    if (this.panel.hidden) {
-      this.returnFocus = returnFocus ?? this.currentReturnFocus();
-    }
-    if (!this.startupFailed) {
-      this.prepareCurrentMode();
-    }
-    this.panel.hidden = false;
-    this.toggle.setAttribute('aria-expanded', 'true');
+    if (this.destroyed) return;
+    if (!this.state.visible) this.returnFocus = returnFocus ?? this.currentReturnFocus();
+    if (!this.startupFailed) this.prepareCurrentMode();
+    this.state.visible = true;
     this.scheduleLayoutUpdate();
-    this.input.focus();
-    this.input.select();
+    // Vue batches visibility updates; focus only after the dialog is actually shown.
+    void nextTick(() => {
+      if (!this.host.isConnected || !this.state.visible) return;
+      this.input.focus();
+      this.input.select();
+    });
   }
 
   close(): void {
-    if (this.panel.hidden) return;
+    if (!this.state.visible) return;
     this.finishDrag(false);
-    this.panel.hidden = true;
-    this.toggle.setAttribute('aria-expanded', 'false');
+    this.state.visible = false;
     const returnFocus = this.returnFocus;
     this.returnFocus = undefined;
     if (returnFocus?.isConnected && !returnFocus.matches(':disabled')) {
@@ -242,151 +213,98 @@ export class SearchPanel {
   }
 
   refreshResults(): void {
-    this.performSearch();
+    if (!this.destroyed) this.performSearch();
   }
 
-  private bindEvents(): void {
-    this.toggle.addEventListener('click', () => {
-      if (this.panel.hidden) this.open(this.toggle);
-      else this.close();
-    });
-    this.requireElement<HTMLButtonElement>('.close').addEventListener('click', () => this.close());
-    this.requireElement<HTMLButtonElement>('.refresh').addEventListener('click', () => {
-      if (this.startupFailed) return;
-      if (this.fileMode) this.callbacks.refreshFiles();
-      else this.callbacks.refresh();
-    });
-    this.configure.addEventListener('click', () => {
-      this.settings.hidden = !this.settings.hidden;
-      if (!this.settings.hidden) this.dataRules.focus();
-    });
-    this.requireElement<HTMLButtonElement>('.maintenance-toggle').addEventListener(
-      'click',
-      (event) => {
-        this.maintenance.hidden = !this.maintenance.hidden;
-        this.settings.hidden = true;
-        (event.currentTarget as HTMLButtonElement).setAttribute(
-          'aria-expanded',
-          String(!this.maintenance.hidden),
-        );
-        if (!this.maintenance.hidden) {
-          this.scheduleBodyScroll(this.maintenance, 'start');
-          void this.loadMaintenance();
-        }
-      },
-    );
-    this.statusDetailsToggle.addEventListener('click', () => {
-      this.statusDetails.hidden = !this.statusDetails.hidden;
-      const expanded = !this.statusDetails.hidden;
-      this.statusDetailsToggle.textContent = expanded ? '收起完整状态' : '查看完整状态';
-      this.statusDetailsToggle.setAttribute('aria-expanded', String(expanded));
-      if (expanded) this.scheduleBodyScroll(this.statusDetails, 'nearest');
-    });
-    this.requireElement<HTMLButtonElement>('.reset-position').addEventListener(
-      'click',
-      () => this.resetPosition(),
-    );
-    this.requireElement<HTMLButtonElement>('.save-rules').addEventListener('click', () => {
-      void this.saveDataRules(this.dataRules.value);
-    });
-    this.requireElement<HTMLButtonElement>('.reset-rules').addEventListener('click', () => {
-      this.dataRules.value = this.defaultDataRules;
-      void this.saveDataRules(this.defaultDataRules);
-    });
-    this.titleHighlightToggle.addEventListener('change', () => {
-      this.highlightPreferences.titleEnabled = this.titleHighlightToggle.checked;
-      this.applyHighlightPreferences();
-    });
-    this.contentHighlightToggle.addEventListener('change', () => {
-      this.highlightPreferences.contentEnabled = this.contentHighlightToggle.checked;
-      this.applyHighlightPreferences();
-    });
-    this.titleHighlightColor.addEventListener('input', () => {
-      this.highlightPreferences.titleColor = this.titleHighlightColor.value;
-      this.applyHighlightColors();
-    });
-    this.titleHighlightColor.addEventListener('change', () =>
-      this.persistHighlightPreferences(),
-    );
-    this.contentHighlightColor.addEventListener('input', () => {
-      this.highlightPreferences.contentColor = this.contentHighlightColor.value;
-      this.applyHighlightColors();
-    });
-    this.contentHighlightColor.addEventListener('change', () =>
-      this.persistHighlightPreferences(),
-    );
-    this.bindMaintenanceAction('.rebuild-indexes', '正在从本地页面重建搜索索引…', () =>
-      this.callbacks.rebuildSearchIndexes?.(),
-    );
-    this.bindMaintenanceAction('.rebuild-content-queue', '正在修复正文队列…', () =>
-      this.callbacks.rebuildContentQueue?.(),
-    );
-    this.bindMaintenanceAction('.reconcile-now', '正在进行联网全量对账…', () =>
-      this.callbacks.reconcileNow?.(),
-    );
-    this.bindMaintenanceAction('.clear-snapshots', '正在清除索引快照…', () =>
-      this.callbacks.clearSnapshots?.(),
-    );
-    this.requireElement<HTMLButtonElement>('.request-persistence').addEventListener(
-      'click',
-      () => {
-        void this.runMaintenanceAction(
-          '正在申请浏览器持久保存…',
-          async () => {
-            const request = this.callbacks.requestPersistence?.();
-            if (!request) throw new Error('持久保存操作当前不可用');
-            await this.finishPersistenceRequest(request);
-          },
-          false,
-        );
-      },
-    );
-    this.requireElement<HTMLButtonElement>('.reveal-danger').addEventListener('click', () => {
-      this.requireElement<HTMLElement>('.danger-confirmation').hidden = false;
-    });
-    this.requireElement<HTMLButtonElement>('.reset-local').addEventListener('click', () => {
-      const resetRules = this.requireElement<HTMLInputElement>('.reset-data-rules').checked;
-      void this.runMaintenanceAction('正在清空本地镜像…', () =>
-        this.callbacks.resetLocalMirror?.(resetRules),
-      );
-    });
+  destroy(): void {
+    if (this.destroyed) return;
+    this.close();
+    this.destroyed = true;
+    if (this.searchTimer !== undefined) window.clearTimeout(this.searchTimer);
+    this.disconnectLayoutTracking();
+    if (SearchPanel.shortcutOwner?.deref() === this) {
+      SearchPanel.shortcutWindow?.removeEventListener('keydown', SearchPanel.globalShortcutKeydown);
+      SearchPanel.shortcutOwner = undefined;
+      SearchPanel.shortcutWindow = undefined;
+    }
+    this.app.unmount();
+    this.host.remove();
+  }
 
-    this.panel.addEventListener('compositionstart', () => {
-      this.composing = true;
-    });
-    this.panel.addEventListener('compositionend', (event) => {
+  readonly actions = {
+    toggle: () => this.state.visible ? this.close() : this.open(this.toggle),
+    close: () => this.close(),
+    refresh: () => {
+      if (!this.startupFailed) {
+        if (this.fileMode) this.callbacks.refreshFiles();
+        else this.callbacks.refresh();
+      }
+    },
+    configure: () => {
+      this.state.settingsOpen = !this.state.settingsOpen;
+      void nextTick(() => {
+        if (this.state.settingsOpen && this.host.isConnected) {
+          this.requireElement<HTMLTextAreaElement>('.data-rules').focus();
+        }
+      });
+    },
+    maintenance: () => {
+      this.state.maintenanceOpen = !this.state.maintenanceOpen;
+      this.state.settingsOpen = false;
+      if (this.state.maintenanceOpen) {
+        this.scheduleBodyScroll(this.requireElement('.maintenance'), 'start');
+        void this.loadMaintenance();
+      }
+    },
+    details: () => {
+      this.state.detailsOpen = !this.state.detailsOpen;
+      if (this.state.detailsOpen) this.scheduleBodyScroll(this.requireElement('.status-details'), 'nearest');
+    },
+    resetPosition: () => this.resetPosition(),
+    saveRules: () => this.saveDataRules(this.state.dataRules),
+    resetRules: () => {
+      this.state.dataRules = this.defaultDataRules;
+      return this.saveDataRules(this.defaultDataRules);
+    },
+    highlights: () => this.persistHighlightPreferences(),
+    colors: () => this.applyHighlightColors(),
+    rebuildIndexes: () => this.runMaintenanceAction('正在从本地页面重建搜索索引…', () => this.callbacks.rebuildSearchIndexes?.()),
+    rebuildQueue: () => this.runMaintenanceAction('正在修复正文队列…', () => this.callbacks.rebuildContentQueue?.()),
+    reconcile: () => this.runMaintenanceAction('正在进行联网全量对账…', () => this.callbacks.reconcileNow?.()),
+    clearSnapshots: () => this.runMaintenanceAction('正在清除索引快照…', () => this.callbacks.clearSnapshots?.()),
+    persistence: () => this.runMaintenanceAction('正在申请浏览器持久保存…', async () => {
+      const request = this.callbacks.requestPersistence?.();
+      if (!request) throw new Error('持久保存操作当前不可用');
+      await this.finishPersistenceRequest(request);
+    }, false),
+    resetLocal: () => this.runMaintenanceAction('正在清空本地镜像…', () => this.callbacks.resetLocalMirror?.(this.state.resetDataRules)),
+    compositionStart: () => { this.composing = true; },
+    compositionEnd: (event: CompositionEvent) => {
       this.composing = false;
       if (event.target === this.input) this.scheduleSearch(0);
-    });
-    this.input.addEventListener('input', () => {
-      if (!this.composing) this.scheduleSearch(120);
-    });
-    this.namespaceSelect.addEventListener('change', () => this.performSearch());
-    this.modeSelect.addEventListener('change', () => {
+    },
+    input: () => { if (!this.composing) this.scheduleSearch(120); },
+    search: () => this.performSearch(),
+    mode: () => {
       if (!this.startupFailed) this.prepareCurrentMode();
-      this.updateModePresentation();
+      if (!this.codeMode) this.state.settingsOpen = false;
       this.performSearch();
-    });
-    this.panel.addEventListener('keydown', (event) => this.handleKeydown(event));
-    this.dragHandle.addEventListener('keydown', (event) =>
-      this.handleDragHandleKeydown(event),
-    );
-    this.dragHandle.addEventListener('pointerdown', (event) =>
-      this.startDrag(event),
-    );
-    this.dragHandle.addEventListener('pointermove', (event) => this.moveDrag(event));
-    this.dragHandle.addEventListener('pointerup', (event) => {
-      if (event.pointerId === this.drag?.pointerId) this.finishDrag(false);
-    });
-    this.dragHandle.addEventListener('pointercancel', (event) => {
-      if (event.pointerId === this.drag?.pointerId) this.finishDrag(true);
-    });
-    SearchPanel.claimGlobalShortcut(this);
-  }
+    },
+    keydown: (event: KeyboardEvent) => this.handleKeydown(event),
+    dragKeydown: (event: KeyboardEvent) => this.handleDragHandleKeydown(event),
+    dragStart: (event: PointerEvent) => this.startDrag(event),
+    dragMove: (event: PointerEvent) => this.moveDrag(event),
+    dragEnd: (event: PointerEvent) => {
+      if (event.pointerId === this.drag?.pointerId) this.finishDrag(event.type === 'pointercancel');
+    },
+    select: (index: number) => { this.state.selectedIndex = index; this.updateSelection(); },
+    copy: (result: SearchPanelResult) => this.copyResult(result),
+    open: (result: SearchPanelResult) => this.openResult(result),
+    copyLink: (result: WikiPageSearchResult) => this.callbacks.copy(result, this.input.value),
+    insert: (result: SearchPanelResult) => this.insert(result),
+  };
 
   private bindLayout(): void {
-    SearchPanel.layoutOwner?.deref()?.disconnectLayoutTracking();
-    SearchPanel.layoutOwner = new WeakRef(this);
     this.syncViewportBounds();
     window.addEventListener('resize', this.handleViewportResize);
     window.visualViewport?.addEventListener('resize', this.handleViewportResize);
@@ -396,7 +314,7 @@ export class SearchPanel {
     }
     if (typeof MutationObserver === 'function') {
       this.disconnectObserver = new MutationObserver(() => {
-        if (!this.host.isConnected) this.disconnectLayoutTracking();
+        if (!this.host.isConnected) this.destroy();
       });
       this.disconnectObserver.observe(document.documentElement, { childList: true });
     }
@@ -420,7 +338,7 @@ export class SearchPanel {
         this.disconnectLayoutTracking();
         return;
       }
-      if (this.panel.hidden) return;
+      if (!this.state.visible) return;
       this.reclampPosition();
       this.syncStatusPresentation();
     });
@@ -452,140 +370,27 @@ export class SearchPanel {
   }
 
   private performSearch(): void {
+    if (this.destroyed) return;
+    if (this.resultList.contains(this.root.activeElement)) this.input.focus();
+    this.state.query = this.input.value;
     if (this.fileMode) {
-      this.results = this.callbacks.searchFiles(this.input.value);
+      this.state.results = this.callbacks.searchFiles(this.input.value);
     } else if (this.codeMode) {
-      this.results = this.callbacks.searchCodes(this.input.value);
+      this.state.results = this.callbacks.searchCodes(this.input.value);
     } else if (this.luaMode) {
-      this.results = this.callbacks.searchLua(this.input.value);
+      this.state.results = this.callbacks.searchLua(this.input.value);
     } else {
-      const namespaceValue = this.namespaceSelect.value;
+      const namespaceValue = this.state.namespace;
       const namespace = namespaceValue ? Number(namespaceValue) : undefined;
-      this.results = this.contentMode
+      this.state.results = this.contentMode
         ? this.callbacks.searchContent(this.input.value, namespace)
         : this.callbacks.search(this.input.value, namespace);
     }
-    this.selectedIndex = this.results.length ? 0 : -1;
-    this.renderResults();
-  }
-
-  private renderResults(): void {
-    // A background refresh must not leave keyboard focus on a removed result.
-    if (this.resultList.contains(this.root.activeElement)) this.input.focus();
-    this.resultList.replaceChildren();
-    if (!this.input.value.trim()) {
-      this.resultList.append(
-        this.messageItem(
-          this.codeMode
-            ? '输入中文名、英文代码片段或已配置字段值查找代码'
-            : this.fileMode
-              ? '输入文件名、片段或扩展名开始搜索'
-            : this.luaMode
-              ? '输入函数名、返回键、字符串或依赖目标'
-            : this.contentMode
-              ? '输入正文关键词开始搜索'
-              : '输入标题关键词开始搜索',
-        ),
-      );
-      return;
-    }
-    if (!this.results.length) {
-      this.resultList.append(
-        this.messageItem(
-          this.codeMode
-            ? '没有找到对应代码名'
-            : this.fileMode
-              ? '没有找到匹配文件'
-            : this.luaMode
-              ? '没有找到匹配 Lua 模块'
-            : this.contentMode
-              ? '没有找到匹配正文'
-              : '没有找到匹配标题',
-        ),
-      );
-      return;
-    }
-
-    this.results.forEach((result, index) => {
-      const item = document.createElement('li');
-      item.className = 'result';
-      item.dataset.selected = String(index === this.selectedIndex);
-
-      const primaryButton = document.createElement('button');
-      primaryButton.className = 'insert result-primary';
-      primaryButton.type = 'button';
-      primaryButton.dataset.index = String(index);
-      const title = document.createElement('span');
-      title.className = 'result-title';
-      const namespace = document.createElement('span');
-      namespace.className = 'result-namespace';
-      primaryButton.append(title, namespace);
-      primaryButton.addEventListener('click', () => this.copyResult(result));
-
-      const actions = document.createElement('span');
-      actions.className = 'actions';
-      if (isDataCodeResult(result)) {
-        primaryButton.title = `复制代码名：${result.code}（Enter）`;
-        title.textContent = result.chineseName;
-        namespace.textContent = `${result.code} · ${result.dataType}`;
-        actions.append(
-          this.actionButton('open', '打开来源', '在新标签页打开 Data 来源', () => this.openResult(result)),
-        );
-      } else if (isLuaResult(result)) {
-        primaryButton.title = `复制模块标题：${result.title}（Enter）`;
-        title.textContent = result.title;
-        namespace.textContent = result.matches
-          .map((match) => `${luaKindLabel(match.kind)} · ${match.value}`)
-          .join(' · ');
-        actions.append(
-          this.actionButton('open', '打开', '在新标签页打开模块', () => this.openResult(result)),
-        );
-      } else {
-        primaryButton.title = `复制页面标题：${result.title}（Enter）`;
-        if (isContentResult(result)) {
-          this.appendResultText(
-            title,
-            result.title,
-            this.highlightPreferences.titleEnabled ? result.titleHighlights : undefined,
-          );
-          namespace.append(
-            document.createTextNode(`${result.namespaceName || '主命名空间'} · `),
-          );
-          this.appendResultText(
-            namespace,
-            result.snippet,
-            this.highlightPreferences.contentEnabled ? result.highlights : undefined,
-          );
-        } else {
-          title.textContent = result.title;
-          namespace.textContent = result.namespaceName || '主命名空间';
-        }
-        actions.append(
-          this.actionButton('open', '打开', '在新标签页打开', () => this.openResult(result)),
-          this.actionButton('copy', '复制插入内容', '复制包含 [[ ]] 的维基链接', () =>
-            this.callbacks.copy(result, this.input.value),
-          ),
-        );
-        if (this.insertMode) {
-          actions.append(
-            this.actionButton('insert', '插入', '插入维基链接并返回编辑器', () => this.insert(result)),
-          );
-        }
-      }
-      primaryButton.setAttribute('aria-label', primaryButton.title);
-      item.append(primaryButton, actions);
-      const select = (): void => {
-        this.selectedIndex = index;
-        this.updateSelection();
-      };
-      item.addEventListener('mouseenter', select);
-      item.addEventListener('focusin', select);
-      this.resultList.append(item);
-    });
+    this.state.selectedIndex = this.state.results.length ? 0 : -1;
   }
 
   private handleKeydown(event: KeyboardEvent): void {
-    if (this.panel.hidden || this.composing || event.isComposing) return;
+    if (!this.state.visible || this.composing || event.isComposing) return;
     if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) {
       this.cycleFocus(event);
       return;
@@ -611,7 +416,7 @@ export class SearchPanel {
         (event.ctrlKey && event.metaKey) ||
         (event.shiftKey && (event.ctrlKey || event.metaKey))
       ) return;
-      const result = this.results[primary ? Number(primary.dataset.index) : this.selectedIndex];
+      const result = this.state.results[primary ? Number(primary.dataset.index) : this.state.selectedIndex];
       if (!result) return;
       if (event.ctrlKey || event.metaKey) this.openResult(result);
       else if (event.shiftKey) this.insert(result);
@@ -622,16 +427,16 @@ export class SearchPanel {
       event.target !== this.input || event.altKey || event.ctrlKey ||
       event.metaKey || event.shiftKey
     ) return;
-    if (!this.results.length) return;
+    if (!this.state.results.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       event.stopPropagation();
-      this.selectedIndex = (this.selectedIndex + 1) % this.results.length;
+      this.state.selectedIndex = (this.state.selectedIndex + 1) % this.state.results.length;
       this.updateSelection();
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
-      this.selectedIndex = (this.selectedIndex - 1 + this.results.length) % this.results.length;
+      this.state.selectedIndex = (this.state.selectedIndex - 1 + this.state.results.length) % this.state.results.length;
       this.updateSelection();
     }
   }
@@ -669,7 +474,7 @@ export class SearchPanel {
     }
     event.preventDefault();
     event.stopPropagation();
-    if (this.panel.hidden) this.open();
+    if (!this.state.visible) this.open();
     else this.close();
   }
 
@@ -684,7 +489,7 @@ export class SearchPanel {
   }
 
   private insert(result: SearchPanelResult): void {
-    if (!this.insertMode || isDataCodeResult(result) || isLuaResult(result)) {
+    if (!this.state.insertMode || isDataCodeResult(result) || isLuaResult(result)) {
       this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
       return;
     }
@@ -692,66 +497,28 @@ export class SearchPanel {
     this.callbacks.insert(result, this.input.value);
   }
 
-  private updateModePresentation(): void {
-    const heading = this.requireElement<HTMLElement>('.heading');
-    const refresh = this.requireElement<HTMLButtonElement>('.refresh');
-    const refreshHelp = this.fileMode ? FILE_REFRESH_HELP : MIRROR_REFRESH_HELP;
-    refresh.title = refreshHelp;
-    refresh.setAttribute('aria-label', refreshHelp);
-    if (this.codeMode) {
-      heading.textContent = '查找 Data 代码名';
-      this.input.placeholder = '中文名、英文代码片段或已配置字段值';
-      this.input.setAttribute('aria-label', '搜索 Data 代码');
-      this.namespaceSelect.hidden = true;
-    } else if (this.fileMode) {
-      heading.textContent = '查找文件资源';
-      this.input.placeholder = '文件名、片段或扩展名';
-      this.input.setAttribute('aria-label', '搜索文件资源');
-      this.namespaceSelect.hidden = true;
-    } else if (this.luaMode) {
-      heading.textContent = '查找 Lua 模块';
-      this.input.placeholder = '函数名、返回键、字符串或 require 目标';
-      this.input.setAttribute('aria-label', '搜索 Lua 模块');
-      this.namespaceSelect.hidden = true;
-    } else if (this.contentMode) {
-      heading.textContent = '搜索页面正文';
-      this.input.placeholder = '输入正文关键词';
-      this.input.setAttribute('aria-label', '搜索页面正文');
-      this.namespaceSelect.hidden = false;
-    } else {
-      heading.textContent = '搜索页面标题';
-      this.input.placeholder = '标题、片段或英文中缀';
-      this.input.setAttribute('aria-label', '搜索页面标题');
-      this.namespaceSelect.hidden = false;
-    }
-    this.configure.hidden = !this.codeMode;
-    if (!this.codeMode) this.settings.hidden = true;
-    this.highlightSettings.hidden = !this.contentMode;
-  }
-
   private get codeMode(): boolean {
-    return this.modeSelect.value === 'data-code';
+    return this.state.mode === 'data-code';
   }
 
   private get contentMode(): boolean {
-    return this.modeSelect.value === 'content';
+    return this.state.mode === 'content';
   }
 
   private get fileMode(): boolean {
-    return this.modeSelect.value === 'files';
+    return this.state.mode === 'files';
   }
 
   private get luaMode(): boolean {
-    return this.modeSelect.value === 'lua';
+    return this.state.mode === 'lua';
   }
 
   private updateSelection(): void {
-    const items = [...this.resultList.querySelectorAll<HTMLElement>('.result')];
-    items.forEach((item, index) => {
-      item.dataset.selected = String(index === this.selectedIndex);
+    void nextTick(() => {
+      if (!this.host.isConnected || !this.state.visible) return;
+      const selected = this.resultList.querySelector<HTMLElement>('[data-selected="true"]');
+      if (selected) this.scrollBodyTo(selected, 'nearest');
     });
-    const selected = items[this.selectedIndex];
-    if (selected) this.scrollBodyTo(selected, 'nearest');
   }
 
   private handleDragHandleKeydown(event: KeyboardEvent): void {
@@ -887,19 +654,12 @@ export class SearchPanel {
   }
 
   private syncStatusPresentation(): void {
-    const clipped =
-      this.status.scrollHeight > this.status.clientHeight + 1 ||
-      this.status.scrollWidth > this.status.clientWidth + 1;
-    if (!clipped && (
-      this.root.activeElement === this.statusDetailsToggle ||
-      this.statusDetails.contains(this.root.activeElement)
-    )) this.input.focus();
-    this.statusDetailsToggle.hidden = !clipped;
-    if (!clipped) {
-      this.statusDetails.hidden = true;
-      this.statusDetailsToggle.textContent = '查看完整状态';
-      this.statusDetailsToggle.setAttribute('aria-expanded', 'false');
-    }
+    const status = this.requireElement<HTMLElement>('.status');
+    const details = this.requireElement<HTMLElement>('.status-details');
+    const clipped = status.scrollHeight > status.clientHeight + 1 || status.scrollWidth > status.clientWidth + 1;
+    if (!clipped && (this.root.activeElement?.matches('.status-details-toggle') || details.contains(this.root.activeElement))) this.input.focus();
+    this.state.statusClipped = clipped;
+    if (!clipped) this.state.detailsOpen = false;
   }
 
   private currentReturnFocus(): HTMLElement {
@@ -915,113 +675,39 @@ export class SearchPanel {
     return this.toggle;
   }
 
-  private messageItem(message: string): HTMLLIElement {
-    const item = document.createElement('li');
-    item.className = 'message';
-    item.textContent = message;
-    return item;
-  }
-
-  private actionButton(
-    kind: 'open' | 'copy' | 'insert',
-    label: string,
-    title: string,
-    action: () => void,
-  ): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.className = `action ${kind}-result`;
-    button.type = 'button';
-    button.textContent = label;
-    button.title = title;
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      action();
-    });
-    return button;
-  }
-
   private async saveDataRules(source: string): Promise<void> {
     try {
       this.setStatus('正在按配置刷新 Data 代码缓存…');
       await this.callbacks.saveDataCodeRules(source);
-      if (this.settings.contains(this.root.activeElement)) this.configure.focus();
-      this.settings.hidden = true;
+      if (this.destroyed) return;
+      if (this.requireElement('.settings').contains(this.root.activeElement)) {
+        this.requireElement<HTMLButtonElement>('.configure').focus();
+      }
+      this.state.settingsOpen = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.setStatus(`Data 代码检索配置无效或刷新失败：${message}`, 'error');
     }
   }
 
-  private applyHighlightPreferences(): void {
-    this.syncHighlightControls();
-    this.applyHighlightColors();
-    this.persistHighlightPreferences();
-    this.renderResults();
-  }
-
-  private syncHighlightControls(): void {
-    this.titleHighlightToggle.checked = this.highlightPreferences.titleEnabled;
-    this.contentHighlightToggle.checked = this.highlightPreferences.contentEnabled;
-    this.titleHighlightColor.value = this.highlightPreferences.titleColor;
-    this.contentHighlightColor.value = this.highlightPreferences.contentColor;
-  }
-
   private applyHighlightColors(): void {
-    this.host.style.setProperty('--cu-title-highlight', this.highlightPreferences.titleColor);
+    this.host.style.setProperty('--cu-title-highlight', this.state.highlights.titleColor);
     this.host.style.setProperty(
       '--cu-title-highlight-color',
-      contrastTextColor(this.highlightPreferences.titleColor),
+      contrastTextColor(this.state.highlights.titleColor),
     );
     this.host.style.setProperty(
       '--cu-content-highlight',
-      this.highlightPreferences.contentColor,
+      this.state.highlights.contentColor,
     );
     this.host.style.setProperty(
       '--cu-content-highlight-color',
-      contrastTextColor(this.highlightPreferences.contentColor),
+      contrastTextColor(this.state.highlights.contentColor),
     );
   }
 
   private persistHighlightPreferences(): void {
-    this.callbacks.saveHighlightPreferences({ ...this.highlightPreferences });
-  }
-
-  private appendResultText(
-    parent: HTMLElement,
-    text: string,
-    highlights?: readonly SearchTextHighlight[],
-  ): void {
-    const ranges = (highlights ?? [])
-      .map((range) => ({
-        start: Math.max(0, Math.min(range.start, text.length)),
-        end: Math.min(range.end, text.length),
-      }))
-      .filter((range) => range.end > range.start)
-      .sort((left, right) => left.start - right.start);
-    let cursor = 0;
-    for (const range of ranges) {
-      if (range.start < cursor) continue;
-      if (range.start > cursor) {
-        parent.append(document.createTextNode(text.slice(cursor, range.start)));
-      }
-      const mark = document.createElement('mark');
-      mark.textContent = text.slice(range.start, range.end);
-      parent.append(mark);
-      cursor = range.end;
-    }
-    if (cursor < text.length) {
-      parent.append(document.createTextNode(text.slice(cursor)));
-    }
-  }
-
-  private bindMaintenanceAction(
-    selector: string,
-    progressMessage: string,
-    action: () => Promise<void | MaintenanceActionFeedback> | undefined,
-  ): void {
-    this.requireElement<HTMLButtonElement>(selector).addEventListener('click', () => {
-      void this.runMaintenanceAction(progressMessage, action);
-    });
+    this.callbacks.saveHighlightPreferences({ ...this.state.highlights });
   }
 
   private async runMaintenanceAction(
@@ -1029,9 +715,11 @@ export class SearchPanel {
     action: () => Promise<void | MaintenanceActionFeedback> | undefined,
     announceCompletion = true,
   ): Promise<void> {
-    if (this.maintenanceBusy) return;
-    this.maintenanceBusy = true;
-    this.setMaintenanceDisabled(true);
+    if (this.state.maintenanceBusy) return;
+    this.state.maintenanceBusy = true;
+    if (this.root.activeElement?.matches('.maintenance-action')) {
+      this.requireElement<HTMLButtonElement>('.maintenance-toggle').focus();
+    }
     this.setStatus(progressMessage);
     try {
       const request = action();
@@ -1047,37 +735,26 @@ export class SearchPanel {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failure = `本地维护操作失败：${message}`;
-      this.maintenanceOutput.textContent = failure;
+      this.state.maintenanceOutput = failure;
       this.setStatus(failure, 'error');
     } finally {
-      this.maintenanceBusy = false;
-      this.setMaintenanceDisabled(false);
-    }
-  }
-
-  private setMaintenanceDisabled(disabled: boolean): void {
-    if (disabled && this.root.activeElement?.matches('.maintenance-action')) {
-      this.requireElement<HTMLButtonElement>('.maintenance-toggle').focus();
-    }
-    for (const button of this.root.querySelectorAll<HTMLButtonElement>(
-      '.maintenance-action',
-    )) {
-      button.disabled = disabled;
+      this.state.maintenanceBusy = false;
     }
   }
 
   private async loadMaintenance(): Promise<void> {
+    if (this.destroyed) return;
     if (!this.callbacks.loadMaintenance) {
-      this.maintenanceOutput.textContent = '维护诊断尚未接入';
+      this.state.maintenanceOutput = '维护诊断尚未接入';
       return;
     }
-    this.maintenanceOutput.textContent = '正在读取本地诊断…';
+    this.state.maintenanceOutput = '正在读取本地诊断…';
     try {
       const diagnostics = await this.callbacks.loadMaintenance();
-      this.maintenanceOutput.textContent = formatDiagnostics(diagnostics);
+      this.state.maintenanceOutput = formatDiagnostics(diagnostics);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.maintenanceOutput.textContent = `诊断读取失败：${message}`;
+      this.state.maintenanceOutput = `诊断读取失败：${message}`;
     }
   }
 
@@ -1108,25 +785,8 @@ function isDataCodeResult(result: SearchPanelResult): result is DataCodeSearchRe
   return 'kind' in result && result.kind === 'data-code';
 }
 
-function isContentResult(result: SearchPanelResult): result is ContentSearchResult {
-  return 'kind' in result && result.kind === 'content';
-}
-
 function isLuaResult(result: SearchPanelResult): result is LuaModuleSearchResult {
   return 'kind' in result && result.kind === 'lua';
-}
-
-function luaKindLabel(kind: LuaSymbolKind): string {
-  switch (kind) {
-    case 'function':
-      return '函数';
-    case 'return-key':
-      return '返回键';
-    case 'dependency':
-      return '依赖';
-    case 'string':
-      return '字符串';
-  }
 }
 
 function formatDiagnostics(diagnostics: LocalDataDiagnostics): string {
@@ -1170,218 +830,3 @@ function contrastTextColor(hex: string): '#000' | '#fff' {
     );
   return luminance > 0.179 ? '#000' : '#fff';
 }
-
-const markup = `
-  <style>
-    :host { all: initial; color-scheme: dark; }
-    * { box-sizing: border-box; }
-    button, input, select, textarea { font: inherit; }
-    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
-    [tabindex]:focus-visible {
-      outline: 2px solid var(--brand-primary, #d6c484); outline-offset: 1px;
-    }
-    .toggle {
-      position: fixed; right: 22px; bottom: 22px; z-index: 2147483646;
-      border: 0; border-radius: 999px; padding: 10px 16px;
-      background: var(--brand-primary, #d6c484); color: #141414;
-      box-shadow: 0 8px 24px #0008; cursor: pointer;
-      font: 600 14px/20px "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
-    }
-    .toggle:hover { filter: brightness(1.08); transform: translateY(-1px); }
-    .panel {
-      position: fixed; right: 22px; bottom: 72px; z-index: 2147483647;
-      display: flex; flex-direction: column;
-      width: min(clamp(420px, var(--cu-panel-fluid-width, 36vw), 960px), var(--cu-panel-max-width, calc(100vw - 24px)));
-      max-height: var(--cu-panel-max-height, calc(100dvh - 84px)); overflow: hidden;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 14px;
-      background: var(--detail-bg, #141414); box-shadow: 0 18px 54px #000a;
-      color: var(--detail-color, #babdc4);
-      font: 14px/1.4 "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
-    }
-    .panel[hidden] { display: none; }
-    .panel > *, .panel-body > *, .result > * { min-width: 0; }
-    .header { flex: none; display: flex; align-items: center; padding: 12px 14px 8px; gap: 6px; }
-    .heading {
-      flex: 1; padding: 4px 2px; border-radius: 5px; overflow-wrap: anywhere;
-      font-weight: 700; letter-spacing: .02em;
-    }
-    .icon {
-      flex: none; border: 0; background: transparent; color: var(--detail-color, #babdc4);
-      cursor: pointer; padding: 4px 7px; border-radius: 6px;
-    }
-    .icon:hover { background: var(--detail-inner-bg, #202020); color: var(--detail-a, #ffd96a); }
-    .icon[hidden] { display: none; }
-    .reset-position { font-size: 11px; }
-    .controls {
-      flex: none; display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 112px) minmax(0, 124px);
-      gap: 8px; padding: 0 14px 10px;
-    }
-    .query, .mode, .namespace {
-      min-width: 0; max-width: 100%; height: 38px;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 8px;
-      background: var(--detail-inner-bg, #202020); color: var(--detail-color, #babdc4);
-    }
-    .query { padding: 0 11px; }
-    .mode, .namespace { padding: 0 7px; }
-    .mode[hidden], .namespace[hidden] { display: none; }
-    .panel-body { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-    .settings {
-      margin: 0 14px 10px; padding: 10px;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
-      background: var(--detail-inner-bg, #202020);
-    }
-    .settings[hidden] { display: none; }
-    .settings-label { display: block; margin-bottom: 6px; font-weight: 650; }
-    .settings-help { display: block; margin: 6px 0; color: var(--detail-color, #babdc4); font-size: 11px; overflow-wrap: anywhere; }
-    .data-rules {
-      width: 100%; min-height: 180px; resize: vertical;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 7px;
-      padding: 8px; background: var(--detail-bg, #141414); color: var(--detail-color, #babdc4);
-      font: 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-    }
-    .settings-actions { display: flex; justify-content: flex-end; gap: 7px; }
-    .settings-action {
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 6px;
-      padding: 5px 9px; background: var(--detail-bg, #141414);
-      color: var(--detail-a, #ffd96a); cursor: pointer;
-    }
-    .save-rules { border-color: var(--brand-primary, #d6c484); background: var(--brand-primary, #d6c484); color: #141414; }
-    .highlight-settings {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
-      margin: 0 14px 10px; padding: 8px 10px;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
-      background: var(--detail-inner-bg, #202020);
-    }
-    .highlight-settings[hidden] { display: none; }
-    .highlight-option { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--detail-color, #babdc4); }
-    .highlight-color { width: 26px; height: 20px; padding: 0; border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 5px; background: var(--detail-bg, #141414); cursor: pointer; }
-    .maintenance {
-      margin: 0 14px 10px; padding: 10px;
-      border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px;
-      background: var(--detail-inner-bg, #202020); overflow-wrap: anywhere;
-    }
-    .maintenance[hidden], .danger-confirmation[hidden] { display: none; }
-    .maintenance-title { margin: 0 0 7px; font-size: 13px; }
-    .maintenance-output { margin: 0 0 9px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--detail-color, #babdc4); font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .maintenance-actions { display: grid; gap: 6px; }
-    .maintenance-action { border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 7px; padding: 7px 9px; background: var(--detail-bg, #141414); color: var(--detail-a, #ffd96a); cursor: pointer; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-    .maintenance-action:disabled { opacity: .55; cursor: wait; }
-    .network-note { color: var(--brand-primary, #d6c484); font-size: 11px; }
-    .danger-zone { margin-top: 10px; padding-top: 9px; border-top: 1px solid #70443e; }
-    .danger { border-color: #a85f55; color: #ff9b8e; }
-    .danger-copy { display: block; margin: 7px 0; color: #f0aaa1; font-size: 11px; }
-    .reset-rules-option { display: block; margin: 7px 0; font-size: 11px; }
-    .results { list-style: none; padding: 0 8px; margin: 0; }
-    .result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-radius: 9px; }
-    .result[data-selected="true"] { background: var(--detail-inner-bg, #202020); }
-    mark { border-radius: 2px; padding: 0 1px; }
-    .result-title mark { background: var(--cu-title-highlight, #aee2ff); }
-    .result-title mark { color: var(--cu-title-highlight-color, #000); }
-    .result-namespace mark { background: var(--cu-content-highlight, #fff3a3); color: var(--cu-content-highlight-color, #000); }
-    .insert { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; border: 0; padding: 9px 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-    .result-title { max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
-    .result-namespace { max-width: 100%; overflow-wrap: anywhere; font-size: 11px; color: var(--detail-color, #babdc4); }
-    .actions { display: flex; flex-wrap: wrap; gap: 3px; padding-right: 6px; }
-    .action { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; padding: 4px 6px; font-size: 12px; }
-    .open-result { font-weight: 650; }
-    .action:hover { border-color: var(--cu-color-border-soft, #45484e); background: var(--detail-bg, #141414); }
-    .message { padding: 28px 12px; color: var(--detail-color, #babdc4); text-align: center; overflow-wrap: anywhere; }
-    .status-details { margin: 10px 14px; padding: 10px; border: 1px solid var(--cu-color-border-soft, #45484e); border-radius: 9px; background: var(--detail-inner-bg, #202020); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .status-details[hidden] { display: none; }
-    .footer { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 8px; align-items: start; min-height: 36px; padding: 8px 14px 10px; border-top: 1px solid var(--cu-color-border-soft, #45484e); color: var(--detail-color, #babdc4); font-size: 11px; }
-    .keyboard-hint { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; }
-    .status { flex: 1; display: -webkit-box; max-height: 2.8em; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-    .status-details-toggle { flex: none; border: 0; padding: 1px 3px; background: transparent; color: var(--detail-a, #ffd96a); cursor: pointer; font-size: 11px; }
-    .status-details-toggle[hidden] { display: none; }
-    .status[data-tone="error"], .status-details[data-tone="error"] { color: #ff9b8e; }
-    .status[data-tone="success"], .status-details[data-tone="success"] { color: #8fd6ab; }
-    kbd { border: 1px solid var(--cu-color-border-soft, #45484e); border-bottom-width: 2px; border-radius: 4px; background: var(--detail-inner-bg, #202020); padding: 1px 4px; font: 10px/1.2 "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif; }
-    @media (pointer: fine) {
-      :host(:not([data-narrow])) .drag-handle { cursor: grab; user-select: none; touch-action: none; }
-      :host(:not([data-narrow])) .panel[data-dragging="true"] .drag-handle { cursor: grabbing; }
-    }
-    :host([data-narrow]) .panel {
-      left: auto !important; top: auto !important; right: 12px !important; bottom: 68px !important;
-      width: var(--cu-panel-max-width, calc(100vw - 24px));
-      max-height: var(--cu-panel-mobile-max-height, calc(100dvh - 80px));
-    }
-    :host([data-narrow]) .toggle { right: 12px; bottom: 12px; }
-    :host([data-narrow]) .reset-position { display: none; }
-    :host([data-narrow]) .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    :host([data-narrow]) .query { grid-column: 1 / -1; }
-    :host([data-narrow]) .result { grid-template-columns: minmax(0, 1fr); }
-    :host([data-narrow]) .actions { justify-content: flex-end; padding: 0 8px 7px; }
-  </style>
-  <button class="toggle" type="button" aria-expanded="false">本地搜索</button>
-  <section class="panel" role="dialog" hidden aria-label="未知伤亡维基本地搜索">
-    <header class="header">
-      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调">搜索页面标题</span>
-      <button class="icon reload-startup" type="button" title="重新加载页面" hidden>重新加载</button>
-      <button class="icon configure" type="button" title="配置 Data 代码检索字段" hidden>⚙</button>
-      <button class="icon maintenance-toggle" type="button" title="本地数据与维护" aria-expanded="false">▤</button>
-      <button class="icon refresh" type="button" title="重新同步本地数据">↻</button>
-      <button class="icon reset-position" type="button" title="恢复默认位置">恢复默认位置</button>
-      <button class="icon close" type="button" title="关闭">✕</button>
-    </header>
-    <div class="controls">
-      <input class="query" type="search" autocomplete="off" placeholder="标题、片段或英文中缀" aria-label="搜索页面标题" aria-describedby="cu-keyboard-hint">
-      <select class="mode" aria-label="搜索类型">
-        <option value="title">页面标题</option>
-        <option value="content">页面正文</option>
-        <option value="data-code">Data 代码</option>
-        <option value="lua">Lua 模块</option>
-        <option value="files">文件资源</option>
-      </select>
-      <select class="namespace" aria-label="筛选命名空间"><option value="">全部命名空间</option></select>
-    </div>
-    <div class="panel-body">
-    <section class="highlight-settings" hidden aria-label="命中高亮设置">
-      <label class="highlight-option"><input class="title-highlight-toggle" type="checkbox">标题命中高亮</label>
-      <input class="highlight-color title-highlight-color" type="color" value="#aee2ff" aria-label="标题高亮颜色" title="标题命中高亮颜色">
-      <label class="highlight-option"><input class="content-highlight-toggle" type="checkbox" checked>正文命中高亮</label>
-      <input class="highlight-color content-highlight-color" type="color" value="#fff3a3" aria-label="正文高亮颜色" title="正文命中高亮颜色">
-      <span class="settings-help">命中的字词按上述颜色标注；仅作用于“页面正文”模式。</span>
-    </section>
-    <section class="settings" hidden>
-      <label class="settings-label" for="cu-data-rules">Data 代码检索字段</label>
-      <textarea class="data-rules" id="cu-data-rules" spellcheck="false" aria-label="Data 代码检索字段"></textarea>
-      <span class="settings-help">每行“类型 = 路径”；所选路径的标量值用于查找顶层 id 代码名，英文 id 本身始终可搜索。支持 []、*、**；保存后刷新 Data 代码缓存，不影响页面正文。</span>
-      <div class="settings-actions">
-        <button class="settings-action reset-rules" type="button">恢复默认</button>
-        <button class="settings-action save-rules" type="button">保存并刷新</button>
-      </div>
-    </section>
-    <section class="maintenance" hidden aria-label="本地数据与维护">
-      <h2 class="maintenance-title">本地数据与维护</h2>
-      <pre class="maintenance-output">尚未读取诊断</pre>
-      <div class="maintenance-actions">
-        <button class="maintenance-action rebuild-indexes" type="button">重建搜索索引</button>
-        <button class="maintenance-action rebuild-content-queue" type="button">重建正文队列</button>
-        <button class="maintenance-action reconcile-now" type="button">立即全量对账 <span class="network-note">（需要联网）</span></button>
-        <button class="maintenance-action clear-snapshots" type="button">清除索引快照</button>
-        <button class="maintenance-action request-persistence" type="button">申请持久保存</button>
-      </div>
-      <div class="danger-zone">
-        <button class="maintenance-action danger reveal-danger" type="button">高级危险操作</button>
-        <div class="danger-confirmation" hidden>
-          <span class="danger-copy">清空页面、正文、文件、Data 缓存、队列、同步游标和快照；不会修改 wiki 页面。下次搜索需要重新联网同步。</span>
-          <label class="reset-rules-option"><input class="reset-data-rules" type="checkbox"> 同时恢复默认 Data 字段规则</label>
-          <button class="maintenance-action danger reset-local" type="button">确认清空本地镜像</button>
-        </div>
-      </div>
-    </section>
-    <ul class="results"><li class="message">输入标题关键词开始搜索</li></ul>
-    <pre class="status-details" id="cu-status-details" tabindex="0" hidden>正在启动…</pre>
-    </div>
-    <footer class="footer">
-      <span class="status" role="status">正在启动…</span>
-      <button class="status-details-toggle" type="button" aria-expanded="false" aria-controls="cu-status-details" hidden>查看完整状态</button>
-      <span class="keyboard-hint" id="cu-keyboard-hint">
-        <span><kbd>Alt+K</kbd> 开关</span><span><kbd>Enter</kbd> 复制</span>
-        <span><kbd>Ctrl/Cmd+Enter</kbd> 打开</span><span><kbd>Shift+Enter</kbd> 插入</span>
-        <span><kbd>Tab</kbd> 切换焦点</span><span><kbd>Esc</kbd> 关闭</span>
-      </span>
-    </footer>
-  </section>
-`;

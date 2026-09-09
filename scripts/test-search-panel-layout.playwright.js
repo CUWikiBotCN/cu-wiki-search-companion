@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // Temporary acceptance setup (no repository files):
-// node --input-type=module -e "import { build } from 'vite'; await build({ configFile: false, build: { outDir: '/tmp/cu-ui-layout-008', emptyOutDir: false, lib: { entry: 'src/ui/search-panel.ts', name: 'CuSearchPanel', formats: ['iife'], fileName: () => 'search-panel.js' } } })"
+// node --input-type=module -e "import { build } from 'vite'; import vue from '@vitejs/plugin-vue'; await build({ configFile: false, plugins: [vue()], define: { 'process.env.NODE_ENV': JSON.stringify('production'), __VUE_OPTIONS_API__: false, __VUE_PROD_DEVTOOLS__: false, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false }, build: { outDir: '/tmp/cu-ui-layout-008', emptyOutDir: false, lib: { entry: 'src/ui/search-panel.ts', name: 'CuSearchPanel', formats: ['iife'], fileName: () => 'search-panel.js' } } })"
 // python3 -m http.server 18765 --bind 127.0.0.1 --directory /tmp/cu-ui-layout-008
-// bash scripts/run-edge-playwright.sh scripts/test-search-panel-layout.playwright.js
+// bash scripts/run-browser-playwright.sh scripts/test-search-panel-layout.playwright.js
 
 async page => {
   const bundleURL = 'http://127.0.0.1:18765/search-panel.js';

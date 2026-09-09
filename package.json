@@ -6,26 +6,30 @@
   "description": "Tampermonkey local full-text search for the Casualties Unknown Chinese Wiki",
   "license": "MPL-2.0",
   "scripts": {
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run typecheck && vite build",
     "install:userscript": "bash scripts/install-userscript.sh",
+    "browser:start": "node scripts/start-browser.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "vite",
-    "browser:start": "node scripts/start-browser.mjs"
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "dexie": "4.4.5",
     "jieba-wasm": "2.4.0",
     "minisearch": "7.2.0",
-    "opencc-js": "1.4.2"
+    "opencc-js": "1.4.2",
+    "vue": "3.5.42"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
+    "@vitejs/plugin-vue": "6.0.8",
     "fake-indexeddb": "6.2.4",
     "jsdom": "30.0.1",
-    "typescript": "7.0.2",
+    "typescript": "6.0.3",
     "vite": "8.2.2",
     "vite-plugin-monkey": "8.1.1",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "vue-tsc": "3.3.11"
   }
 }

@@ -413,6 +413,12 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 ## 11. UI、编辑器与维护
 
+视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及浮窗几何；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现五模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
+
+`search-panel.css?inline` 由适配器显式放入开放的 shadow root，保留现有宿主主题变量；组件不依赖站点样式表注入或 scoped CSS。Vue 批量更新 DOM，调用公开 setter 后需等待 `nextTick` 才读取新 DOM；业务状态同步更新。打开时在更新后聚焦，关闭时立即通过原有编辑器接口恢复焦点，待执行的打开任务会检查面板是否仍打开。结果按来源/代码或模式/页面 ID 保持节点身份，配色变更只改变 CSS 变量。
+
+`destroy()` 幂等卸载 Vue、取消搜索和布局任务并清理监听器；宿主被移除时自动执行。重建结果或移除当前插入按钮前会把焦点移回搜索框。布局工具的独立构建入口也必须加载官方 Vue 插件，不能沿用无 SFC 插件的 `configFile: false` 构建。
+
 SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过继承的 CSS 自定义属性复用本站主题色。纯 Alt+K 开关面板；中文 IME composition 期间不触发搜索或结果快捷键，普通输入 120ms 防抖。
 
 面板是非模态对话框：仅焦点位于内部时处理 Tab/Shift+Tab，按当前可见、可用控件在边界循环，并阻止面板快捷键继续冒泡给站点；内部普通 Tab 仍由浏览器完成。鼠标可直接离开面板，关闭后恢复原焦点，不接管整个页面。搜索框和结果主按钮的 Enter/Ctrl 或 Cmd+Enter/Shift+Enter 分别复制、打开、插入；次要按钮保留原生激活语义，修饰方向键仍用于文本操作。结果主按钮按自己所在行分发动作，focusin 同步选中提示；后台刷新移除聚焦结果前先回到搜索框，避免焦点落入站点。快捷键不写入 preference，也不引入独立焦点管理框架。

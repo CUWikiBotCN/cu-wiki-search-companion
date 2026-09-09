@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // @vitest-environment jsdom
 
+import { nextTick } from 'vue';
 import { insertAtEditorSelection } from '../../src/editor';
 import { SearchPanel, type SearchPanelCallbacks } from '../../src/ui/search-panel';
 
@@ -33,7 +34,7 @@ function altK() {
 
 describe('search panel editor focus integration', () => {
   it.each(['Alt+K', 'Escape', 'close', 'insert-button', 'insert-keyboard'])(
-    'preserves the CodeMirror selection through %s', (action) => {
+    'preserves the CodeMirror selection through %s', async (action) => {
       document.body.innerHTML = '<textarea id="wpTextbox1">前中后</textarea>' +
         '<div class="CodeMirror"><div tabindex="0"></div></div>';
       const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
@@ -57,8 +58,10 @@ describe('search panel editor focus integration', () => {
       nativeFocus();
       textarea.setSelectionRange(1, 2);
       altK();
+      await nextTick();
       root.querySelector<HTMLInputElement>('.query')!.value = '页面';
       panel.refreshResults();
+      await nextTick();
 
       if (action === 'Alt+K') altK();
       else if (action === 'close') root.querySelector<HTMLButtonElement>('.close')!.click();
@@ -71,6 +74,7 @@ describe('search panel editor focus integration', () => {
         }));
       }
 
+      await nextTick();
       expect(root.querySelector<HTMLElement>('.panel')!.hidden).toBe(true);
       expect(document.activeElement).toBe(input);
       const inserted = action.startsWith('insert');
@@ -82,7 +86,7 @@ describe('search panel editor focus integration', () => {
   );
 
   it.each(['textarea', 'button', 'removed', 'disabled'])(
-    'restores a %s target or falls back to the search toggle', (kind) => {
+    'restores a %s target or falls back to the search toggle', async (kind) => {
       const { root } = mountPanel();
       const target = document.createElement(kind === 'textarea' ? 'textarea' : 'button');
       if (target instanceof HTMLTextAreaElement) {
@@ -92,9 +96,11 @@ describe('search panel editor focus integration', () => {
       document.body.append(target);
       target.focus();
       altK();
+      await nextTick();
       if (kind === 'removed') target.remove();
       if (kind === 'disabled') target.disabled = true;
       altK();
+      await nextTick();
 
       if (kind === 'removed' || kind === 'disabled') {
         expect(root.activeElement).toBe(root.querySelector('.toggle'));

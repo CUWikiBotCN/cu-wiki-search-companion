@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 
@@ -22,6 +23,9 @@ const userscriptMatches = (['edit', 'submit'] as const).flatMap((action) => [
 
 export default defineConfig({
   define: {
+    __VUE_OPTIONS_API__: false,
+    __VUE_PROD_DEVTOOLS__: false,
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
     __CU_WIKI_BUILD_ID__: JSON.stringify(buildMarker),
   },
   build: {
@@ -30,6 +34,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    vue(),
     monkey({
       entry: 'src/main.ts',
       userscript: {
