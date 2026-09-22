@@ -33,11 +33,11 @@ export type SearchIndexKind = 'title' | 'content' | 'lua';
 
 export const CURRENT_VERSION_CONTRACT: CacheVersionContract = Object.freeze({
   databaseSchema: 3,
-  pageFacts: 1,
+  pageFacts: 2,
   contentJobFormat: 1,
   analyzerPipeline: 2,
   extractors: Object.freeze({ wikitext: 2, bson: 1, lua: 2 }),
-  indexes: Object.freeze({ title: 1, content: 1, lua: 1 }),
+  indexes: Object.freeze({ title: 2, content: 1, lua: 1 }),
   dataCodeFormat: 2,
   libraries: Object.freeze({ minisearch: '7.2.0', jieba: '2.4.0' }),
 });
@@ -134,12 +134,9 @@ async function evaluateVersionContract(
     stored.pageFacts < CURRENT_VERSION_CONTRACT.pageFacts ||
     stored.contentJobFormat < CURRENT_VERSION_CONTRACT.contentJobFormat;
   if (factsNeedMigration) {
+    if (!canMigrateFacts(stored)) return incompatible('本地页面事实版本过旧且没有安全迁移路径', stored);
     if (!allowWrites) {
-      return incompatible('本地页面事实版本过旧且没有安全迁移路径', stored);
-    }
-    const migrated = await migrateFacts(database, stored);
-    if (!migrated) {
-      return incompatible('本地页面事实版本过旧且没有安全迁移路径', stored);
+      return { status: 'compatible', contract: stored, registeredLegacy: false, migrated: false };
     }
     await database.syncState.put({
       key: CACHE_VERSION_CONTRACT_KEY,
@@ -222,11 +219,8 @@ export function isVersionContract(value: unknown): value is CacheVersionContract
   );
 }
 
-async function migrateFacts(
-  _database: WikiSearchDatabase,
-  _stored: CacheVersionContract,
-): Promise<boolean> {
-  // Version 1 is the first explicit page/job fact format. Pre-P4 schema-v3
-  // databases are registered through the missing-contract branch above.
-  return false;
+function canMigrateFacts(stored: CacheVersionContract): boolean {
+  // v2 adds optional redirect metadata. Existing rows are pending until resolved;
+  // no page rewrites, sequence changes, network requests or cursor resets needed.
+  return stored.pageFacts === 1 && stored.contentJobFormat === 1;
 }

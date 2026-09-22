@@ -12,7 +12,7 @@ async page => {
     await fixturePage.goto(editURL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await fixturePage.waitForFunction(
       () => window.__CU_WIKI_SEARCH__?.ready === true &&
-        window.__CU_WIKI_SEARCH__.scriptVersion === '0.3.6',
+        window.__CU_WIKI_SEARCH__.scriptVersion === '0.3.7',
       undefined,
       { timeout: 60_000 },
     );
@@ -29,16 +29,17 @@ async page => {
       { mode: 'data-code', method: 'searchCodes', query: '鹿弹' },
       { mode: 'lua', method: 'searchLua', query: '_meta' },
       { mode: 'files', method: 'searchFiles', query: 'morphine' },
+      { mode: 'css', method: 'searchCss', query: 'color' },
     ];
     const reports = [];
     await host.locator('.toggle').click({ timeout: 5_000 });
     for (const testCase of cases) {
       const result = await renderMode(testCase);
       const first = host.locator('.result').first();
-      const pageActions = !['data-code', 'lua'].includes(testCase.mode);
+      const pageActions = !['data-code', 'lua', 'css'].includes(testCase.mode);
       const labels = await first.locator('.action').allTextContents();
       const expectedLabels = pageActions ? ['打开', '复制插入内容', '插入']
-        : [testCase.mode === 'data-code' ? '打开来源' : '打开'];
+        : [['data-code', 'css'].includes(testCase.mode) ? '打开来源' : '打开'];
       if (labels.join('|') !== expectedLabels.join('|')) {
         throw new Error(`${testCase.mode} 结果按钮不符：${labels.join('、')}`);
       }
@@ -70,10 +71,10 @@ async page => {
           await query.focus({ timeout: 5_000 });
           await fixturePage.keyboard.press('Control+Enter');
         }, result.title);
-      } else if (testCase.mode === 'data-code') {
+      } else if (testCase.mode === 'data-code' || testCase.mode === 'css') {
         await assertOpensResult(
           () => first.locator('.open-result').click({ timeout: 5_000 }),
-          result.source,
+          result.kind === 'data-code' ? result.source : result.title,
         );
       }
       reports.push({ mode: testCase.mode, primary: 'copied', actions: labels });
@@ -148,7 +149,7 @@ async page => {
     if (await editorText() !== originalText) throw new Error('原生撤销未恢复原编辑器内容');
 
     return {
-      passed: true, version: '0.3.6', buildId, reports,
+      passed: true, version: '0.3.7', buildId, reports,
       panelTab: true, siteTab: true, focusReturn: ['Escape', 'Alt+K'],
       insertionUndone: true,
     };

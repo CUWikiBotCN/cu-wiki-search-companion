@@ -16,7 +16,7 @@ import {
   readCacheVersionContract,
   type CacheVersionContract,
 } from '../storage/version-contract';
-import { CONTENT_JOB_TYPE } from '../sync/content-job-policy';
+import { CONTENT_JOB_TYPE, isCssContentModel } from '../sync/content-job-policy';
 import { prepareContentJobs } from '../sync/content-sync';
 import { readRecentChangeSyncState } from '../sync/recent-change-sync';
 import { readReconciliationSyncState } from '../sync/reconciliation-sync';
@@ -46,8 +46,10 @@ export interface LocalDataDiagnostics {
     dataCodes: number;
     contentSources: number;
     luaSources: number;
+    cssSources?: number;
   };
   jobs: { done: number; pending: number; running: number; failed: number };
+  cssJobs?: { done: number; pending: number; running: number; failed: number };
   recentChanges?: RecentChangeSyncState;
   reconciliation?: ReconciliationSyncState;
   versionContract?: CacheVersionContract;
@@ -98,7 +100,9 @@ export class LocalDataMaintenance {
   }
 
   async inspect(): Promise<LocalDataDiagnostics> {
-    const counts = { pages: 0, files: 0, dataCodes: 0, contentSources: 0, luaSources: 0 };
+    const counts = { pages: 0, files: 0, dataCodes: 0, contentSources: 0, luaSources: 0, cssSources: 0 };
+    const cssIds = new Set<number>();
+    const cssJobs = { done: 0, pending: 0, running: 0, failed: 0 };
     const jobs = { done: 0, pending: 0, running: 0, failed: 0 };
     const [dataCodes, recentState, reconciliationState, versionState, snapshots] =
       await Promise.all([
@@ -109,10 +113,12 @@ export class LocalDataMaintenance {
         this.indexCache.inspect(),
         this.database.pages.each((page) => {
           if (page.deleted) return;
+          if (isCssContentModel(page.contentModel)) cssIds.add(page.id);
           counts.pages += 1;
           if (page.isRedirect || typeof page.content !== 'string') return;
           const model = page.contentModel?.toLocaleLowerCase();
-          if (model === 'scribunto') counts.luaSources += 1;
+          if (isCssContentModel(model)) counts.cssSources += 1;
+          else if (model === 'scribunto') counts.luaSources += 1;
           else if (model === 'wikitext' || model === 'bson') counts.contentSources += 1;
         }),
         this.database.fileResources.each((file) => {
@@ -125,11 +131,15 @@ export class LocalDataMaintenance {
             jobs[job.status] += 1;
           }),
       ]);
+    await this.database.jobs.where('type').equals(CONTENT_JOB_TYPE).each((job) => {
+      if (cssIds.has(job.pageId)) { cssJobs[job.status] += 1; jobs[job.status] -= 1; }
+    });
     counts.dataCodes = dataCodes;
     const storage = await this.inspectStorage();
     return {
       counts,
       jobs,
+      cssJobs,
       recentChanges: recentState.value,
       reconciliation: reconciliationState.value,
       versionContract: versionState.value,

@@ -11,7 +11,17 @@ export interface ContentJobProjection {
 
 export function isSearchableContentModel(contentModel: string | undefined): boolean {
   const normalized = contentModel?.toLocaleLowerCase();
-  return normalized === 'wikitext' || normalized === 'bson' || normalized === 'scribunto';
+  return normalized === 'wikitext' || normalized === 'bson' || normalized === 'scribunto' || isCssContentModel(normalized);
+}
+
+export type ContentSyncScope = 'content' | 'css';
+
+export function isCssContentModel(model: string | undefined): boolean {
+  return model?.toLowerCase() === 'css' || model?.toLowerCase() === 'sanitized-css';
+}
+
+export function matchesContentScope(model: string | undefined, scope: ContentSyncScope): boolean {
+  return isSearchableContentModel(model) && isCssContentModel(model) === (scope === 'css');
 }
 
 export function isContentJobEligible(

@@ -3,7 +3,8 @@ import { createApp, nextTick, reactive, shallowReactive, type App } from 'vue';
 import SearchPanelView from './SearchPanelView.vue';
 import styles from './search-panel.css?inline';
 import { focusEditorElement } from '../editor';
-import type { NamespaceInfo } from '../types';
+import type { CssSearchResult } from '../search/css-source-index';
+import type { NamespaceInfo, RedirectTarget } from '../types';
 import type {
   ContentSearchResult,
 } from '../search/content-index';
@@ -21,7 +22,7 @@ import type {
   PersistenceRequestResult,
 } from '../maintenance/local-data-maintenance';
 
-export type SearchPreparationKind = 'title' | 'content' | 'lua';
+export type SearchPreparationKind = 'title' | 'content' | 'lua' | 'css';
 
 export interface MaintenanceActionFeedback {
   message: string;
@@ -32,8 +33,9 @@ export type SearchPanelResult =
   | TitleSearchResult
   | DataCodeSearchResult
   | ContentSearchResult
-  | LuaModuleSearchResult;
-type WikiPageSearchResult = TitleSearchResult | ContentSearchResult | LuaModuleSearchResult;
+  | LuaModuleSearchResult
+  | CssSearchResult;
+type WikiPageSearchResult = TitleSearchResult | ContentSearchResult | LuaModuleSearchResult | CssSearchResult;
 
 export interface SearchPanelCallbacks {
   prepareSearch(kind: SearchPreparationKind): void;
@@ -41,6 +43,7 @@ export interface SearchPanelCallbacks {
   search(query: string, namespace?: number): TitleSearchResult[];
   searchFiles(query: string): TitleSearchResult[];
   searchLua(query: string): LuaModuleSearchResult[];
+  searchCss?(query: string): CssSearchResult[];
   searchContent(query: string, namespace?: number): ContentSearchResult[];
   searchCodes(query: string): DataCodeSearchResult[];
   insert(result: WikiPageSearchResult, query: string): void;
@@ -49,6 +52,7 @@ export interface SearchPanelCallbacks {
   copyCode(result: DataCodeSearchResult): void;
   open(result: WikiPageSearchResult): void;
   openCode(result: DataCodeSearchResult): void;
+  redirectUrl?(target: RedirectTarget): string;
   refresh(): void;
   refreshFiles(): void;
   saveDataCodeRules(source: string): Promise<void>;
@@ -299,6 +303,7 @@ export class SearchPanel {
     },
     select: (index: number) => { this.state.selectedIndex = index; this.updateSelection(); },
     copy: (result: SearchPanelResult) => this.copyResult(result),
+    redirectUrl: (target: RedirectTarget) => this.callbacks.redirectUrl?.(target),
     open: (result: SearchPanelResult) => this.openResult(result),
     copyLink: (result: WikiPageSearchResult) => this.callbacks.copy(result, this.input.value),
     insert: (result: SearchPanelResult) => this.insert(result),
@@ -364,6 +369,7 @@ export class SearchPanel {
   private prepareCurrentMode(): void {
     if (this.fileMode) this.callbacks.prepareFiles();
     else if (this.codeMode) return;
+    else if (this.state.mode === 'css') this.callbacks.prepareSearch('css');
     else if (this.luaMode) this.callbacks.prepareSearch('lua');
     else if (this.contentMode) this.callbacks.prepareSearch('content');
     else this.callbacks.prepareSearch('title');
@@ -377,6 +383,8 @@ export class SearchPanel {
       this.state.results = this.callbacks.searchFiles(this.input.value);
     } else if (this.codeMode) {
       this.state.results = this.callbacks.searchCodes(this.input.value);
+    } else if (this.state.mode === 'css') {
+      this.state.results = this.callbacks.searchCss?.(this.input.value) ?? [];
     } else if (this.luaMode) {
       this.state.results = this.callbacks.searchLua(this.input.value);
     } else {
@@ -489,7 +497,7 @@ export class SearchPanel {
   }
 
   private insert(result: SearchPanelResult): void {
-    if (!this.state.insertMode || isDataCodeResult(result) || isLuaResult(result)) {
+    if (!this.state.insertMode || isDataCodeResult(result) || isLuaResult(result) || ('kind' in result && result.kind === 'css')) {
       this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
       return;
     }
@@ -803,7 +811,8 @@ function formatDiagnostics(diagnostics: LocalDataDiagnostics): string {
   const storage = diagnostics.storage;
   return [
     `页面 ${diagnostics.counts.pages} · 文件 ${diagnostics.counts.files} · Data 代码 ${diagnostics.counts.dataCodes}`,
-    `正文源 ${diagnostics.counts.contentSources} · Lua 源 ${diagnostics.counts.luaSources}`,
+    `正文源 ${diagnostics.counts.contentSources} · Lua 源 ${diagnostics.counts.luaSources} · CSS 源 ${diagnostics.counts.cssSources ?? 0}`,
+    `CSS 队列 done ${diagnostics.cssJobs?.done ?? 0} / pending ${diagnostics.cssJobs?.pending ?? 0} / running ${diagnostics.cssJobs?.running ?? 0} / failed ${diagnostics.cssJobs?.failed ?? 0}`,
     `正文队列 done ${diagnostics.jobs.done} / pending ${diagnostics.jobs.pending} / running ${diagnostics.jobs.running} / failed ${diagnostics.jobs.failed}`,
     `RC ${diagnostics.recentChanges?.through ?? '未完成'} · 全量对账 ${diagnostics.reconciliation?.status ?? '未开始'}`,
     `事实版本 ${diagnostics.versionContract ? `schema ${diagnostics.versionContract.databaseSchema} / pages ${diagnostics.versionContract.pageFacts}` : '未登记'}`,

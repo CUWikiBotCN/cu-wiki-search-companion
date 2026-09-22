@@ -8,6 +8,8 @@ import type {
 } from '../types';
 import {
   CONTENT_JOB_TYPE,
+  matchesContentScope,
+  type ContentSyncScope,
   contentJobFromProjection,
   contentJobMatchesProjection,
   isContentJobEligible,
@@ -34,6 +36,7 @@ interface ContentResponse {
 
 export interface ContentSyncOptions {
   force?: boolean;
+  scope?: ContentSyncScope;
   requestIntervalMs?: number;
   onBatch?: (pages: PageRecord[]) => void | Promise<void>;
   onProgress?: (progress: ContentSyncProgress) => void;
@@ -44,8 +47,13 @@ export async function syncContent(
   api: WikiApi,
   options: ContentSyncOptions = {},
 ): Promise<ContentSyncProgress> {
-  await prepareContentJobs(database, options.force ?? false);
-  let currentProgress = await progress(database);
+  const scope = options.scope ?? 'content';
+  await prepareContentJobs(database, options.force ?? false, scope);
+  const selectedIds = new Set<number>();
+  await database.pages.each((page) => {
+    if (isContentJobEligible(page) && matchesContentScope(page.contentModel, scope)) selectedIds.add(page.id);
+  });
+  let currentProgress = await progress(database, selectedIds);
   reportProgress(currentProgress, options.onProgress);
   const claimedJobs = new Map<number, number>();
 
@@ -54,7 +62,7 @@ export async function syncContent(
       const batch = await database.jobs
         .where('status')
         .equals('pending')
-        .filter((job) => job.type === CONTENT_JOB_TYPE)
+        .filter((job) => job.type === CONTENT_JOB_TYPE && selectedIds.has(job.pageId))
         .limit(BATCH_SIZE)
         .toArray();
       if (!batch.length) break;
@@ -210,6 +218,7 @@ export async function syncContent(
 export async function prepareContentJobs(
   database: WikiSearchDatabase,
   force: boolean,
+  scope?: ContentSyncScope,
 ): Promise<void> {
   await database.transaction('rw', database.pages, database.jobs, async () => {
     const existingJobs = await database.jobs
@@ -224,7 +233,7 @@ export async function prepareContentJobs(
       if (!isContentJobEligible(page)) return;
       eligiblePageIds.add(page.id);
       const existing = existingByPage.get(page.id);
-      const projection = projectContentJob(page, force);
+      const projection = projectContentJob(page, force && (!scope || matchesContentScope(page.contentModel, scope)));
       if (!contentJobMatchesProjection(existing, page.id, projection)) {
         jobsToPut.push(contentJobFromProjection(page.id, projection, existing, now));
       }
@@ -239,11 +248,12 @@ export async function prepareContentJobs(
 
 export const syncWikitextContent = syncContent;
 
-async function progress(database: WikiSearchDatabase): Promise<ContentSyncProgress> {
+async function progress(database: WikiSearchDatabase, selectedIds: Set<number>): Promise<ContentSyncProgress> {
   const result = emptyProgress();
   await database.jobs
     .where('type')
     .equals(CONTENT_JOB_TYPE)
+    .filter((job) => selectedIds.has(job.pageId))
     .each((job) => addJobTransition(result, undefined, job.status));
   return result;
 }

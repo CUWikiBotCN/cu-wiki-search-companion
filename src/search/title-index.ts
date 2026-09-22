@@ -10,10 +10,11 @@ import {
   browserTaskScheduler,
   type CooperativeTaskScheduler,
 } from '../runtime/cooperative-task-scheduler';
-import type { PageRecord } from '../types';
+import type { PageRecord, RedirectTarget } from '../types';
+import { currentRedirectResolution } from '../redirect';
 import { ConcurrentRebuildLifecycle } from './rebuild-lifecycle';
 
-interface IndexedTitle {
+interface IndexedTitle extends RedirectSearchMetadata {
   id: number;
   title: string;
   normalizedTitle: string;
@@ -22,7 +23,13 @@ interface IndexedTitle {
   tokens: string;
 }
 
-export interface TitleSearchResult {
+interface RedirectSearchMetadata {
+  isRedirect?: boolean;
+  redirectResolved?: boolean;
+  redirectTarget?: RedirectTarget;
+}
+
+export interface TitleSearchResult extends RedirectSearchMetadata {
   id: number;
   title: string;
   namespace: number;
@@ -35,7 +42,7 @@ export interface TitleSearchBackend {
   readonly size: number;
 }
 
-interface LinearTitle {
+interface LinearTitle extends RedirectSearchMetadata {
   id: number;
   title: string;
   namespace: number;
@@ -71,6 +78,7 @@ export class LinearTitleIndex implements TitleSearchBackend {
         namespace: page.namespace,
         namespaceName: page.namespaceName,
         compactTitle: this.analyzer.compactNormalized(page.normalizedTitle),
+        ...redirectSearchMetadata(page),
       });
     }
   }
@@ -88,6 +96,7 @@ export class LinearTitleIndex implements TitleSearchBackend {
       namespace: pageNamespace,
       namespaceName,
       compactTitle,
+      ...redirect
     } of this.titles.values()) {
       if (namespace !== undefined && pageNamespace !== namespace) continue;
       const position = compactTitle.indexOf(compactQuery);
@@ -102,6 +111,7 @@ export class LinearTitleIndex implements TitleSearchBackend {
         namespace: pageNamespace,
         namespaceName,
         score,
+        ...redirect,
       });
     }
     return matches
@@ -258,6 +268,11 @@ export class TitleIndex implements TitleSearchBackend {
           namespace: Number(result.namespace),
           namespaceName: String(result.namespaceName),
           score: result.score * boost,
+          ...(result.isRedirect ? {
+            isRedirect: true,
+            redirectResolved: Boolean(result.redirectResolved),
+            redirectTarget: result.redirectTarget as RedirectTarget | undefined,
+          } : {}),
         };
       })
       .sort((left, right) => right.score - left.score || left.id - right.id)
@@ -276,7 +291,7 @@ export class TitleIndex implements TitleSearchBackend {
     return {
       idField: 'id',
       fields: ['tokens'],
-      storeFields: ['title', 'normalizedTitle', 'namespace', 'namespaceName'],
+      storeFields: ['title', 'normalizedTitle', 'namespace', 'namespaceName', 'isRedirect', 'redirectResolved', 'redirectTarget'],
       tokenize: (value) => value.split(/\s+/),
       processTerm: (term) => term,
     };
@@ -292,6 +307,13 @@ export class TitleIndex implements TitleSearchBackend {
       // Re-normalising the source title is deliberate. Besides accepting old
       // database rows, this is the browser-tested path for the WASM segmenter.
       tokens: this.analyzer.documentTokens(page.title).join(' '),
+      ...redirectSearchMetadata(page),
     };
   }
+}
+
+function redirectSearchMetadata(page: PageRecord): RedirectSearchMetadata {
+  if (!page.isRedirect) return {};
+  const resolution = currentRedirectResolution(page);
+  return { isRedirect: true, redirectResolved: Boolean(resolution), redirectTarget: resolution?.target };
 }

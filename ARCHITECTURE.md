@@ -1,10 +1,10 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.6 架构（包含 2026-09-09 的 Vue 3 视图迁移），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文对应 0.3.7 架构（包含重定向目标与 CSS 源码搜索），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
-这是运行在 MediaWiki 编辑页中的站点专用 Tampermonkey userscript。核心目标是：在不阻塞编辑器启动的前提下，维护一份可恢复、可增量更新的本地搜索镜像，并提供五种彼此隔离的搜索体验。
+这是运行在 MediaWiki 编辑页中的站点专用 Tampermonkey userscript。核心目标是：在不阻塞编辑器启动的前提下，维护一份可恢复、可增量更新的本地搜索镜像，并提供六种彼此隔离的搜索体验。
 
 架构优先级依次是：
 
@@ -15,7 +15,7 @@
 5. 派生可重建：索引、摘要和符号表损坏时，不触碰远端游标即可从本地事实恢复。
 6. 搜索域隔离：标题、正文、Lua、Data 代码、文件资源不隐式混排。
 
-以下不属于当前系统：服务端组件、编辑提交自动化、云备份、跨浏览器迁移、CSS/JavaScript 正文索引、Data JSON 查看器和轮询式逐页抓取。
+以下不属于当前系统：服务端组件、编辑提交自动化、云备份、跨浏览器迁移、JavaScript 正文索引、Data JSON 查看器和轮询式逐页抓取。
 
 ## 2. 顶层组件
 
@@ -43,6 +43,7 @@ flowchart LR
   FileSync --> DB
   DataSync --> DB
 
+  DB --> CssIndex[CssSourceIndex / 按需源码]
   DB --> Cache[VersionedSearchIndexCache]
   Cache --> TitleIndex[TitleIndex]
   Cache --> ContentIndex[ContentIndex]
@@ -50,6 +51,7 @@ flowchart LR
   DB --> FileIndex[LinearTitleIndex / files]
   DB --> DataIndex[DataCodeIndex]
 
+  CssIndex --> UI
   TitleIndex --> UI
   ContentIndex --> UI
   LuaIndex --> UI
@@ -57,7 +59,7 @@ flowchart LR
   DataIndex --> UI
 ~~~
 
-src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua 三类页面索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；DataCodeIndex 与文件 LinearTitleIndex 仍按既定边界留在 main.ts。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。
+src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua、CSS 页面搜索索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；DataCodeIndex 与文件 LinearTitleIndex 仍按既定边界留在 main.ts。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。
 
 ## 3. 激活条件与启动时序
 
@@ -114,7 +116,7 @@ SearchPanel 按当前模式触发 `PageSearchRuntime` 的准备函数，单例 P
 6. Data 代码模式继续使用冷启动缓存；文件模式只按需读取 fileResources，二者都不加载 jieba 或三类 MiniSearch。
 7. 正文或 Lua 模式就绪后修复或续传共享正文 jobs；完整缓存不会重复请求 revisions，未加载的另一类索引日后从事实与快照追平。
 
-普通按模式准备时，正文和 Lua 只恢复当前选择的模式，彼此独立；增强标题是它们共有的本地前置准备。显式维护重建则按约定一次性本地重建并替换三类索引。`refreshSnapshotStatus()` 为维护/debug 诊断可以扫描三类快照并执行完整性检查，这不等于恢复索引。冷启动的 `initialize()` 仍不读取快照。文件表也只在首次切换到“文件资源”模式时读取。
+普通按模式准备时，正文和 Lua 只恢复当前选择的模式，彼此独立；增强标题是它们共有的本地前置准备。显式维护重建则按约定一次性本地重建并替换三类索引。`refreshSnapshotStatus()` 为维护/debug 诊断可以扫描三类快照并执行完整性检查，这不等于恢复索引。冷启动的 `initialize()` 仍不读取快照。文件表也只在首次切换到“文件资源”模式时读取。CSS 模式独立读取 CSS 源码，不要求增强标题准备。
 
 ### 3.4 后台页面与协作式调度
 
@@ -154,6 +156,8 @@ SearchPanel 按当前模式触发 `PageSearchRuntime` 的准备函数，单例 P
 | syncState | key | — | 游标、版本、generation、调度状态 |
 | indexSnapshots | key | throughLocalSeq | title/content/lua 固定快照 |
 | dataCodes | source | code、chineseName、dataType | Data 代码映射缓存 |
+
+重定向解析记录存于 pages.redirectResolution，包含来源标题/revision、checkedAt 和可选目标 title/fragment。源身份不匹配或不再重定向即失效；目标未知与未同步区分显示。
 
 新增普通记录字段不等于修改 IndexedDB schema。只有表、主键或索引布局变化才应提升 Dexie schema 版本。
 
@@ -222,11 +226,19 @@ syncTitles()：
 
 失败状态保留 continuation，可从最后提交批次继续。旧响应的 revision 低于本地事实时不得覆盖较新的页面。
 
+### 6.2.1 重定向目标补齐
+
+保留 allpages/info 的源页面事实，标题同步后以及 RC 成功后调用 syncRedirectTargets：只对目标缺失、源身份改变或早于最近全量扫描的记录，按 50 标题一批查询 redirects=1。读取 normalized 和 redirects 的直接 from→to/tofragment；不追链、不用目标 pages 替换源页面。网络在事务外，提交时重查源标题、revision、localSeq 和活动状态，失效响应丢弃。失败保留先前批次与待办，后续同步续传。
+
+目标首次解析或改变时，与全局 localSeq 一起提交；仅重新核对时间变化不推进序列。锁释放后刷新本标签并广播其他标签，包括部分成功后失败。两种标题后端和标题快照携带目标展示元数据，但不改变检索词或排序。目标链接与复制按钮并列，页面路径和章节分开编码，优先使用 MediaWiki 的 URL/锚点工具。
+
 ### 6.3 正文队列
 
-prepareContentJobs() 从活动、非 redirect 且 content model 为 wikitext、BSON 或 Scribunto 的页面生成 wikitext-content jobs。名称保留是持久化兼容要求，虽然当前范围已不只 wikitext。
+prepareContentJobs() 从活动、非 redirect 且 content model 为 wikitext、BSON、Scribunto、css 或 sanitized-css 的页面生成 wikitext-content jobs。名称保留是持久化兼容要求，虽然当前范围已不只 wikitext。
 
-syncContent() 每批最多 50 页：
+syncContent() 每批最多 50 页。下载范围分为既有 content（wikitext/BSON/Scribunto）与 css，两者单独合并在途请求，共用既有跨标签写锁。force 只重排所选范围；维护修复队列仍覆盖两者。CSS 的 RC 变化只排队，已加载 CSS 时续传。
+
+syncContent() 的批次流程：
 
 1. pending jobs 先标为 running。
 2. 一次 revisions 请求获取 main slot 的 id、content model 与 content。
@@ -321,7 +333,7 @@ BroadcastChannel cu-wiki-local-search:changes:v1 只做失效通知：
 
 jieba 不可用时使用 Intl.Segmenter。实际 analyzer engine 进入三类快照 compatibility key，防止不同分词结果误用旧快照。Data 代码和文件索引始终使用冷启动的 fallbackAnalyzer；它们依赖归一化、compact substring 与轻量线性扫描，不等待 jieba，也不创建快照。
 
-### 8.2 五种搜索后端
+### 8.2 六种搜索后端
 
 | 模式 | 后端 | 输入事实 | 特殊行为 |
 | --- | --- | --- | --- |
@@ -330,10 +342,17 @@ jieba 不可用时使用 Intl.Segmenter。实际 analyzer engine 进入三类快
 | Lua | LuaModuleIndex | Scribunto content | 结构化符号类型与优先级 |
 | Data 代码 | DataCodeIndex | dataCodes | 中文名、代码、配置字段值独立评分 |
 | 文件 | LinearTitleIndex | fileResources | 按需、小规模、物理隔离 |
+| CSS | CssSourceIndex | css/sanitized-css pages.content | 区分大小写的字面搜索、原始行号、独立按需加载，无快照 |
 
 MiniSearch 查询优先 AND，完全无结果时才退化为 OR。标题允许受控 fuzzy；正文/Lua 不启用 MiniSearch fuzzy，避免大型代码词典导致延迟失控。页面类结果以 page id 作为稳定末级排序键，保证序列化恢复前后并列项顺序一致；Data 代码结果没有 page id，按 score 后再按 code 排序。
 
-### 8.3 内容抽取
+### 8.3 CSS 源码运行态
+
+PageSearchRuntime 持有 CssSourceIndex；选择 CSS 时先从本地恢复源码，再同步 CSS 待办，不要求 jieba 或标题快照。CSS 只接受当前 contentRevisionId 与 revisionId 一致的活动非重定向源码，保留原始大小写、Unicode、标点与换行。查询按字面子串匹配，按标题/page ID 稳定排序，最多 20 页、每页 3 个片段（每片段最多 240 UTF-16 单元）；行号按原文 LF/CRLF/CR 计算，不声称选择器语义或生效样式。
+
+CSS 在同一只读事务内读取自己的序列和增量记录，删除及模型变化移除旧来源，协作式让步后原子替换内存数据。冷启动不物化 CSS 正文，不增 CSS 快照；显式本地重建刷新已加载 CSS。CSS 下载与正文/Lua 在途任务独立，锁由既有协调器串行授予。维护诊断分别展示 CSS 缓存和队列数量。
+
+### 8.4 内容抽取
 
 - wikitext：去除注释、ref、模板/链接标记等高噪结构，保留面向搜索的文本和语言变体。
 - BSON：正文内容按 JSON 解析后递归收集对象键和标量值；数组继续递归；不提供每页自定义路径。content model 名称必须是 bson，普通 json 模型不在当前 eligibility 中。
@@ -346,10 +365,10 @@ MiniSearch 查询优先 AND，完全无结果时才退化为 OR。标题允许�
 CURRENT_VERSION_CONTRACT 当前包含：
 
 - database schema 3。
-- page facts 1、content job format 1。
+- page facts 2、content job format 1。
 - analyzer pipeline 2（CJK unigram + bigram）。
 - wikitext extractor 2、BSON extractor 1、Lua extractor 2。
-- title/content/Lua index 各 1。
+- title index 2，content/Lua index 各 1。
 - Data code format 2。
 - MiniSearch 7.2.0、jieba 2.4.0。
 
@@ -357,7 +376,7 @@ CURRENT_VERSION_CONTRACT 当前包含：
 
 - 启动通过 `inspectVersionContract` 只读判断；缺少契约的既有 schema-v3 数据被视为已知 legacy v1，首次取得写锁后才登记契约，不清库、不联网。
 - analyzer、抽取器或索引版本变化只使相关派生快照过期。
-- 页面事实或 job 格式较旧只能通过显式本地迁移升级。
+- 页面事实或 job 格式较旧只能通过显式本地迁移升级。已知 page facts v1 可只读使用，首次写锁内登记 v2；新增的可选重定向记录缺失即待同步，不重写旧页面或重置游标。
 - 本地事实版本高于当前代码时，进入只读不兼容模式：保留搜索、诊断和完整重置，停止后台写入。
 - RC、对账游标与页面事实不得因为派生版本变化而重置。
 
@@ -413,7 +432,7 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 ## 11. UI、编辑器与维护
 
-视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及浮窗几何；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现五模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
+视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及浮窗几何；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现六模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
 
 `search-panel.css?inline` 由适配器显式放入开放的 shadow root，保留现有宿主主题变量；组件不依赖站点样式表注入或 scoped CSS。Vue 批量更新 DOM，调用公开 setter 后需等待 `nextTick` 才读取新 DOM；业务状态同步更新。打开时在更新后聚焦，关闭时立即通过原有编辑器接口恢复焦点，待执行的打开任务会检查面板是否仍打开。结果按来源/代码或模式/页面 ID 保持节点身份，配色变更只改变 CSS 变量。
 
@@ -445,7 +464,7 @@ SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过�
 
 | 操作 | 网络 | 删除事实 | 说明 |
 | --- | --- | --- | --- |
-| 重建搜索索引 | 否 | 否 | 从 pages 重建三类索引并发布快照 |
+| 重建搜索索引 | 否 | 否 | 从 pages 重建三类快照索引，并刷新已加载的 CSS 索引 |
 | 重建正文队列 | 否 | 否 | 只调用 prepareContentJobs(false) |
 | 立即全量对账 | 是 | 否 | 复用 reconciliation + RC catch-up |
 | 清除索引快照 | 否 | 否 | 内存索引继续可用，本会话不自动重建 |
@@ -545,7 +564,7 @@ push 工作流先在只读权限 job 中安装锁定依赖、运行测试和生�
 - 模板专用插入/复制动作。
 - 独立 Data JSON 查看器。
 
-以下仍不是默认路线：Data/文件快照、CSS/JavaScript 正文、更多轮询器、索引导入导出、云备份和跨浏览器同步。若重新立项，先定义隐私、格式版本、容量、冲突和迁移协议，再实现 UI。
+以下仍不是默认路线：Data/文件/CSS 快照、JavaScript 正文、更多轮询器、索引导入导出、云备份和跨浏览器同步。若重新立项，先定义隐私、格式版本、容量、冲突和迁移协议，再实现 UI。
 
 ## 16. 维护检查清单
 
@@ -556,7 +575,7 @@ push 工作流先在只读权限 job 中安装锁定依赖、运行测试和生�
 3. 是否影响版本契约或某一类快照 compatibility key。
 4. 是否会让编辑页冷启动加载 jieba、恢复快照、正文、Lua 或文件；默认答案必须是否。
 5. 是否新增网络请求；错误、登录失效、重试、普通账号上限和 continuation 是否定义。
-6. 是否破坏五种搜索域的物理隔离。
+6. 是否破坏六种搜索域的物理隔离。
 7. 多标签是否仍只有一个写者，其他标签是否只刷新已加载索引。
 8. 失败后旧本地数据是否仍可搜索。
 9. 是否可以用 fake-indexeddb/jsdom 完成验证，避免破坏真实用户缓存。

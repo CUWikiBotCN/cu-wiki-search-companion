@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import { currentRedirectResolution } from '../redirect';
 import type { Analyzer } from '../analyzer/analyzer';
 import type { WikiSearchDatabase } from '../storage/database';
 import {
@@ -19,6 +20,7 @@ import {
   contentJobMatchesProjection,
   isContentJobEligible,
   isSearchableContentModel,
+  isCssContentModel,
   projectContentJob,
   searchablePageFactChanged,
 } from './content-job-policy';
@@ -189,7 +191,7 @@ export async function syncRecentChanges(
         typeof page.lastrevid === 'number' &&
         !page.missing &&
         !page.redirect &&
-        isSearchableContentModel(page.contentmodel) &&
+        isSearchableContentModel(page.contentmodel) && !isCssContentModel(page.contentmodel) &&
         (storedPages.get(page.pageid)?.revisionId ?? 0) <= page.lastrevid &&
         storedPages.get(page.pageid)?.contentRevisionId !== page.lastrevid,
     )
@@ -214,7 +216,10 @@ export async function syncRecentChanges(
         : [],
     ),
   );
-  const deferredContentPageIds: number[] = [];
+  const deferredContentPageIds: number[] = activeInfoPages.filter((page) =>
+    !page.redirect && isCssContentModel(page.contentmodel) &&
+    storedPages.get(page.pageid)?.contentRevisionId !== page.lastrevid,
+  ).map((page) => page.pageid);
   for (const [pageId, expectedRevision] of expectedRevisionByPageId) {
     if (contentMissingPageIds.has(pageId)) continue;
     const received = revisions.get(pageId);
@@ -315,9 +320,11 @@ export async function syncRecentChanges(
         ...(contentEligible
           ? revision
             ? { content: revision.content, contentRevisionId: revision.revid }
-            : {}
+            : oldPage?.revisionId !== raw.lastrevid && isCssContentModel(raw.contentmodel)
+              ? { content: undefined, contentRevisionId: undefined } : {}
           : { content: undefined, contentRevisionId: undefined }),
       };
+      nextPage.redirectResolution = currentRedirectResolution(nextPage);
       if (searchablePageFactChanged(oldPage, nextPage)) {
         sequence += 1;
         nextPage.localSeq = sequence;
@@ -476,6 +483,7 @@ export async function syncRecentChanges(
           tombstones.push({
             ...withoutLegacyTitleGeneration(file),
             deleted: true,
+            redirectResolution: undefined,
             localSeq: sequence,
             writerSeq: sequence,
           });
@@ -716,6 +724,7 @@ function tombstone(page: PageRecord, generation: number): PageRecord {
     content: undefined,
     contentRevisionId: undefined,
     deleted: true,
+    redirectResolution: undefined,
     seenInTitleSync: generation,
   };
 }

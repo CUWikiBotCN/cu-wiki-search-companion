@@ -7,6 +7,7 @@ import {
   CURRENT_VERSION_CONTRACT,
   createCompatibilityKey,
   initializeVersionContract,
+  inspectVersionContract,
   type CacheVersionContract,
 } from '../../src/storage/version-contract';
 
@@ -15,13 +16,13 @@ describe('cache version contract', () => {
     expect(CURRENT_VERSION_CONTRACT.analyzerPipeline).toBe(2);
   });
 
-  it('bumps only the corrected wikitext and Lua extractor contracts', () => {
+  it('versions redirect facts and title metadata independently of content indexes', () => {
     expect(CURRENT_VERSION_CONTRACT).toMatchObject({
       databaseSchema: 3,
-      pageFacts: 1,
+      pageFacts: 2,
       contentJobFormat: 1,
       extractors: { wikitext: 2, bson: 1, lua: 2 },
-      indexes: { title: 1, content: 1, lua: 1 },
+      indexes: { title: 2, content: 1, lua: 1 },
     });
   });
 
@@ -225,4 +226,21 @@ describe('cache version contract', () => {
       await database.delete();
     }
   });
+});
+
+it('recognizes v1 read-only and migrates under write permission without clearing cursors', async () => {
+  const database = new WikiSearchDatabase(`migration-${crypto.randomUUID()}`);
+  await database.open();
+  const legacy = { ...CURRENT_VERSION_CONTRACT, pageFacts: 1, indexes: { title: 1, content: 1, lua: 1 } };
+  await database.syncState.bulkPut([
+    { key: CACHE_VERSION_CONTRACT_KEY, value: legacy },
+    { key: 'local-sequence', value: 42 },
+    { key: 'recent-changes-sync', value: { through: 'keep' } },
+  ]);
+  await expect(inspectVersionContract(database)).resolves.toMatchObject({ status: 'compatible', migrated: false });
+  expect((await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value).toEqual(legacy);
+  await expect(initializeVersionContract(database)).resolves.toMatchObject({ status: 'compatible', migrated: true });
+  expect((await database.syncState.get('local-sequence'))?.value).toBe(42);
+  expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual({ through: 'keep' });
+  database.close(); await database.delete();
 });

@@ -5,6 +5,8 @@ import type {
   SearchIndexRebuildResult,
   SearchIndexRebuildWarning,
 } from '../maintenance/local-data-maintenance';
+import { CssSourceIndex, type CssSearchResult } from '../search/css-source-index';
+import type { ContentSyncScope } from '../sync/content-job-policy';
 import type { ContentSearchResult } from '../search/content-index';
 import type { LuaModuleSearchResult } from '../search/lua-module-index';
 import {
@@ -29,7 +31,7 @@ import { AnalyzerPreparationCoordinator } from './analyzer-preparation';
 import { ContentSyncSession } from './content-sync-session';
 import { StagedPreparationCoordinator } from './staged-preparation';
 
-export type PageSearchKind = 'title' | 'content' | 'lua';
+export type PageSearchKind = 'title' | 'content' | 'lua' | 'css';
 export type PageSearchReadiness = 'not-started' | 'local' | 'ready';
 type PageSearchHandle =
   | SearchIndexHandle<'title'>
@@ -44,6 +46,7 @@ export interface PageSearchRuntimeState {
   indexedPages: number;
   indexedContentPages: number;
   indexedLuaModules: number;
+  indexedCssSources: number;
   namespaces: readonly NamespaceInfo[];
   throughLocalSeq: number;
   snapshots: readonly SnapshotInspection[];
@@ -69,7 +72,7 @@ export interface PageSearchRuntimeOptions {
     analyzer: Analyzer,
     onBatch: (pages: PageRecord[]) => void,
   ): Promise<void>;
-  synchronizeContent(force: boolean): Promise<ContentSyncProgress>;
+  synchronizeContent(force: boolean, scope?: ContentSyncScope): Promise<ContentSyncProgress>;
   rebuildIndexes(analyzer: Analyzer): Promise<SearchIndexRebuildResult>;
   onStateChange?(state: PageSearchRuntimeState): void;
   onStatus?(status: PageSearchRuntimeStatus): void;
@@ -88,6 +91,9 @@ export class PageSearchRuntime {
   private readonly contentPreparation: StagedPreparationCoordinator;
   private readonly luaPreparation: StagedPreparationCoordinator;
   private readonly contentSyncSession: ContentSyncSession;
+  private readonly cssSyncSession: ContentSyncSession;
+  private readonly cssPreparation: StagedPreparationCoordinator;
+  private cssIndex?: CssSourceIndex;
   private initializePromise: Promise<void> | undefined;
   private titleSyncPromise: Promise<string | undefined> | undefined;
   private rebuildPromise: Promise<SearchIndexRebuildWarning[]> | undefined;
@@ -101,10 +107,11 @@ export class PageSearchRuntime {
   private mutableState: PageSearchRuntimeState = {
     initialized: false,
     engine: 'bootstrap',
-    readiness: { title: 'not-started', content: 'not-started', lua: 'not-started' },
+    readiness: { title: 'not-started', content: 'not-started', lua: 'not-started', css: 'not-started' },
     indexedPages: 0,
     indexedContentPages: 0,
     indexedLuaModules: 0,
+    indexedCssSources: 0,
     namespaces: [],
     throughLocalSeq: 0,
     snapshots: (['title', 'content', 'lua'] as const).map((kind) => ({
@@ -142,6 +149,27 @@ export class PageSearchRuntime {
     this.luaPreparation = new StagedPreparationCoordinator({
       prepareLocal: () => this.prepareLocalDerived('lua'),
       settle: () => this.settleDerived('lua'),
+    });
+    this.cssPreparation = new StagedPreparationCoordinator({
+      prepareLocal: async () => {
+        await this.initialize();
+        await this.options.waitUntilVisible();
+        this.cssIndex ??= new CssSourceIndex();
+        await this.cssIndex.refresh(this.database);
+        this.setReadiness('css', 'local');
+        this.updateCounts();
+      },
+      settle: async () => {
+        // CSS never needs a natural-language analyzer or a title snapshot.
+        await this.options.synchronizeTitles(false, this.bootstrapAnalyzer, () => undefined);
+        await this.refresh();
+        await this.cssSyncSession.run(false);
+        this.setReadiness('css', 'ready');
+      },
+    });
+    this.cssSyncSession = new ContentSyncSession({
+      synchronize: (force) => this.performCssSynchronization(force),
+      reportFailure: (error) => this.status(`CSS 同步暂停，本地缓存仍可搜索：${errorMessage(error)}`, 'error'),
     });
     this.contentSyncSession = new ContentSyncSession({
       synchronize: (force) => this.performContentSynchronization(force),
@@ -189,6 +217,7 @@ export class PageSearchRuntime {
     if (rebuild) {
       return settle(rebuild).then(() => this.prepare(kind));
     }
+    if (kind === 'css') return this.cssPreparation.prepare();
     if (kind === 'title') return this.titlePreparation.prepare();
     return kind === 'content'
       ? this.contentPreparation.prepare()
@@ -209,11 +238,17 @@ export class PageSearchRuntime {
 
   async synchronizeContent(force = false): Promise<void> {
     await this.initialize();
-    return this.contentSyncSession.run(force);
+    const attempts: Promise<void>[] = [];
+    if (this.contentHandle || this.luaHandle || !this.cssIndex) attempts.push(this.contentSyncSession.run(force));
+    if (this.cssIndex) attempts.push(this.cssSyncSession.run(force));
+    const outcomes = await Promise.allSettled(attempts);
+    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
   }
 
   async refresh(): Promise<void> {
     await this.initialize();
+    await this.cssIndex?.refresh(this.database);
+    this.mutableState.indexedCssSources = this.cssIndex?.size ?? 0;
     const sequence = await readLocalSequence(this.database);
     const handles = this.handles();
     const sequenceAdvanced = sequence > this.mutableState.throughLocalSeq;
@@ -237,7 +272,8 @@ export class PageSearchRuntime {
     );
     this.updateCounts();
     for (const handle of handles) this.indexCache.schedulePublish(handle);
-    await this.refreshSnapshotStatus();
+    if (handles.length) await this.refreshSnapshotStatus();
+    else this.emitState();
   }
 
   rebuildIndexes(): Promise<SearchIndexRebuildWarning[]> {
@@ -246,6 +282,7 @@ export class PageSearchRuntime {
       this.titlePreparation.waitForActiveLocal(),
       this.contentPreparation.waitForActiveLocal(),
       this.luaPreparation.waitForActiveLocal(),
+      this.cssPreparation.waitForActiveLocal(),
     ]);
     this.installGeneration += 1;
     const attempt = (async () => {
@@ -266,6 +303,7 @@ export class PageSearchRuntime {
         title: retainReady(this.mutableState.readiness.title),
         content: retainReady(this.mutableState.readiness.content),
         lua: retainReady(this.mutableState.readiness.lua),
+        css: this.mutableState.readiness.css,
       };
       this.mutableState.namespaces = namespaceOptions(pages);
       this.mutableState.throughLocalSeq = Math.max(
@@ -273,6 +311,7 @@ export class PageSearchRuntime {
         rebuilt.content.throughLocalSeq,
         rebuilt.lua.throughLocalSeq,
       );
+      await this.cssIndex?.refresh(this.database, true);
       this.updateCounts();
       await this.refreshSnapshotStatus();
       return rebuilt.warnings;
@@ -300,8 +339,12 @@ export class PageSearchRuntime {
     return this.luaHandle?.index.search(query) ?? [];
   }
 
+  searchCss(query: string): CssSearchResult[] {
+    return this.cssIndex?.search(query) ?? [];
+  }
+
   hasLoadedContentIndex(): boolean {
-    return Boolean(this.contentHandle || this.luaHandle);
+    return Boolean(this.contentHandle || this.luaHandle || this.cssIndex);
   }
 
   private async prepareLocalTitle(): Promise<void> {
@@ -427,6 +470,21 @@ export class PageSearchRuntime {
     return tracked;
   }
 
+  private async performCssSynchronization(force: boolean): Promise<void> {
+    let progress: ContentSyncProgress | undefined;
+    let failure: unknown;
+    try {
+      progress = await this.options.synchronizeContent(force, 'css');
+    } catch (error) { failure = error; }
+    try {
+      await this.cssIndex?.refresh(this.database, force);
+      await this.refresh();
+    } catch (error) { failure ??= error; }
+    if (failure) throw failure;
+    this.updateCounts();
+    this.status(`CSS 同步完成 · ${progress!.done}/${progress!.total} 页 · ${this.cssIndex?.size ?? 0} 份源码`, progress!.failed ? 'error' : 'success');
+  }
+
   private async performContentSynchronization(force: boolean): Promise<void> {
     let progress: ContentSyncProgress | undefined;
     let synchronizationError: unknown;
@@ -475,6 +533,7 @@ export class PageSearchRuntime {
     this.mutableState.indexedPages = this.searchBackend?.size ?? 0;
     this.mutableState.indexedContentPages = this.contentHandle?.index.size ?? 0;
     this.mutableState.indexedLuaModules = this.luaHandle?.index.size ?? 0;
+    this.mutableState.indexedCssSources = this.cssIndex?.size ?? 0;
     this.emitState();
   }
 

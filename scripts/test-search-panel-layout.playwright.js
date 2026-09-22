@@ -68,7 +68,11 @@ async page => {
       const callbacks = {
         prepareSearch: () => undefined,
         prepareFiles: () => undefined,
-        search: () => [],
+        search: () => [{ id: 901, title: '重定向源', namespace: 0, namespaceName: '（主）', score: 1,
+          isRedirect: true, redirectResolved: true, redirectTarget: { title: 'LongTarget'.repeat(60), fragment: '长章节'.repeat(40) } }],
+        redirectUrl: () => 'https://casualtiesunknown.huijiwiki.com/wiki/感染#败血症',
+        searchCss: () => [{ kind: 'css', id: 902, title: 'MediaWiki:Gadget-' + 'long'.repeat(80) + '.css', namespace: 8, namespaceName: 'MediaWiki',
+          matches: [{ line: 99, text: '.sample { --long: ' + 'x'.repeat(600) + '; }', highlights: [{ start: 0, end: 7 }] }] }],
         searchFiles: () => [],
         searchLua: () => [],
         searchContent: (query) => (query ? results : []),
@@ -293,6 +297,34 @@ async page => {
         throw new Error(`面板交互控件不符合 ${report.name}：${JSON.stringify(report)}`);
       }
     }
+
+    const sourceLayouts = [];
+    for (const viewport of viewports) {
+      await fixturePage.setViewportSize({ width: viewport.width, height: viewport.height });
+      for (const mode of ['title', 'css']) {
+        await host.locator('.mode').selectOption(mode);
+        await host.locator('.query').fill('sample');
+        await host.locator(mode === 'title' ? '.redirect-target' : '.css-match').waitFor({ timeout: 5000 });
+        await fixturePage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const dimensions = await fixturePage.evaluate(() => {
+          const root = document.querySelector('#cu-wiki-search-layout-test').shadowRoot;
+          return ['.panel', '.panel-body', '.result', '.result-body'].map(selector => {
+            const element = root.querySelector(selector);
+            return { selector, width: element.clientWidth, scrollWidth: element.scrollWidth };
+          });
+        });
+        if (dimensions.some(d => d.scrollWidth > d.width + 1)) throw new Error(`Source overflow: ${viewport.name}/${mode}`);
+        if (mode === 'title') {
+          await host.locator('.result-primary').focus();
+          await fixturePage.keyboard.press('Tab');
+          const focused = await host.locator('.redirect-target').evaluate(a => a.getRootNode().activeElement === a && !a.closest('button'));
+          if (!focused) throw new Error('Redirect link is not an independent Tab stop');
+        }
+        sourceLayouts.push({ viewport: viewport.name, mode, dimensions });
+      }
+    }
+    await host.locator('.mode').selectOption('content');
+    await host.locator('.query').fill('命中');
 
     const nativeViewport = { name: 'native-drag', width: 1200, height: 800 };
     await fixturePage.setViewportSize({
@@ -521,7 +553,7 @@ async page => {
       expectedArrowLeft,
       reset,
     };
-    return { reports, keyboardAcceptance, nativeDrag };
+    return { reports, sourceLayouts, keyboardAcceptance, nativeDrag };
   } finally {
     if (fixturePage && !fixturePage.isClosed()) await fixturePage.close();
     await page.bringToFront();

@@ -6,6 +6,7 @@ export interface PageRecord {
   namespace: number;
   namespaceName: string;
   isRedirect: boolean;
+  redirectResolution?: RedirectResolution;
   localSeq: number;
   /** Comparable global sequence for file-row writes; legacy file localSeq held revisions. */
   writerSeq?: number;
@@ -17,6 +18,18 @@ export interface PageRecord {
   contentModel?: string;
   content?: string;
   contentRevisionId?: number;
+}
+
+export interface RedirectTarget {
+  title: string;
+  fragment?: string;
+}
+
+export interface RedirectResolution {
+  sourceTitle: string;
+  sourceRevisionId?: number;
+  checkedAt: number;
+  target?: RedirectTarget;
 }
 
 export interface JobRecord {

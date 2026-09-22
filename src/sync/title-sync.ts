@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import { currentRedirectResolution } from '../redirect';
 import type { Analyzer } from '../analyzer/analyzer';
 import type { WikiSearchDatabase } from '../storage/database';
 import {
@@ -117,7 +118,7 @@ export async function syncTitles(
             oldPage.contentModel !== rawPage.contentmodel ||
             oldPage.deleted;
           if (changed) sequence += 1;
-          return {
+          const nextPage: PageRecord = {
             ...oldPage,
             id: rawPage.pageid,
             title: rawPage.title,
@@ -131,6 +132,8 @@ export async function syncTitles(
             seenInTitleSync: state.generation,
             deleted: false,
           };
+          nextPage.redirectResolution = currentRedirectResolution(nextPage);
+          return nextPage;
         });
 
         const nextState: TitleSyncState = {
@@ -170,6 +173,7 @@ export async function syncTitles(
         for (const page of stalePages) {
           sequence += 1;
           page.deleted = true;
+          page.redirectResolution = undefined;
           page.content = undefined;
           page.contentRevisionId = undefined;
           page.localSeq = sequence;

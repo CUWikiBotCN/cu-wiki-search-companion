@@ -22,6 +22,7 @@ export interface MirrorSyncFacts {
     onProgress: (state: ReconciliationSyncState) => void,
   ): Promise<ReconciliationSyncResult>;
   catchUp(): Promise<RecentChangeSyncResult>;
+  resolveRedirects?(): Promise<void>;
 }
 
 export interface CommittedReconciliationResult {
@@ -31,6 +32,7 @@ export interface CommittedReconciliationResult {
 
 export interface MirrorSyncCommittedRefresh {
   refreshStorage(): Promise<void>;
+  refreshRedirects?(): Promise<void>;
   refreshReconciliation(): Promise<CommittedReconciliationResult | undefined>;
   refreshRecentChanges(
     result: Extract<RecentChangeSyncResult, { status: 'complete' }>,
@@ -140,7 +142,14 @@ export class MirrorSyncOrchestrator {
         catchUpError = error;
         return false;
       }
-      return recentChanges.status === 'complete';
+      if (recentChanges.status !== 'complete') return false;
+      try {
+        await this.options.facts.resolveRedirects?.();
+      } catch (error) {
+        synchronizationError = error;
+        return false;
+      }
+      return true;
     };
 
     let coordination: MirrorSyncOutcome['coordination'] = 'ran';
@@ -191,6 +200,12 @@ export class MirrorSyncOrchestrator {
       } catch (error) {
         committedRefreshError ??= error;
       }
+    }
+
+    try {
+      await this.options.committed.refreshRedirects?.();
+    } catch (error) {
+      committedRefreshError ??= error;
     }
 
     let dataRefresh: SyncAttemptResult | undefined;

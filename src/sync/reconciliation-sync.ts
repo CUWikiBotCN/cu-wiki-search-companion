@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import { currentRedirectResolution } from '../redirect';
 import type { Analyzer } from '../analyzer/analyzer';
 import type { WikiSearchDatabase } from '../storage/database';
 import {
@@ -225,6 +226,7 @@ export async function reconcileWikiMirror(
                 ? { content: undefined, contentRevisionId: undefined }
                 : {}),
             };
+            nextPage.redirectResolution = currentRedirectResolution(nextPage);
             if (searchablePageFactChanged(oldPage, nextPage)) {
               sequence += 1;
               nextPage.localSeq = sequence;
@@ -325,6 +327,7 @@ async function finalizeReconciliation(
       for (const page of stalePages) {
         sequence += 1;
         page.deleted = true;
+        page.redirectResolution = undefined;
         page.content = undefined;
         page.contentRevisionId = undefined;
         page.localSeq = sequence;

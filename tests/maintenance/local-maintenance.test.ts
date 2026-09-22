@@ -92,6 +92,7 @@ describe('LocalDataMaintenance', () => {
       dataCodes: 1,
       contentSources: 2,
       luaSources: 1,
+      cssSources: 0,
     });
     expect(diagnostics.jobs).toEqual({ done: 1, pending: 1, running: 1, failed: 1 });
     expect(diagnostics.recentChanges).toMatchObject({
@@ -114,7 +115,7 @@ describe('LocalDataMaintenance', () => {
     await database.open();
     await database.pages.bulkPut([
       page(1, '缺正文', undefined, 'wikitext'),
-      page(2, '不合格 CSS', undefined, 'css'),
+      page(2, '待同步 CSS', undefined, 'css'),
     ]);
     const cache = new VersionedSearchIndexCache(database);
     const maintenance = new LocalDataMaintenance(database, cache);
@@ -123,6 +124,7 @@ describe('LocalDataMaintenance', () => {
 
     expect(await database.jobs.toArray()).toEqual([
       expect.objectContaining({ pageId: 1, status: 'pending' }),
+      expect.objectContaining({ pageId: 2, status: 'pending' }),
     ]);
 
     database.close();

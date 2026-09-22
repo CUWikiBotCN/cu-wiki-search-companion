@@ -26,7 +26,7 @@ describe('fact writer compatibility across live tabs', () => {
       await newWriter.runExclusive(async () => {
         await newTab.syncState.put({
           key: CACHE_VERSION_CONTRACT_KEY,
-          value: { ...CURRENT_VERSION_CONTRACT, pageFacts: 2 },
+          value: { ...CURRENT_VERSION_CONTRACT, pageFacts: CURRENT_VERSION_CONTRACT.pageFacts + 1 },
         });
       });
       const before = await oldTab.syncState.toArray();

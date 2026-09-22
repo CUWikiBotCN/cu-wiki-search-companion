@@ -1809,3 +1809,32 @@ function loginRequired(): Response {
     },
   });
 }
+
+it('invalidates redirect addresses and defers changed CSS source to the CSS queue', async () => {
+  const database = await databaseWithBaseline([
+    page({ id: 1, title: '别名', revisionId: 10, isRedirect: true,
+      redirectResolution: { sourceTitle: '别名', sourceRevisionId: 10, checkedAt: 1, target: { title: '旧目标' } } }),
+    page({ id: 2, title: 'MediaWiki:Common.css', namespace: 8, revisionId: 20,
+      contentModel: 'css', contentRevisionId: 20, content: '.old {}' }),
+  ]);
+  const api = new WikiApi({ retries: 0, fetcher: async (input) => {
+    const params = new URL(String(input), 'https://example.org').searchParams;
+    if (params.has('curtimestamp')) return json({ curtimestamp: '2026-08-31T03:10:00Z' });
+    if (params.get('list') === 'recentchanges') return json({ query: { recentchanges: [
+      { type: 'edit', rcid: 501, pageid: 1, ns: 0, title: '别名', revid: 11, timestamp: '2026-08-31T03:09:00Z' },
+      { type: 'edit', rcid: 502, pageid: 2, ns: 8, title: 'MediaWiki:Common.css', revid: 21, timestamp: '2026-08-31T03:09:01Z' },
+    ] } });
+    if (params.get('prop') === 'info') return json({ query: { pages: [
+      { pageid: 1, ns: 0, title: '别名', redirect: true, lastrevid: 11, contentmodel: 'wikitext' },
+      { pageid: 2, ns: 8, title: 'MediaWiki:Common.css', lastrevid: 21, contentmodel: 'css' },
+    ] } });
+    throw new Error('RC must not download redirects or CSS revisions');
+  } });
+  try {
+    const result = await syncRecentChanges(database, api, analyzer, { requestIntervalMs: 0 });
+    expect(result).toMatchObject({ status: 'complete', deferredContentPageIds: [2] });
+    expect((await database.pages.get(1))?.redirectResolution).toBeUndefined();
+    expect((await database.pages.get(2))?.content).toBeUndefined();
+    expect(await database.jobs.where('pageId').equals(2).first()).toMatchObject({ status: 'pending', targetRevisionId: 21 });
+  } finally { await destroy(database); }
+});

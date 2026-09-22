@@ -1554,3 +1554,70 @@ it('returns focus to the query when insertion support removes the focused action
   expect(root.querySelector('.insert-result')).toBeNull();
   expect(root.activeElement).toBe(input);
 });
+
+describe('redirect links and CSS source results', () => {
+  it('renders an independent native redirect link without changing source actions', async () => {
+    const result: TitleSearchResult = { id: 42, title: '别名', namespace: 0, namespaceName: '（主）', score: 10,
+      isRedirect: true, redirectResolved: true, redirectTarget: { title: '长标题'.repeat(80), fragment: '章节#1' } };
+    const callbacks = maintenanceCallbacks({ search: () => [result], redirectUrl: () => 'https://example.org/wiki/Target#section' });
+    const panel = new SearchPanel(callbacks);
+    panel.open(); await nextTick();
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    input.value = '别名'; panel.refreshResults(); await nextTick();
+    const link = root.querySelector<HTMLAnchorElement>('.redirect-target')!;
+    expect(link.closest('button')).toBeNull();
+    expect(link.href).toBe('https://example.org/wiki/Target#section');
+    expect(link.target).toBe('_blank');
+    expect(link.textContent).toContain('#章节#1');
+    link.click();
+    expect(callbacks.copyTitle).not.toHaveBeenCalled();
+    expect(callbacks.insert).not.toHaveBeenCalled();
+    root.querySelector<HTMLButtonElement>('.result-primary')!.click();
+    expect(callbacks.copyTitle).toHaveBeenCalledWith(result);
+    root.querySelector<HTMLButtonElement>('.open-result')!.click();
+    expect(callbacks.open).toHaveBeenCalledWith(result);
+    expect(root.querySelector('.panel')?.hasAttribute('hidden')).toBe(false);
+    panel.destroy();
+  });
+
+  it('shows pending and unresolved redirects without constructing a false target', async () => {
+    const result: TitleSearchResult = { id: 1, title: '别名', namespace: 0, namespaceName: '（主）', score: 1, isRedirect: true };
+    const panel = new SearchPanel(maintenanceCallbacks({ search: () => [result] }));
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    root.querySelector<HTMLInputElement>('.query')!.value = '别名';
+    panel.refreshResults(); await nextTick();
+    expect(root.querySelector('.results')?.textContent).toContain('目标待同步');
+    result.redirectResolved = true;
+    panel.refreshResults(); await nextTick();
+    expect(root.querySelector('.results')?.textContent).toContain('未取得目标');
+    expect(root.querySelector('.redirect-target')).toBeNull();
+    panel.destroy();
+  });
+
+  it('searches CSS, shows safe highlighted source with line numbers, and blocks insertion', async () => {
+    const result = { kind: 'css' as const, id: 1, title: 'MediaWiki:Gadget-test.css', namespace: 8, namespaceName: 'MediaWiki',
+      matches: [{ line: 12, text: '.card { content: "<script>"; }', highlights: [{ start: 0, end: 5 }] }] };
+    const callbacks = maintenanceCallbacks({ searchCss: vi.fn(() => [result]) });
+    const panel = new SearchPanel(callbacks);
+    panel.open(); await nextTick();
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const mode = root.querySelector<HTMLSelectElement>('.mode')!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    input.value = '.card'; mode.value = 'css'; mode.dispatchEvent(new Event('change')); await nextTick();
+    expect(callbacks.prepareSearch).toHaveBeenCalledWith('css');
+    expect(callbacks.searchCss).toHaveBeenCalledWith('.card');
+    expect(root.querySelector('.css-line')?.textContent).toContain('12');
+    expect(root.querySelector('.css-match mark')?.textContent).toBe('.card');
+    expect(root.querySelector('.css-match script')).toBeNull();
+    expect(root.querySelector('.insert-result')).toBeNull();
+    expect(root.querySelector('.copy-result')).toBeNull();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    expect(callbacks.insert).not.toHaveBeenCalled();
+    root.querySelector<HTMLButtonElement>('.result-primary')!.click();
+    expect(callbacks.copyTitle).toHaveBeenCalledWith(result);
+    root.querySelector<HTMLButtonElement>('.open-result')!.click();
+    expect(callbacks.open).toHaveBeenCalledWith(result);
+    panel.destroy();
+  });
+});

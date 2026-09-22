@@ -29,6 +29,7 @@ import {
   type StorageInvalidation,
   type StorageInvalidationRequest,
 } from './runtime/runtime-lifecycle-coordinator';
+import type { CssSearchResult } from './search/css-source-index';
 import type { ContentSearchResult } from './search/content-index';
 import { DataCodeIndex, type DataCodeSearchResult } from './search/data-code-index';
 import type { LuaModuleSearchResult } from './search/lua-module-index';
@@ -60,6 +61,8 @@ import {
   reconcileWikiMirror,
 } from './sync/reconciliation-sync';
 import { syncTitles } from './sync/title-sync';
+import { syncRedirectTargets } from './sync/redirect-target-sync';
+import { pageUrl as buildPageUrl } from './page-url';
 import { WikiApi } from './sync/wiki-api';
 import type { TitleSyncProgress } from './types';
 import { SearchPanel, type MaintenanceActionFeedback } from './ui/search-panel';
@@ -69,7 +72,7 @@ declare const __CU_WIKI_BUILD_ID__: string;
 interface MediaWikiWindow extends Window {
   mw?: {
     config?: { get(key: string): unknown };
-    util?: { getUrl(title: string): string };
+    util?: { getUrl(title: string): string; escapeIdForLink?(fragment: string): string };
   };
   __CU_WIKI_SEARCH__?: DebugApi;
 }
@@ -84,6 +87,7 @@ interface DebugApi {
   indexedDataCodes: number;
   indexedContentPages: number;
   indexedLuaModules: number;
+  indexedCssSources: number;
   startupMs?: number;
   jiebaReadyMs?: number;
   contentIndexReadyMs?: number;
@@ -100,6 +104,7 @@ interface DebugApi {
   searchCodes(query: string): DataCodeSearchResult[];
   searchContent(query: string, namespace?: number): ContentSearchResult[];
   searchLua(query: string): LuaModuleSearchResult[];
+  searchCss(query: string): CssSearchResult[];
   forceSync(): Promise<void>;
   forceFileSync(): Promise<void>;
   forceDataCodeSync(): Promise<void>;
@@ -168,6 +173,7 @@ async function start(): Promise<void> {
   let runtimeLifecycle: RuntimeLifecycleCoordinator | undefined;
   let dataCodeSyncSession: DataCodeSyncSession<DataCodeCommit> | undefined;
   let mirrorSyncOrchestrator: MirrorSyncOrchestrator | undefined;
+  let redirectFactsCommitted = false;
   let writesCompatible = true;
   let lastAppliedFileChangeSeq = 0;
   let dataCodeRulesSource = DEFAULT_DATA_CODE_RULES;
@@ -222,6 +228,7 @@ async function start(): Promise<void> {
       pageSearchRuntime?.searchTitles(query, namespace) ?? [],
     searchFiles: (query) => fileSearchBackend?.search(query) ?? [],
     searchLua: (query) => pageSearchRuntime?.searchLua(query) ?? [],
+    searchCss: (query) => pageSearchRuntime?.searchCss(query) ?? [],
     searchContent: (query, namespace) =>
       pageSearchRuntime?.searchContent(query, namespace) ?? [],
     searchCodes: (query) => dataCodeIndex?.search(query) ?? [],
@@ -247,6 +254,7 @@ async function start(): Promise<void> {
       GM_setClipboard(link, 'text');
       panel.setStatus(`已复制 ${link}`, 'success');
     },
+    redirectUrl: (target) => pageUrl(target.title, target.fragment),
     open: (result) => {
       GM_openInTab(pageUrl(result.title), { active: true });
     },
@@ -318,6 +326,7 @@ async function start(): Promise<void> {
     indexedDataCodes: 0,
     indexedContentPages: 0,
     indexedLuaModules: 0,
+    indexedCssSources: 0,
     contentModel: typeof contentModel === 'string' ? contentModel : undefined,
     incrementalStatus: 'idle',
     reconciliationStatus: 'idle',
@@ -329,6 +338,7 @@ async function start(): Promise<void> {
     searchContent: (query, namespace) =>
       pageSearchRuntime?.searchContent(query, namespace) ?? [],
     searchLua: (query) => pageSearchRuntime?.searchLua(query) ?? [],
+    searchCss: (query) => pageSearchRuntime?.searchCss(query) ?? [],
     forceSync: () => requestManualReconciliation(),
     forceFileSync: () => ensureFileSearchStarted(true),
     forceDataCodeSync: () => requestManualDataCodeSync(),
@@ -356,26 +366,36 @@ async function start(): Promise<void> {
     },
     waitUntilVisible: () => browserTaskScheduler.waitUntilVisible(),
     synchronizeTitles: async (force, analyzer, onBatch) => {
-      const coordinated = await incrementalCoordinator!.runExclusive(() =>
-        syncTitles(database, api, analyzer, {
-          force,
-          onBatch,
-          onProgress: (progress) => panel.setStatus(progressMessage(progress)),
-        }).then(() => undefined),
-      );
+      let coordinated;
+      try {
+        coordinated = await incrementalCoordinator!.runExclusive(async () => {
+          const state = await syncTitles(database, api, analyzer, {
+            force,
+            onBatch,
+            onProgress: (progress) => panel.setStatus(progressMessage(progress)),
+          });
+          await syncRedirectTargets(database, api, {
+            refreshSince: state.generation,
+            onBatch: () => { redirectFactsCommitted = true; },
+          });
+        });
+      } finally {
+        await refreshRedirectFacts();
+      }
       if (coordinated === 'lock-unavailable') throw writerLockUnavailableError();
     },
-    synchronizeContent: async (force) => {
+    synchronizeContent: async (force, scope = 'content') => {
       let progress: Awaited<ReturnType<typeof syncContent>> | undefined;
-      const coordinated = await runtimeLifecycle!.runContentWriter(async () => {
+      const coordinated = await runtimeLifecycle!.runWriter(`content:${scope}`, async () => {
         progress = await syncContent(database, api, {
           force,
+          scope,
           onBatch: () => {
             incrementalChannel?.postMessage({ type: 'content-committed' });
           },
           onProgress: (current) => {
             panel.setStatus(
-              `同步页面正文 ${current.done}/${current.total}` +
+              `同步${scope === 'css' ? 'CSS 源码' : '页面正文'} ${current.done}/${current.total}` +
                 (current.failed ? ` · ${current.failed} 失败` : ''),
             );
           },
@@ -471,9 +491,17 @@ async function start(): Promise<void> {
           onProgress,
         }),
       catchUp: () => syncRecentChanges(database, api, fallbackAnalyzer),
+      resolveRedirects: async () => {
+        const state = await readReconciliationSyncState(database);
+        await syncRedirectTargets(database, api, {
+          refreshSince: state?.status === 'complete' ? state.generation : undefined,
+          onBatch: () => { redirectFactsCommitted = true; },
+        });
+      },
     },
     committed: {
       refreshStorage: () => refreshIndexesFromStorage(),
+      refreshRedirects: () => refreshRedirectFacts(),
       refreshReconciliation: () => committedReconciliationRefresh.apply(),
       refreshRecentChanges: (result) => committedRecentChangeRefresh.apply(result),
     },
@@ -623,6 +651,17 @@ async function start(): Promise<void> {
       await task;
     } finally {
       if (fileSyncPromise === task) fileSyncPromise = undefined;
+    }
+  }
+
+  async function refreshRedirectFacts(): Promise<void> {
+    if (!redirectFactsCommitted) return;
+    redirectFactsCommitted = false;
+    // Always notify other tabs, including when the writer's local refresh fails.
+    try {
+      await refreshIndexesFromStorage();
+    } finally {
+      incrementalChannel?.postMessage({ type: 'redirects-committed' });
     }
   }
 
@@ -951,6 +990,7 @@ async function start(): Promise<void> {
     debugApi.indexedPages = state.indexedPages;
     debugApi.indexedContentPages = state.indexedContentPages;
     debugApi.indexedLuaModules = state.indexedLuaModules;
+    debugApi.indexedCssSources = state.indexedCssSources;
     debugApi.jiebaReadyMs = state.jiebaReadyMs;
     debugApi.contentIndexReadyMs = state.contentIndexReadyMs;
     debugApi.luaIndexReadyMs = state.luaIndexReadyMs;
@@ -1013,17 +1053,15 @@ function writerLockUnavailableError(): Error {
   return new Error('无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试');
 }
 
-function searchKindLabel(kind: 'title' | 'content' | 'lua'): string {
+function searchKindLabel(kind: 'title' | 'content' | 'lua' | 'css'): string {
+  if (kind === 'css') return 'CSS 搜索';
   if (kind === 'content') return '正文索引';
   if (kind === 'lua') return 'Lua 索引';
   return '标题索引';
 }
 
-function pageUrl(title: string): string {
-  const path =
-    pageWindow.mw?.util?.getUrl(title) ??
-    `/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
-  return new URL(path, pageWindow.location.origin).href;
+function pageUrl(title: string, fragment?: string): string {
+  return buildPageUrl(pageWindow, title, fragment);
 }
 
 function whenPageIdle(): Promise<void> {

@@ -379,7 +379,8 @@ describe('wikitext content search', () => {
     expect((await database.pages.get(3))?.localSeq).toBe(8);
     expect((await database.syncState.get('local-sequence'))?.value).toBe(8);
     expect((await database.pages.get(3))?.content).toContain('半自动手枪');
-    expect(await database.jobs.count()).toBe(3);
+    expect(await database.jobs.count()).toBe(4);
+    expect(await database.jobs.where('pageId').equals(5).first()).toMatchObject({ status: 'pending' });
 
     database.close();
     await database.delete();

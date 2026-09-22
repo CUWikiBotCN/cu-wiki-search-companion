@@ -464,3 +464,26 @@ function baseOptions(): ConstructorParameters<typeof MirrorSyncOrchestrator>[0] 
     },
   };
 }
+
+it('refreshes committed redirects after a later batch fails and after releasing the writer lock', async () => {
+  const options = baseOptions();
+  let locked = false;
+  options.coordinator.runIfDue = async (task) => {
+    locked = true;
+    await task();
+    locked = false;
+    return 'ran';
+  };
+  options.facts.reconcile = async () => reconciliationResult('not-due');
+  options.facts.catchUp = async () => completeRecentChanges();
+  options.facts.resolveRedirects = async () => {
+    expect(locked).toBe(true);
+    throw new Error('second redirect batch failed');
+  };
+  options.committed.refreshRecentChanges = async () => ({ dataCodesInvalidated: false });
+  options.committed.refreshRedirects = vi.fn(async () => { expect(locked).toBe(false); });
+  const result = await new MirrorSyncOrchestrator(options).runScheduled();
+  expect(result.status).toBe('error');
+  expect(result.recentChanges?.status).toBe('complete');
+  expect(options.committed.refreshRedirects).toHaveBeenCalledOnce();
+});

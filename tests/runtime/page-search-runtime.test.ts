@@ -196,3 +196,48 @@ async function harness(overrides: Partial<ConstructorParameters<typeof PageSearc
   });
   return { runtime, database, cache, maintenance, loadAnalyzer, synchronizeTitles, synchronizeContent };
 }
+
+it('prepares CSS without loading the analyzer or snapshots and restores offline source before retry', async () => {
+  let offline = true;
+  const synchronizeContent = vi.fn(async (_force: boolean, scope?: string) => {
+    expect(scope).toBe('css');
+    if (offline) throw new Error('offline');
+    return { total: 1, done: 1, pending: 0, failed: 0 };
+  });
+  const { runtime, database, cache, loadAnalyzer } = await harness({ synchronizeContent });
+  await database.pages.put({ ...pages()[0]!, id: 3, contentModel: 'css', title: 'MediaWiki:Common.css', content: '.card {}', localSeq: 3 });
+  await database.syncState.put({ key: 'local-sequence', value: 3 });
+  const inspect = vi.spyOn(cache, 'inspect');
+  await runtime.initialize();
+  expect(runtime.searchCss('.card')).toEqual([]);
+  await expect(runtime.prepare('css')).rejects.toThrow('offline');
+  expect(runtime.searchCss('.card')).toHaveLength(1);
+  expect(loadAnalyzer).not.toHaveBeenCalled();
+  expect(inspect).not.toHaveBeenCalled();
+  expect(await database.indexSnapshots.count()).toBe(0);
+  offline = false;
+  await runtime.prepare('css');
+  expect(runtime.state.readiness.css).toBe('ready');
+  expect(runtime.state.readiness.content).toBe('not-started');
+  await database.pages.update(3, { deleted: true, localSeq: 4 });
+  await database.syncState.put({ key: 'local-sequence', value: 4 });
+  await runtime.refresh();
+  expect(runtime.searchCss('.card')).toEqual([]);
+});
+
+it('does not let a pending content download swallow CSS preparation', async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const synchronizeContent = vi.fn(async (_force: boolean, scope?: string) => {
+    if (scope !== 'css') await blocked;
+    return { total: 0, done: 0, pending: 0, failed: 0 };
+  });
+  const { runtime } = await harness({ synchronizeContent });
+  const content = runtime.prepare('content');
+  await vi.waitFor(() => expect(synchronizeContent).toHaveBeenCalled());
+  await runtime.prepare('css');
+  expect(synchronizeContent).toHaveBeenCalledWith(false, 'css');
+  release(); await content;
+  expect(runtime.state.readiness.css).toBe('ready');
+  expect(runtime.state.readiness.content).toBe('ready');
+});

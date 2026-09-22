@@ -138,3 +138,16 @@ kbd { border: 1px solid var(--cu-color-border-soft, #45484e); border-bottom-widt
 :host([data-narrow]) .query { grid-column: 1 / -1; }
 :host([data-narrow]) .result { grid-template-columns: minmax(0, 1fr); }
 :host([data-narrow]) .actions { justify-content: flex-end; padding: 0 8px 7px; }
+
+.result-body { min-width: 0; }
+.result-body .result-primary { width: 100%; }
+.redirect-description { display: block; padding: 0 10px 10px; }
+.redirect-target { color: var(--detail-a, #ffd96a); overflow-wrap: anywhere; }
+.redirect-target:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+
+.css-search-help { margin: 6px 14px; font-size: 11px; color: var(--detail-color, #babdc4); }
+.css-matches { padding: 0 8px 9px; min-width: 0; }
+.css-match { margin-bottom: 5px; }
+.css-line { display: block; font-size: 11px; color: var(--detail-color, #babdc4); }
+.css-match code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; user-select: text; }
+.css-match mark { background: var(--cu-content-highlight, #fff3a3); color: var(--cu-content-highlight-color, #000); }
