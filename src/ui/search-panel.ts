@@ -24,6 +24,7 @@ import type {
 } from '../maintenance/local-data-maintenance';
 
 import {
+  SEARCH_MODES,
   canInsertResult,
   isDataCodeResult,
   type SearchMode,
@@ -115,6 +116,8 @@ export class SearchPanel {
   private startupFailed = false;
   private destroyed = false;
   private searchTimer?: number;
+  private readonly dirtyModes = new Set<SearchMode>(Object.keys(SEARCH_MODES) as SearchMode[]);
+  private lastSearch?: { query: string; mode: SearchMode; namespace: string };
   private returnFocus?: HTMLElement;
   private disconnectObserver?: MutationObserver;
 
@@ -154,9 +157,14 @@ export class SearchPanel {
   }
 
   setNamespaces(namespaces: NamespaceInfo[]): void {
-    this.state.namespaces = [...namespaces].sort((left, right) => left.id - right.id);
-    if (!namespaces.some((namespace) => String(namespace.id) === this.state.namespace)) {
+    if (this.destroyed) return;
+    const sorted = [...namespaces].sort((left, right) => left.id - right.id);
+    if (!sorted.every((namespace, index) =>
+      namespace.id === this.state.namespaces[index]?.id && namespace.name === this.state.namespaces[index]?.name,
+    ) || sorted.length !== this.state.namespaces.length) this.state.namespaces = sorted;
+    if (this.state.namespace && !namespaces.some((namespace) => String(namespace.id) === this.state.namespace)) {
       this.state.namespace = '';
+      if (this.state.mode === 'title' || this.state.mode === 'content') this.invalidateResults([this.state.mode]);
     }
   }
 
@@ -184,8 +192,9 @@ export class SearchPanel {
   open(returnFocus?: HTMLElement): void {
     if (this.destroyed) return;
     if (!this.state.visible) this.returnFocus = returnFocus ?? this.currentReturnFocus();
-    if (!this.startupFailed) this.prepareCurrentMode();
     this.state.visible = true;
+    if (!this.startupFailed) this.prepareCurrentMode();
+    if (this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions()) this.performSearch();
     this.geometry.scheduleLayoutUpdate();
     // Vue batches visibility updates; focus only after the dialog is actually shown.
     void nextTick(() => {
@@ -196,6 +205,7 @@ export class SearchPanel {
   }
 
   close(): void {
+    this.cancelSearch();
     if (!this.state.visible) return;
     this.geometry.finishDrag(false);
     this.state.visible = false;
@@ -209,14 +219,24 @@ export class SearchPanel {
   }
 
   refreshResults(): void {
-    if (!this.destroyed) this.performSearch();
+    if (this.destroyed) return;
+    this.dirtyModes.add(this.state.mode);
+    this.performSearch();
+  }
+
+  invalidateResults(modes: readonly SearchMode[]): void {
+    if (this.destroyed) return;
+    for (const mode of modes) this.dirtyModes.add(mode);
+    if (this.dirtyModes.has(this.state.mode) && this.state.visible && !this.composing && this.searchTimer === undefined) {
+      this.scheduleSearch(0);
+    }
   }
 
   destroy(): void {
     if (this.destroyed) return;
     this.close();
     this.destroyed = true;
-    if (this.searchTimer !== undefined) window.clearTimeout(this.searchTimer);
+    this.cancelSearch();
     this.disconnectObserver?.disconnect();
     this.geometry.destroy();
     if (SearchPanel.shortcutOwner?.deref() === this) {
@@ -275,17 +295,20 @@ export class SearchPanel {
       await this.finishPersistenceRequest(request);
     }, false),
     resetLocal: () => this.runMaintenanceAction('正在清空本地镜像…', () => this.callbacks.resetLocalMirror?.(this.state.resetDataRules)),
-    compositionStart: () => { this.composing = true; },
+    compositionStart: () => { this.composing = true; this.cancelSearch(); },
     compositionEnd: (event: CompositionEvent) => {
       this.composing = false;
-      if (event.target === this.input) this.scheduleSearch(0);
+      if (event.target === this.input || this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions()) this.scheduleSearch(0);
     },
-    input: () => { if (!this.composing) this.scheduleSearch(120); },
-    search: () => this.performSearch(),
+    input: () => {
+      this.dirtyModes.add(this.state.mode);
+      if (!this.composing) this.scheduleSearch(120);
+    },
+    search: () => this.refreshResults(),
     mode: () => {
       if (!this.startupFailed) this.prepareCurrentMode();
       if (this.state.mode !== 'data-code') this.state.settingsOpen = false;
-      this.performSearch();
+      this.refreshResults();
     },
     keydown: (event: KeyboardEvent) => this.handleKeydown(event),
     select: (index: number) => { this.state.selectedIndex = index; this.updateSelection(); },
@@ -311,8 +334,27 @@ export class SearchPanel {
   }
 
   private scheduleSearch(delay: number): void {
+    this.dirtyModes.add(this.state.mode);
+    this.cancelSearch();
+    if (this.destroyed || !this.state.visible || this.composing) return;
+    this.searchTimer = window.setTimeout(() => {
+      this.searchTimer = undefined;
+      this.performSearch();
+    }, delay);
+  }
+
+  private cancelSearch(): void {
     if (this.searchTimer !== undefined) window.clearTimeout(this.searchTimer);
-    this.searchTimer = window.setTimeout(() => this.performSearch(), delay);
+    this.searchTimer = undefined;
+  }
+
+  private sameSearchConditions(): boolean {
+    return this.lastSearch?.query === this.input.value && this.lastSearch.mode === this.state.mode &&
+      this.lastSearch.namespace === this.searchNamespace();
+  }
+
+  private searchNamespace(): string {
+    return this.state.mode === 'title' || this.state.mode === 'content' ? this.state.namespace : '';
   }
 
   private prepareCurrentMode(): void {
@@ -329,8 +371,11 @@ export class SearchPanel {
   }
 
   private performSearch(): void {
-    if (this.destroyed) return;
-    if (this.resultList.contains(this.root.activeElement)) this.input.focus();
+    this.cancelSearch();
+    if (this.destroyed || !this.state.visible || this.composing) return;
+    const selected = this.sameSearchConditions() ? this.state.results[this.state.selectedIndex] : undefined;
+    const identity = selected ? resultIdentity(this.state.mode, selected) : undefined;
+    const focused = this.root.activeElement;
     const query = this.input.value;
     this.state.query = query;
     const namespace = this.state.namespace ? Number(this.state.namespace) : undefined;
@@ -344,7 +389,22 @@ export class SearchPanel {
       case 'files': this.state.results = this.callbacks.searchFiles(query); break;
       default: return unreachableMode(mode);
     }
-    this.state.selectedIndex = this.state.results.length ? 0 : -1;
+    const retained = identity === undefined ? -1 : this.state.results.findIndex((result) => resultIdentity(mode, result) === identity);
+    this.state.selectedIndex = retained >= 0 ? retained : this.state.results.length ? 0 : -1;
+    this.lastSearch = { query, mode, namespace: this.searchNamespace() };
+    this.dirtyModes.delete(mode);
+    if (focused && this.resultList.contains(focused)) {
+      let focusMoved = false;
+      const observeFocus = (): void => { if (this.root.activeElement !== focused) focusMoved = true; };
+      document.addEventListener('focusin', observeFocus, true);
+      void nextTick(() => {
+        document.removeEventListener('focusin', observeFocus, true);
+        if (!this.destroyed && this.state.visible && !focused.isConnected && !focusMoved &&
+          !this.root.activeElement && (!document.activeElement || [document.body, document.documentElement, this.host].includes(document.activeElement as HTMLElement))) {
+          this.input.focus();
+        }
+      });
+    }
   }
 
   private handleKeydown(event: KeyboardEvent): void {
@@ -586,6 +646,10 @@ export class SearchPanel {
     if (!element) throw new Error(`Search panel is missing ${selector}`);
     return element;
   }
+}
+
+function resultIdentity(mode: SearchMode, result: SearchPanelResult): string {
+  return isDataCodeResult(result) ? JSON.stringify([result.source, result.code]) : `${mode}:${result.id}`;
 }
 
 function unreachableMode(mode: never): never {

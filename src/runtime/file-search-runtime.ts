@@ -15,6 +15,7 @@ interface FileSearchRuntimeOptions {
   canWrite(): boolean;
   runExclusive(task: () => Promise<void>): Promise<ExclusiveSyncResult>;
   onStateChange(state: FileSearchRuntimeState): void;
+  onResultsChanged?(): void;
   onRestored(count: number): void;
   onProgress(progress: TitleSyncProgress): void;
   onCommitted(state: TitleSyncState): Promise<void>;
@@ -75,6 +76,7 @@ export class FileSearchRuntime {
       .filter((file) => !file.deleted).toArray();
     this.index = new LinearTitleIndex(this.options.analyzer, files);
     this.options.onStateChange(this.state);
+    this.options.onResultsChanged?.();
   }
 
   private async synchronize(force: boolean): Promise<void> {
@@ -90,6 +92,7 @@ export class FileSearchRuntime {
             onBatch: (batch) => {
               this.index?.update(batch);
               this.options.onStateChange(this.state);
+              if (batch.length && this.index) this.options.onResultsChanged?.();
             },
             onProgress: this.options.onProgress,
           },

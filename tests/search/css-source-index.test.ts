@@ -66,6 +66,28 @@ it('keeps literal CSS escapes and Unicode intact and limits pages and hits deter
   expect(css.search('.x')).toEqual(fresh.search('.x'));
 });
 
+it('reports actual source application without copying the map on an empty delta', async () => {
+  await database.pages.put(page(1, 'css', '.one {}'));
+  await database.syncState.put({ key: 'local-sequence', value: 1 });
+  const css = index();
+  expect(await css.refresh(database)).toBe(true);
+  const from = css.search('.one')[0];
+  expect(await css.refresh(database)).toBe(false);
+  await database.syncState.put({ key: 'local-sequence', value: 2 });
+  expect(await css.refresh(database)).toBe(false);
+  expect(css.search('.one')[0]).toEqual(from);
+  await database.pages.update(1, { title: '新样式', content: '.two {}', localSeq: 3 });
+  await database.syncState.put({ key: 'local-sequence', value: 3 });
+  expect(await css.refresh(database)).toBe(true);
+  expect(css.size).toBe(1);
+  expect(css.search('.two')[0]?.title).toBe('新样式');
+  expect(await css.refresh(database, true)).toBe(true);
+  await database.pages.update(1, { deleted: true, localSeq: 4 });
+  await database.syncState.put({ key: 'local-sequence', value: 4 });
+  expect(await css.refresh(database)).toBe(true);
+  expect(css.size).toBe(0);
+});
+
 it('downloads CSS and existing content separately, including a forced retry and cached restart', async () => {
   await database.pages.bulkPut([page(1, 'css'), page(2, 'sanitized-css'), page(3, 'wikitext'), page(4, 'Scribunto')]);
   const requests: number[][] = [];

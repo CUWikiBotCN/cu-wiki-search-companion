@@ -42,7 +42,10 @@ describe('SearchPanel file resource mode', () => {
       saveDataCodeRules: vi.fn(async () => undefined),
       saveHighlightPreferences: vi.fn(),
     };
-    new SearchPanel(callbacks);
+    const panel = new SearchPanel(callbacks);
+    panel.open();
+    callbacks.prepareSearch.mockClear();
+    callbacks.search.mockClear();
     const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
@@ -93,7 +96,9 @@ describe('SearchPanel Lua module mode', () => {
       saveDataCodeRules: vi.fn(async () => undefined),
       saveHighlightPreferences: vi.fn(),
     };
-    new SearchPanel(callbacks);
+    const panel = new SearchPanel(callbacks);
+    panel.open();
+    callbacks.prepareSearch.mockClear();
     const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
@@ -889,6 +894,7 @@ describe('SearchPanel full-text hit highlighting', () => {
   } {
     const callbacks = maintenanceCallbacks(overrides);
     const panel = new SearchPanel(callbacks);
+    panel.open();
     const host = document.querySelector<HTMLDivElement>('#cu-wiki-search-host');
     const root = host?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
@@ -1457,6 +1463,7 @@ describe('SearchPanel Vue lifecycle', () => {
       await nextTick();
       await nextTick();
       prepare.mockClear();
+      search.mockClear();
       window.dispatchEvent(new Event('resize'));
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', altKey: true }));
       await vi.runAllTimersAsync();
@@ -1588,6 +1595,7 @@ describe('redirect links and CSS source results', () => {
   it('shows pending and unresolved redirects without constructing a false target', async () => {
     const result: TitleSearchResult = { id: 1, title: '别名', namespace: 0, namespaceName: '（主）', score: 1, isRedirect: true };
     const panel = new SearchPanel(maintenanceCallbacks({ search: () => [result] }));
+    panel.open();
     const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
     root.querySelector<HTMLInputElement>('.query')!.value = '别名';
     panel.refreshResults(); await nextTick();
@@ -1651,6 +1659,7 @@ describe('SearchPanel six-mode contract', () => {
     panel.open();
     await nextTick();
     vi.mocked(callbacks.prepareSearch).mockClear();
+    for (const entry of scenarios) vi.mocked(callbacks[entry.search]).mockClear();
     input.value = 'query';
     mode.value = scenario.mode;
     mode.dispatchEvent(new Event('change'));
@@ -1669,6 +1678,171 @@ describe('SearchPanel six-mode contract', () => {
     expect(callbacks.copy).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
     expect(callbacks.insert).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
+    panel.destroy();
+  });
+});
+
+describe('SearchPanel result invalidation scheduling', () => {
+  afterEach(() => vi.useRealTimers());
+
+  async function mount() {
+    vi.useFakeTimers();
+    const callbacks = maintenanceCallbacks();
+    const panel = new SearchPanel(callbacks);
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    input.value = 'query';
+    panel.open();
+    await nextTick();
+    for (const callback of [callbacks.search, callbacks.searchContent, callbacks.searchCodes, callbacks.searchFiles]) vi.mocked(callback).mockClear();
+    return { panel, root, input, callbacks };
+  }
+
+  it('coalesces relevant invalidations and ignores unrelated modes or pure state changes', async () => {
+    const { panel, callbacks } = await mount();
+    panel.invalidateResults(['files', 'data-code', 'content', 'lua', 'css']);
+    panel.setStatus('diagnostics');
+    panel.setNamespaces([{ id: 0, name: '（主）' }]);
+    const namespaces = panel.state.namespaces;
+    panel.setNamespaces([{ id: 0, name: '（主）' }]);
+    expect(panel.state.namespaces).toBe(namespaces);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callbacks.search).not.toHaveBeenCalled();
+    panel.invalidateResults(['title']);
+    panel.invalidateResults(['title']);
+    panel.invalidateResults(['title']);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('query', undefined);
+    panel.destroy();
+  });
+
+  it('merges external updates into input debounce without advancing or repeating it', async () => {
+    const { panel, input, callbacks } = await mount();
+    input.value = 'latest';
+    input.dispatchEvent(new Event('input'));
+    panel.invalidateResults(['title']);
+    await vi.advanceTimersByTimeAsync(119);
+    expect(callbacks.search).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('latest', undefined);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(callbacks.search).toHaveBeenCalledOnce();
+    panel.destroy();
+  });
+
+  it('does no hidden work and consumes dirty data or changed conditions when reopening', async () => {
+    const { panel, input, callbacks } = await mount();
+    input.value = 'pending'; input.dispatchEvent(new Event('input'));
+    panel.close();
+    panel.invalidateResults(['title']); panel.refreshResults();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(callbacks.search).not.toHaveBeenCalled();
+    panel.open(); await nextTick();
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('pending', undefined);
+    vi.mocked(callbacks.search).mockClear();
+    panel.close(); panel.open(); await nextTick();
+    expect(callbacks.search).not.toHaveBeenCalled();
+    panel.close(); input.value = 'changed while hidden'; panel.open(); await nextTick();
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('changed while hidden', undefined);
+    panel.destroy();
+  });
+
+  it.each(['.query', '.data-rules'])('waits throughout composition in %s and resumes once', async (selector) => {
+    const { panel, root, input, callbacks } = await mount();
+    input.value = 'pending'; input.dispatchEvent(new Event('input'));
+    const control = root.querySelector(selector)!;
+    control.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    panel.invalidateResults(['title']); panel.refreshResults();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(callbacks.search).not.toHaveBeenCalled();
+    control.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('pending', undefined);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(callbacks.search).toHaveBeenCalledOnce();
+    panel.destroy();
+  });
+
+  it('consumes old timers on mode, namespace and explicit refresh and destroys all queued work', async () => {
+    const { panel, input, callbacks } = await mount();
+    input.value = 'next'; input.dispatchEvent(new Event('input'));
+    panel.state.mode = 'content'; panel.actions.mode();
+    expect(callbacks.searchContent).toHaveBeenCalledExactlyOnceWith('next', undefined);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(callbacks.search).not.toHaveBeenCalled();
+    expect(callbacks.searchContent).toHaveBeenCalledOnce();
+    input.dispatchEvent(new Event('input'));
+    panel.state.namespace = '828'; panel.actions.search();
+    expect(callbacks.searchContent).toHaveBeenLastCalledWith('next', 828);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(callbacks.searchContent).toHaveBeenCalledTimes(2);
+    panel.invalidateResults(['content']); panel.refreshResults();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(callbacks.searchContent).toHaveBeenCalledTimes(3);
+    panel.invalidateResults(['content']); panel.destroy();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(callbacks.searchContent).toHaveBeenCalledTimes(3);
+  });
+
+  it('invalidates namespace filtering when the selected namespace disappears', async () => {
+    const { panel, callbacks } = await mount();
+    panel.setNamespaces([{ id: 0, name: '（主）' }, { id: 828, name: '模块' }]);
+    panel.state.namespace = '828'; panel.actions.search();
+    vi.mocked(callbacks.search).mockClear();
+    panel.setNamespaces([{ id: 0, name: '（主）' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(panel.state.namespace).toBe('');
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('query', undefined);
+    panel.destroy();
+  });
+
+  it('preserves selected identity and native result/link focus through background updates', async () => {
+    const { panel, root, callbacks, input } = await mount();
+    callbacks.redirectUrl = () => 'https://example.org/wiki/Target';
+    const first = { id: 1, title: '第一页', namespace: 0, namespaceName: '', score: 2 };
+    const second = { ...first, id: 2, title: '别名', isRedirect: true, redirectResolved: true, redirectTarget: { title: '目标' } };
+    vi.mocked(callbacks.search).mockReturnValue([first, second]); panel.refreshResults(); await nextTick();
+    const link = root.querySelector<HTMLAnchorElement>('.redirect-target')!;
+    link.focus(); await nextTick();
+    vi.mocked(callbacks.search).mockReturnValue([{ ...second, title: '改名后别名' }, first]);
+    panel.invalidateResults(['title']); await vi.advanceTimersByTimeAsync(0);
+    expect(panel.state.selectedIndex).toBe(0);
+    expect(root.activeElement).toBe(link);
+    expect(root.querySelector('.redirect-target')).toBe(link);
+    const button = root.querySelector<HTMLButtonElement>('.result-primary')!;
+    button.focus(); vi.mocked(callbacks.search).mockReturnValue([first]);
+    panel.invalidateResults(['title']); await vi.advanceTimersByTimeAsync(0);
+    expect(panel.state.selectedIndex).toBe(0);
+    expect(root.activeElement).toBe(input);
+    vi.mocked(callbacks.search).mockReturnValue([first, second]); panel.refreshResults(); await nextTick();
+    panel.actions.select(1); input.value = 'different'; panel.refreshResults();
+    expect(panel.state.selectedIndex).toBe(0);
+    panel.destroy();
+  });
+
+  it('does not repair lost result focus after the user has focused another control', async () => {
+    const { panel, root, callbacks } = await mount();
+    vi.mocked(callbacks.search).mockReturnValue([{ id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 }]);
+    panel.refreshResults(); await nextTick();
+    root.querySelector<HTMLButtonElement>('.result-primary')!.focus();
+    vi.mocked(callbacks.search).mockReturnValue([]); panel.refreshResults();
+    const mode = root.querySelector<HTMLSelectElement>('.mode')!;
+    mode.focus(); await nextTick();
+    expect(root.activeElement).toBe(mode);
+    expect(panel.state.selectedIndex).toBe(-1);
+    panel.destroy();
+  });
+
+  it('preserves Data selection by source and code when rows reorder', async () => {
+    const { panel, callbacks } = await mount();
+    const first = { kind: 'data-code' as const, source: 'Data:A', code: 'same', chineseName: '甲', dataType: 'item', score: 1 };
+    const second = { ...first, source: 'Data:B', chineseName: '乙' };
+    vi.mocked(callbacks.searchCodes).mockReturnValue([first, second]);
+    panel.state.mode = 'data-code'; panel.actions.mode(); panel.actions.select(1);
+    vi.mocked(callbacks.searchCodes).mockReturnValue([second, first]);
+    panel.invalidateResults(['data-code']); await vi.advanceTimersByTimeAsync(0);
+    expect(panel.state.selectedIndex).toBe(0);
+    expect(panel.state.results[0]).toBe(second);
     panel.destroy();
   });
 });

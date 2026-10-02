@@ -23,6 +23,7 @@ import {
 } from '../search/title-index';
 import {
   readActivePageHeaders,
+  readPageHeadersAfter,
   type WikiSearchDatabase,
 } from '../storage/database';
 import { readLocalSequence } from '../storage/sync-state';
@@ -75,6 +76,7 @@ export interface PageSearchRuntimeOptions {
   synchronizeContent(force: boolean, scope?: ContentSyncScope): Promise<ContentSyncProgress>;
   rebuildIndexes(analyzer: Analyzer): Promise<SearchIndexRebuildResult>;
   onStateChange?(state: PageSearchRuntimeState): void;
+  onResultsChanged?(kinds: readonly PageSearchKind[]): void;
   onStatus?(status: PageSearchRuntimeStatus): void;
   clock?(): number;
   startedAt?: number;
@@ -98,6 +100,8 @@ export class PageSearchRuntime {
   private titleSyncPromise: Promise<string | undefined> | undefined;
   private rebuildPromise: Promise<SearchIndexRebuildWarning[]> | undefined;
   private installGeneration = 0;
+  private bootstrapThroughLocalSeq = 0;
+  private refreshQueue: Promise<void> = Promise.resolve();
   private analyzerResult: AnalyzerLoadResult | undefined;
   private searchBackend: TitleSearchBackend | undefined;
   private bootstrapIndex: LinearTitleIndex | undefined;
@@ -158,6 +162,7 @@ export class PageSearchRuntime {
         await this.cssIndex.refresh(this.database);
         this.setReadiness('css', 'local');
         this.updateCounts();
+        this.resultsChanged(['css']);
       },
       settle: async () => {
         // CSS never needs a natural-language analyzer or a title snapshot.
@@ -191,18 +196,17 @@ export class PageSearchRuntime {
   initialize(): Promise<void> {
     if (this.initializePromise) return this.initializePromise;
     const attempt = (async () => {
-      const pages = await readActivePageHeaders(this.database);
+      const { pages, sequence } = await this.readBootstrap();
       this.bootstrapIndex = new LinearTitleIndex(this.bootstrapAnalyzer, pages);
+      this.bootstrapThroughLocalSeq = sequence;
       this.searchBackend = this.bootstrapIndex;
       this.patchState({
         initialized: true,
         indexedPages: this.searchBackend.size,
-        namespaces: namespaceOptions(pages),
-        throughLocalSeq: pages.reduce(
-          (maximum, page) => Math.max(maximum, page.localSeq),
-          0,
-        ),
+        namespaces: this.bootstrapIndex.namespaceSummary(),
+        throughLocalSeq: sequence,
       });
+      this.resultsChanged(['title']);
     })();
     const tracked = attempt.catch((error: unknown) => {
       if (this.initializePromise === tracked) this.initializePromise = undefined;
@@ -245,35 +249,78 @@ export class PageSearchRuntime {
     for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
   }
 
-  async refresh(): Promise<void> {
-    await this.initialize();
-    await this.cssIndex?.refresh(this.database);
-    this.mutableState.indexedCssSources = this.cssIndex?.size ?? 0;
-    const sequence = await readLocalSequence(this.database);
-    const handles = this.handles();
-    const sequenceAdvanced = sequence > this.mutableState.throughLocalSeq;
-    const handleBehind = handles.some(
-      (handle) => sequence > handle.throughLocalSeq,
-    );
-    if (!sequenceAdvanced && !handleBehind) return;
+  refresh(): Promise<void> {
+    return this.queueRefresh();
+  }
 
-    for (const handle of handles) await this.indexCache.refresh(handle);
-    if (sequenceAdvanced) {
-      const pages = await readActivePageHeaders(this.database);
-      this.bootstrapIndex = new LinearTitleIndex(this.bootstrapAnalyzer, pages);
-      this.searchBackend = this.titleHandle
-        ? new CombinedTitleIndex(this.titleHandle.index, this.bootstrapIndex)
-        : this.bootstrapIndex;
-      this.mutableState.namespaces = namespaceOptions(pages);
+  private queueRefresh(forceCss = false, rebuildContent = false): Promise<void> {
+    const refreshing = this.refreshQueue.then(() => this.refreshOnce(forceCss, rebuildContent));
+    this.refreshQueue = refreshing.catch(() => undefined);
+    return refreshing;
+  }
+
+  private async refreshOnce(forceCss: boolean, rebuildContent: boolean): Promise<void> {
+    await this.initialize();
+    if (this.rebuildPromise) await settle(this.rebuildPromise);
+    const generation = this.installGeneration;
+    const changed = new Set<PageSearchKind>();
+    const stale = (): boolean => generation !== this.installGeneration;
+    try {
+      if (rebuildContent && (this.contentHandle || this.luaHandle)) {
+        const pages = await this.database.pages.toArray();
+        if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+        for (const handle of [this.contentHandle, this.luaHandle]) {
+          if (!handle) continue;
+          await handle.index.rebuildAsync(pages);
+          if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+          changed.add(handle.kind);
+        }
+      }
+      while (true) {
+        const { pages, sequence } = await this.readBootstrap(this.bootstrapThroughLocalSeq);
+        if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+        const handles = this.handles();
+        for (const handle of handles) {
+          const replayed = await this.indexCache.refresh(handle);
+          if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+          if (replayed) {
+            changed.add(handle.kind);
+            this.indexCache.schedulePublish(handle);
+          }
+        }
+        if (await this.cssIndex?.refresh(this.database, forceCss)) changed.add('css');
+        if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+        forceCss = false;
+        if (pages.length) {
+          this.bootstrapIndex!.update(pages);
+          this.mutableState.namespaces = this.bootstrapIndex!.namespaceSummary();
+          changed.add('title');
+        }
+        this.bootstrapThroughLocalSeq = sequence;
+        this.mutableState.throughLocalSeq = Math.max(sequence, ...this.handles().map((handle) => handle.throughLocalSeq));
+        const latest = await readLocalSequence(this.database);
+        if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+        if (latest <= sequence && this.handles().every((handle) => handle.throughLocalSeq >= latest)) break;
+      }
+      this.updateCounts();
+      await this.refreshSnapshotStatus();
+      if (stale()) return this.refreshOnce(forceCss, rebuildContent);
+      this.resultsChanged([...changed]);
+    } catch (error) {
+      // Earlier handles may already be current even when a later refresh fails.
+      if (!stale()) {
+        this.updateCounts();
+        this.resultsChanged([...changed]);
+      }
+      throw error;
     }
-    this.mutableState.throughLocalSeq = Math.max(
-      this.mutableState.throughLocalSeq,
-      sequence,
-    );
-    this.updateCounts();
-    for (const handle of handles) this.indexCache.schedulePublish(handle);
-    if (handles.length) await this.refreshSnapshotStatus();
-    else this.emitState();
+  }
+
+  private readBootstrap(after?: number): Promise<{ pages: PageRecord[]; sequence: number }> {
+    return this.database.transaction('r', this.database.pages, this.database.fileResources, this.database.syncState, async () => ({
+      sequence: await readLocalSequence(this.database),
+      pages: after === undefined ? await readActivePageHeaders(this.database) : await readPageHeadersAfter(this.database, after),
+    }));
   }
 
   rebuildIndexes(): Promise<SearchIndexRebuildWarning[]> {
@@ -290,7 +337,7 @@ export class PageSearchRuntime {
       await activeLocalPreparations;
       const loadedAnalyzer = await this.analyzerPreparation.prepare();
       const rebuilt = await this.options.rebuildIndexes(loadedAnalyzer.analyzer);
-      const pages = await readActivePageHeaders(this.database);
+      const { pages, sequence } = await this.readBootstrap();
       const bootstrap = new LinearTitleIndex(this.bootstrapAnalyzer, pages);
 
       this.installGeneration += 1;
@@ -298,6 +345,7 @@ export class PageSearchRuntime {
       this.contentHandle = rebuilt.content;
       this.luaHandle = rebuilt.lua;
       this.bootstrapIndex = bootstrap;
+      this.bootstrapThroughLocalSeq = sequence;
       this.searchBackend = new CombinedTitleIndex(rebuilt.title.index, bootstrap);
       this.mutableState.readiness = {
         title: retainReady(this.mutableState.readiness.title),
@@ -305,15 +353,17 @@ export class PageSearchRuntime {
         lua: retainReady(this.mutableState.readiness.lua),
         css: this.mutableState.readiness.css,
       };
-      this.mutableState.namespaces = namespaceOptions(pages);
+      this.mutableState.namespaces = bootstrap.namespaceSummary();
       this.mutableState.throughLocalSeq = Math.max(
         rebuilt.title.throughLocalSeq,
         rebuilt.content.throughLocalSeq,
         rebuilt.lua.throughLocalSeq,
+        sequence,
       );
       await this.cssIndex?.refresh(this.database, true);
       this.updateCounts();
       await this.refreshSnapshotStatus();
+      this.resultsChanged(this.cssIndex ? ['title', 'content', 'lua', 'css'] : ['title', 'content', 'lua']);
       return rebuilt.warnings;
     })();
     const tracked = attempt.finally(() => {
@@ -363,6 +413,7 @@ export class PageSearchRuntime {
           restored.index,
           this.bootstrapIndex!,
         );
+        this.resultsChanged(['title']);
       }
     }
     this.setReadiness('title', 'local');
@@ -383,6 +434,7 @@ export class PageSearchRuntime {
       const restored = await this.indexCache.restoreOrRebuild('content', analyzer);
       if (installGeneration === this.installGeneration || !this.contentHandle) {
         this.contentHandle = restored;
+        this.resultsChanged(['content']);
       }
     }
     if (kind === 'lua' && !this.luaHandle) {
@@ -390,6 +442,7 @@ export class PageSearchRuntime {
       const restored = await this.indexCache.restoreOrRebuild('lua', analyzer);
       if (installGeneration === this.installGeneration || !this.luaHandle) {
         this.luaHandle = restored;
+        this.resultsChanged(['lua']);
       }
     }
     this.setReadiness(kind, 'local');
@@ -436,11 +489,8 @@ export class PageSearchRuntime {
         await this.options.synchronizeTitles(force, analyzer, (pages) => {
           handle.index.update(pages);
           if (handle === this.titleHandle) {
-            this.mutableState.namespaces = mergeNamespaces(
-              this.mutableState.namespaces,
-              pages,
-            );
             this.updateCounts();
+            if (pages.length) this.resultsChanged(['title']);
           }
         });
       } catch (error) {
@@ -477,8 +527,7 @@ export class PageSearchRuntime {
       progress = await this.options.synchronizeContent(force, 'css');
     } catch (error) { failure = error; }
     try {
-      await this.cssIndex?.refresh(this.database, force);
-      await this.refresh();
+      await this.queueRefresh(force);
     } catch (error) { failure ??= error; }
     if (failure) throw failure;
     this.updateCounts();
@@ -495,12 +544,7 @@ export class PageSearchRuntime {
     }
 
     try {
-      if (synchronizationError === undefined && force && this.hasLoadedContentIndex()) {
-        const pages = await this.database.pages.toArray();
-        await this.contentHandle?.index.rebuildAsync(pages);
-        await this.luaHandle?.index.rebuildAsync(pages);
-      }
-      await this.refresh();
+      await this.queueRefresh(false, synchronizationError === undefined && force);
     } catch (refreshError) {
       if (synchronizationError === undefined) throw refreshError;
     }
@@ -509,7 +553,8 @@ export class PageSearchRuntime {
     let warning: string | undefined;
     for (const handle of [this.contentHandle, this.luaHandle]) {
       if (!handle) continue;
-      await this.indexCache.refresh(handle);
+      const replayed = await this.indexCache.refresh(handle);
+      if (replayed && handle === (handle.kind === 'content' ? this.contentHandle : this.luaHandle)) this.resultsChanged([handle.kind]);
       warning ??= snapshotPublishWarning(await this.indexCache.publish(handle));
     }
     this.updateCounts();
@@ -551,6 +596,10 @@ export class PageSearchRuntime {
     this.options.onStateChange?.(this.state);
   }
 
+  private resultsChanged(kinds: readonly PageSearchKind[]): void {
+    if (kinds.length) this.options.onResultsChanged?.(kinds);
+  }
+
   private status(
     message: string,
     tone?: PageSearchRuntimeStatus['tone'],
@@ -561,25 +610,6 @@ export class PageSearchRuntime {
   private elapsedMs(): number {
     return Math.max(0, Math.round(this.clock() - this.startedAt));
   }
-}
-
-function namespaceOptions(pages: PageRecord[]): NamespaceInfo[] {
-  const namespaces = new Map<number, string>();
-  for (const page of pages) {
-    if (!page.deleted) namespaces.set(page.namespace, page.namespaceName);
-  }
-  return [...namespaces].map(([id, name]) => ({ id, name: name || '（主）' }));
-}
-
-function mergeNamespaces(
-  existing: readonly NamespaceInfo[],
-  pages: PageRecord[],
-): NamespaceInfo[] {
-  const namespaces = new Map(existing.map(({ id, name }) => [id, name]));
-  for (const page of pages) {
-    if (!page.deleted) namespaces.set(page.namespace, page.namespaceName || '（主）');
-  }
-  return [...namespaces].map(([id, name]) => ({ id, name }));
 }
 
 function retainReady(readiness: PageSearchReadiness): PageSearchReadiness {

@@ -91,6 +91,47 @@ it('keeps cached preparation available when writes are disabled', async () => {
   expect(fetcher).not.toHaveBeenCalled();
 });
 
+it('notifies after initial installation and same-count renames but ignores unused or duplicate invalidations', async () => {
+  const { runtime, database, onResultsChanged, onStateChange } = await harness({ canWrite: false });
+  await runtime.refresh(10, true);
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  expect(onStateChange).not.toHaveBeenCalled();
+  await runtime.prepare();
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+  expect(onStateChange).toHaveBeenCalledOnce();
+  onResultsChanged.mockClear(); onStateChange.mockClear();
+
+  await database.fileResources.update(1, { title: '文件:纱布.png', normalizedTitle: '文件:纱布.png' });
+  await runtime.refresh(10);
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  expect(runtime.search('纱布')).toEqual([]);
+  await runtime.refresh(11);
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+  expect(runtime.state.indexedFiles).toBe(1);
+  expect(runtime.search('纱布').map(({ id }) => id)).toEqual([1]);
+  expect(runtime.search('旧图')).toEqual([]);
+  await runtime.refresh(11);
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+
+  await database.fileResources.delete(1);
+  await runtime.refresh(12);
+  expect(onResultsChanged).toHaveBeenCalledTimes(2);
+  expect(runtime.state.indexedFiles).toBe(0);
+});
+
+it('does not report changed results when a forced file synchronization fails before any batch applies', async () => {
+  const failure = new Error('offline');
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response()).mockRejectedValueOnce(failure);
+  const { runtime, onResultsChanged } = await harness({ fetcher });
+  await runtime.prepare();
+  onResultsChanged.mockClear();
+
+  await expect(runtime.prepare(true)).rejects.toBe(failure);
+
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  expect(runtime.search('绷带')).toHaveLength(1);
+});
+
 async function harness(options: {
   startup?: Promise<void>;
   fetcher?: typeof fetch;
@@ -108,6 +149,8 @@ async function harness(options: {
     },
   });
   const onCommitted = vi.fn(async () => { await runtime.refresh(0, true); });
+  const onStateChange = vi.fn();
+  const onResultsChanged = vi.fn();
   const runtime = new FileSearchRuntime({
     database,
     api: new WikiApi({ fetcher, retries: 0 }),
@@ -115,12 +158,13 @@ async function harness(options: {
     waitUntilReady: () => options.startup ?? Promise.resolve(),
     canWrite: () => options.canWrite ?? true,
     runExclusive: (task) => coordinator.runExclusive(task),
-    onStateChange: vi.fn(),
+    onStateChange,
+    onResultsChanged,
     onRestored: vi.fn(),
     onProgress: vi.fn(),
     onCommitted,
   });
-  return { runtime, database, fetcher, onCommitted };
+  return { runtime, database, fetcher, onCommitted, onStateChange, onResultsChanged };
 }
 
 function response(): Response {

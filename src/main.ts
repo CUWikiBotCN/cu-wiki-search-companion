@@ -387,6 +387,7 @@ async function start(): Promise<void> {
     },
     rebuildIndexes: (analyzer) => maintenance.rebuildSearchIndexes(analyzer),
     onStateChange: (state) => applyPageSearchState(state),
+    onResultsChanged: (kinds) => panel.invalidateResults(kinds),
     onStatus: ({ message, tone }) => panel.setStatus(message, tone),
     startedAt: bootStartedAt,
   });
@@ -401,8 +402,8 @@ async function start(): Promise<void> {
     runExclusive: (task) => incrementalCoordinator!.runExclusive(task),
     onStateChange: (state) => {
       debugApi.indexedFiles = state.indexedFiles;
-      panel.refreshResults();
     },
+    onResultsChanged: () => panel.invalidateResults(['files']),
     onRestored: (count) => panel.setStatus(
       count ? `已恢复 ${count} 个文件资源` : '正在首次同步文件资源…',
       count ? 'success' : 'normal',
@@ -425,8 +426,8 @@ async function start(): Promise<void> {
     runWriter: runCoordinatedWriter,
     onStateChange: (state) => {
       debugApi.indexedDataCodes = state.indexedDataCodes;
-      panel.refreshResults();
     },
+    onResultsChanged: () => panel.invalidateResults(['data-code']),
     onRulesChange: (source) => panel.setDataCodeRules(source, DEFAULT_DATA_CODE_RULES),
     onCommitted: applyDataCodeCommit,
     onInvalidRules: (origin, error) => {
@@ -807,7 +808,6 @@ async function start(): Promise<void> {
     );
     if (incrementalState) debugApi.incrementalThrough = incrementalState.through;
     if (invalidation.data) await dataCodeRuntime?.reloadFromStorage();
-    panel.refreshResults();
   }
 
   function runContentSync(force: boolean): Promise<void> {
@@ -839,7 +839,6 @@ async function start(): Promise<void> {
     debugApi.contentReadyMs = state.contentReadyMs;
     debugApi.snapshots = [...state.snapshots];
     panel.setNamespaces([...state.namespaces]);
-    panel.refreshResults();
   }
 
   function ensureWritesAllowed(): boolean {

@@ -105,6 +105,48 @@ it('reloads broadcast cache and valid rules without fetching or saving preferenc
   expect(fetcher).not.toHaveBeenCalled();
 });
 
+it('notifies initial and same-count Data replacements without querying on state-only or rejected operations', async () => {
+  const { runtime, database, onResultsChanged, onStateChange, fetcher } = await harness();
+  const query = vi.spyOn(runtime, 'search');
+  await runtime.reloadFromStorage();
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  expect(onStateChange).not.toHaveBeenCalled();
+  await runtime.initialize();
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+  expect(query).not.toHaveBeenCalled();
+  onResultsChanged.mockClear();
+
+  await expect(runtime.save('invalid')).rejects.toThrow('配置');
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  await database.dataCodes.update('Data:Item/bandage', { chineseName: '纱布', normalizedName: '纱布' });
+  await runtime.reloadFromStorage();
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+  expect(runtime.state.indexedDataCodes).toBe(1);
+  expect(query).not.toHaveBeenCalled();
+  expect(runtime.search('纱布')).toHaveLength(1);
+  expect(runtime.search('旧绷带')).toEqual([]);
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it('reports one Data result invalidation per applied refresh/save and none for failed synchronization', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('{}'))
+    .mockImplementation(async () => response('新绷带'));
+  const { runtime, onResultsChanged, onCommitted } = await harness({ fetcher });
+  await runtime.initialize();
+  onResultsChanged.mockClear();
+
+  expect((await runtime.refresh(true)).status).toBe('error');
+  expect(onResultsChanged).not.toHaveBeenCalled();
+  expect(onCommitted).not.toHaveBeenCalled();
+  expect((await runtime.refresh(true)).status).toBe('complete');
+  expect(onResultsChanged).toHaveBeenCalledOnce();
+  expect(runtime.state.indexedDataCodes).toBe(1);
+  expect(runtime.search('新绷带')).toHaveLength(1);
+  await runtime.save('* = .id');
+  expect(onResultsChanged).toHaveBeenCalledTimes(2);
+  expect(onCommitted).toHaveBeenCalledTimes(2);
+});
+
 async function harness(options: { preference?: string; fetcher?: typeof fetch; noLocks?: boolean } = {}) {
   const database = new WikiSearchDatabase(`data-runtime-${crypto.randomUUID()}`);
   databases.push(database);
@@ -134,6 +176,8 @@ async function harness(options: { preference?: string; fetcher?: typeof fetch; n
   const onCommitted = vi.fn();
   const onInvalidRules = vi.fn();
   const onRulesChange = vi.fn();
+  const onStateChange = vi.fn();
+  const onResultsChanged = vi.fn();
   const runtime = new DataCodeRuntime({
     database,
     analyzer: new Analyzer(createBootstrapSegmenter(), 'bootstrap'),
@@ -146,9 +190,10 @@ async function harness(options: { preference?: string; fetcher?: typeof fetch; n
       });
       if (result === 'lock-unavailable') throw new Error('Web Locks unavailable');
     },
-    onStateChange: vi.fn(), onRulesChange, onCommitted, onInvalidRules,
+    onStateChange, onResultsChanged, onRulesChange, onCommitted, onInvalidRules,
   });
-  return { runtime, database, preference, fetcher, onCommitted, onInvalidRules, onRulesChange, writes };
+  return { runtime, database, preference, fetcher, onCommitted, onInvalidRules, onRulesChange, writes,
+    onStateChange, onResultsChanged };
 }
 
 function response(name: string): Response {

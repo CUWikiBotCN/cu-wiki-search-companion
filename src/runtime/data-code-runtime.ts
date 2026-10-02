@@ -28,6 +28,7 @@ interface DataCodeRuntimeOptions {
   preference: Pick<DataRulesPreferenceStore, 'get' | 'set'>;
   runWriter(key: string, task: () => Promise<void>): Promise<void>;
   onStateChange(state: DataCodeRuntimeState): void;
+  onResultsChanged?(): void;
   onRulesChange(source: string): void;
   onCommitted(commit: DataCodeCommit): void;
   onInvalidRules(origin: string, error: unknown): void;
@@ -81,11 +82,13 @@ export class DataCodeRuntime {
         this.rulesSource = commit.rulesSource;
         this.options.onRulesChange(this.rulesSource);
         this.options.onStateChange(this.state);
+        this.options.onResultsChanged?.();
         this.options.onCommitted(commit);
       },
     });
     this.options.onRulesChange(this.rulesSource);
     this.options.onStateChange(this.state);
+    this.options.onResultsChanged?.();
   }
 
   refresh(force: boolean): Promise<DataCodeSessionResult<DataCodeCommit>> {
@@ -117,6 +120,7 @@ export class DataCodeRuntime {
       }
     }
     this.options.onStateChange(this.state);
+    this.options.onResultsChanged?.();
   }
 
   private async performRefresh(force: boolean): Promise<DataCodeCommit> {

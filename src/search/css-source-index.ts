@@ -30,11 +30,11 @@ interface CssSource extends Omit<CssSearchResult, 'kind' | 'matches'> {
 export class CssSourceIndex {
   private sources = new Map<number, CssSource>();
   private throughLocalSeq = -1;
-  private refreshing?: Promise<void>;
+  private refreshing?: Promise<boolean>;
 
   constructor(private readonly scheduler: Pick<CooperativeTaskScheduler, 'yield'> = browserTaskScheduler) {}
 
-  refresh(database: WikiSearchDatabase, force = false): Promise<void> {
+  refresh(database: WikiSearchDatabase, force = false): Promise<boolean> {
     if (this.refreshing) return this.refreshing.then(() => this.refresh(database, force));
     const attempt = this.readChanges(database, force);
     const tracked = attempt.finally(() => { if (this.refreshing === tracked) this.refreshing = undefined; });
@@ -42,7 +42,7 @@ export class CssSourceIndex {
     return tracked;
   }
 
-  private async readChanges(database: WikiSearchDatabase, force: boolean): Promise<void> {
+  private async readChanges(database: WikiSearchDatabase, force: boolean): Promise<boolean> {
     const { sequence, changes } = await database.transaction('r', database.pages, database.fileResources, database.syncState, async () => {
       const sequence = await readLocalSequence(database);
       const changes: Array<PageRecord | { id: number }> = [];
@@ -55,6 +55,10 @@ export class CssSourceIndex {
       });
       return { sequence, changes };
     });
+    if (!force && !changes.length) {
+      this.throughLocalSeq = sequence;
+      return false;
+    }
     const next = force ? new Map<number, CssSource>() : new Map(this.sources);
     for (let offset = 0; offset < changes.length; offset += 20) {
       for (const page of changes.slice(offset, offset + 20)) {
@@ -69,6 +73,7 @@ export class CssSourceIndex {
     }
     this.sources = next;
     this.throughLocalSeq = sequence;
+    return true;
   }
 
   search(query: string, limit = 20): CssSearchResult[] {
