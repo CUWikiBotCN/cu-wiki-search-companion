@@ -5,6 +5,7 @@ import { Analyzer, createBootstrapSegmenter, createIntlSegmenter } from '../../s
 import { LocalDataMaintenance } from '../../src/maintenance/local-data-maintenance';
 import { PageSearchRuntime } from '../../src/runtime/page-search-runtime';
 import { VersionedSearchIndexCache } from '../../src/search/versioned-search-index-cache';
+import { CssSourceIndex } from '../../src/search/css-source-index';
 import { LinearTitleIndex } from '../../src/search/title-index';
 import { WikiSearchDatabase } from '../../src/storage/database';
 import type { PageRecord } from '../../src/types';
@@ -504,6 +505,61 @@ it('drops old refresh installation and notifications after a rebuild replaces th
   } finally {
     release(); await refreshing.catch(() => undefined);
   }
+});
+
+it('keeps applied refresh notifications and publishing when a concurrent rebuild fails before installation', async () => {
+  const failure = new Error('rebuild interrupted before installation');
+  const { runtime, database, cache, onResultsChanged } = await harness({
+    rebuildIndexes: async () => { throw failure; },
+  });
+  await runtime.prepare('content');
+  await commit(database, [{ ...pages()[0]!, content: '医疗 freshmarker', localSeq: 3 }], 3);
+  const refresh = cache.refresh.bind(cache);
+  let appliedContent: Parameters<typeof cache.schedulePublish>[0] | undefined;
+  vi.spyOn(cache, 'refresh').mockImplementation(async (handle) => {
+    const replayed = await refresh(handle);
+    if (handle.kind === 'content' && !appliedContent) {
+      appliedContent = handle;
+      await expect(runtime.rebuildIndexes()).rejects.toBe(failure);
+    }
+    return replayed;
+  });
+  const schedule = vi.spyOn(cache, 'schedulePublish');
+  onResultsChanged.mockClear();
+
+  await runtime.refresh();
+
+  expect(runtime.searchContent('医疗')[0]?.snippet).toContain('freshmarker');
+  expect(onResultsChanged).toHaveBeenCalledTimes(1);
+  expect([...onResultsChanged.mock.calls[0]![0]].sort()).toEqual(['content', 'title']);
+  expect(schedule).toHaveBeenCalledWith(appliedContent);
+  expect(appliedContent?.throughLocalSeq).toBe(3);
+  expect(runtime.state.throughLocalSeq).toBe(3);
+  await cache.publish(appliedContent!);
+  expect((await database.indexSnapshots.get('search-index:content'))?.json).toContain('freshmarker');
+  await runtime.refresh();
+  expect(onResultsChanged).toHaveBeenCalledTimes(1);
+});
+
+it.each(['css', 'snapshot'] as const)('notifies installed indexes when post-rebuild %s work fails', async (stage) => {
+  const { runtime, database, onResultsChanged } = await harness();
+  await runtime.prepare('css');
+  await commit(database, [{ ...pages()[0]!, id: 3, title: '新增医疗指南', normalizedTitle: '新增医疗指南',
+    content: '医疗 freshmarker', localSeq: 3 }], 3);
+  const failure = new Error(`${stage} refresh interrupted`);
+  if (stage === 'css') vi.spyOn(CssSourceIndex.prototype, 'refresh').mockRejectedValueOnce(failure);
+  else vi.spyOn(runtime, 'refreshSnapshotStatus').mockRejectedValueOnce(failure);
+  onResultsChanged.mockClear();
+
+  await expect(runtime.rebuildIndexes()).rejects.toBe(failure);
+
+  expect(runtime.searchContent('freshmarker').map(({ id }) => id)).toEqual([3]);
+  expect(runtime.searchTitles('新增').map(({ id }) => id)).toEqual([3]);
+  expect(runtime.state).toMatchObject({ indexedPages: 3, indexedContentPages: 2, throughLocalSeq: 3 });
+  expect(onResultsChanged.mock.calls).toEqual([[stage === 'css'
+    ? ['title', 'content', 'lua'] : ['title', 'content', 'lua', 'css']]]);
+  await runtime.refresh();
+  expect(onResultsChanged).toHaveBeenCalledTimes(1);
 });
 
 it('recovers a failed refresh without advancing bootstrap past the failed application', async () => {

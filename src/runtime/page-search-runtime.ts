@@ -331,7 +331,6 @@ export class PageSearchRuntime {
       this.luaPreparation.waitForActiveLocal(),
       this.cssPreparation.waitForActiveLocal(),
     ]);
-    this.installGeneration += 1;
     const attempt = (async () => {
       await this.initialize();
       await activeLocalPreparations;
@@ -360,10 +359,15 @@ export class PageSearchRuntime {
         rebuilt.lua.throughLocalSeq,
         sequence,
       );
-      await this.cssIndex?.refresh(this.database, true);
-      this.updateCounts();
-      await this.refreshSnapshotStatus();
-      this.resultsChanged(this.cssIndex ? ['title', 'content', 'lua', 'css'] : ['title', 'content', 'lua']);
+      const changed: PageSearchKind[] = ['title', 'content', 'lua'];
+      try {
+        if (await this.cssIndex?.refresh(this.database, true)) changed.push('css');
+        await this.refreshSnapshotStatus();
+      } finally {
+        // Installed indexes remain current even if CSS or diagnostics fail.
+        this.updateCounts();
+        this.resultsChanged(changed);
+      }
       return rebuilt.warnings;
     })();
     const tracked = attempt.finally(() => {
