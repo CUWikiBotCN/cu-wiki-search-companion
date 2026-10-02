@@ -101,6 +101,11 @@ interface PublishState {
   snapshotGeneration: number;
 }
 
+interface PendingPublish {
+  handle: SearchIndexHandle;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
 interface SnapshotFingerprint {
   key: string;
   kind: SearchIndexKind;
@@ -127,10 +132,7 @@ export class VersionedSearchIndexCache {
   private readonly now: () => number;
   private readonly clock: () => number;
   private readonly publishDelayMs: number;
-  private readonly pendingPublishes = new Map<
-    SearchIndexKind,
-    ReturnType<typeof setTimeout>
-  >();
+  private readonly pendingPublishes = new Map<SearchIndexKind, PendingPublish>();
   private readonly runtime = new Map<SearchIndexKind, RuntimeState>();
   private readonly observed = new Map<SearchIndexKind, SnapshotInspection>();
   private observationVersion = 0;
@@ -275,7 +277,9 @@ export class VersionedSearchIndexCache {
         const currentSequence = await readLocalSequence(this.database);
         const pages =
           currentSequence > handle.throughLocalSeq
-            ? await this.database.pages
+            ? handle.kind === 'title'
+              ? await readPageHeadersAfter(this.database, handle.throughLocalSeq)
+              : await this.database.pages
                 .where('localSeq')
                 .above(handle.throughLocalSeq)
                 .toArray()
@@ -291,7 +295,27 @@ export class VersionedSearchIndexCache {
     return pages.length;
   }
 
-  async publish<K extends SearchIndexKind>(
+  publish<K extends SearchIndexKind>(
+    handle: SearchIndexHandle<K>,
+  ): Promise<SnapshotPublishResult> {
+    const pending = this.pendingPublishes.get(handle.kind);
+    if (pending?.handle === handle) {
+      clearTimeout(pending.timer);
+      this.pendingPublishes.delete(handle.kind);
+    }
+    return this.enqueuePublish(() => this.publishOnce(handle));
+  }
+
+  private enqueuePublish<T>(operation: () => Promise<T>): Promise<T> {
+    const publishing = this.publishQueue.then(operation);
+    this.publishQueue = publishing.then(
+      () => undefined,
+      () => undefined,
+    );
+    return publishing;
+  }
+
+  private async publishOnce<K extends SearchIndexKind>(
     handle: SearchIndexHandle<K>,
   ): Promise<SnapshotPublishResult> {
     if (this.publishingSuppressed) {
@@ -388,23 +412,27 @@ export class VersionedSearchIndexCache {
 
   schedulePublish<K extends SearchIndexKind>(handle: SearchIndexHandle<K>): void {
     const pending = this.pendingPublishes.get(handle.kind);
-    if (pending) clearTimeout(pending);
-    const timer = setTimeout(() => {
-      this.pendingPublishes.delete(handle.kind);
-      this.publishQueue = this.publishQueue
-        .then(async () => {
-          const result = await this.publish(handle);
-          if (result.status === 'skipped' && result.reason === 'sequence-changed') {
-            const previousSequence = handle.throughLocalSeq;
-            await this.refresh(handle);
-            if (handle.throughLocalSeq > previousSequence) this.schedulePublish(handle);
-          }
-        })
-        .catch((error: unknown) => {
-          console.warn('[CU Wiki Search] index snapshot publish failed', error);
-        });
+    if (pending) clearTimeout(pending.timer);
+    const request: PendingPublish = { handle };
+    request.timer = setTimeout(() => {
+      request.timer = undefined;
+      void this.enqueuePublish(async () => {
+        if (this.pendingPublishes.get(handle.kind) !== request) return;
+        this.pendingPublishes.delete(handle.kind);
+        const result = await this.publishOnce(handle);
+        if (result.status === 'skipped' && result.reason === 'sequence-changed') {
+          const previousSequence = handle.throughLocalSeq;
+          await this.refresh(handle);
+          if (
+            handle.throughLocalSeq > previousSequence &&
+            !this.pendingPublishes.has(handle.kind)
+          ) this.schedulePublish(handle);
+        }
+      }).catch((error: unknown) => {
+        console.warn('[CU Wiki Search] index snapshot publish failed', error);
+      });
     }, this.publishDelayMs);
-    this.pendingPublishes.set(handle.kind, timer);
+    this.pendingPublishes.set(handle.kind, request);
   }
 
   /** Last observed metadata only: no storage reads, payload retention, or validation. */
@@ -491,7 +519,7 @@ export class VersionedSearchIndexCache {
   }
 
   async clear(): Promise<void> {
-    for (const timer of this.pendingPublishes.values()) clearTimeout(timer);
+    for (const pending of this.pendingPublishes.values()) clearTimeout(pending.timer);
     this.pendingPublishes.clear();
     this.publishingSuppressed = true;
     await this.database.transaction(

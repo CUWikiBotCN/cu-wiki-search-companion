@@ -174,6 +174,65 @@ describe('VersionedSearchIndexCache', () => {
     await database.delete();
   });
 
+  it('streams title deltas as headers while content and Lua handles independently replay full facts', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.bulkPut([
+        page(1, '初始标题', '完整正文', 'wikitext', 1),
+        page(2, 'Module:oldModule', 'function oldFunction() end', 'Scribunto', 2),
+      ]);
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      const title = await cache.restoreOrRebuild('title', analyzer);
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const lua = await cache.restoreOrRebuild('lua', analyzer);
+      const titleUpdates = vi.spyOn(title.index, 'updateAsync');
+      const contentUpdates = vi.spyOn(content.index, 'updateAsync');
+      const luaUpdates = vi.spyOn(lua.index, 'updateAsync');
+      await database.pages.put({
+        ...page(1, 'Template:更新标题', '新完整正文', 'wikitext', 3),
+        namespace: 10,
+        namespaceName: '模板',
+      });
+      await database.syncState.put({ key: 'local-sequence', value: 3 });
+      expect(await cache.refresh(title)).toBe(1);
+      await database.pages.put({
+        ...page(2, 'Module:oldModule', 'function oldFunction() end', 'Scribunto', 4),
+        deleted: true,
+      });
+      await database.syncState.put({ key: 'local-sequence', value: 4 });
+      expect(await cache.refresh(title)).toBe(1);
+      expect(await cache.refresh(content)).toBe(2);
+      expect(await cache.refresh(lua)).toBe(2);
+
+      const titleDeltas = titleUpdates.mock.calls.flatMap(([pages]) => pages);
+      expect(titleDeltas).toMatchObject([
+        { id: 1, title: 'Template:更新标题', namespace: 10, namespaceName: '模板', localSeq: 3 },
+        { id: 2, deleted: true, localSeq: 4 },
+      ]);
+      for (const delta of titleDeltas) {
+        expect(delta).not.toHaveProperty('content');
+        expect(delta).not.toHaveProperty('contentModel');
+      }
+      expect(contentUpdates.mock.calls[0]?.[0][0]?.content).toBe('新完整正文');
+      expect(luaUpdates.mock.calls[0]?.[0][0]?.content).toBe('新完整正文');
+      expect(title.index.search('更新标题', 10)[0]?.id).toBe(1);
+      expect(title.index.search('oldModule')).toEqual([]);
+      expect([title, content, lua].map(({ throughLocalSeq }) => throughLocalSeq)).toEqual([4, 4, 4]);
+
+      await database.fileResources.put({ ...page(9, 'File:new.png', '', 'wikitext', 999), writerSeq: 5 });
+      await database.syncState.put({ key: 'local-sequence', value: 5 });
+      expect(await cache.refresh(title)).toBe(0);
+      expect(title.throughLocalSeq).toBe(5);
+      expect(titleUpdates).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
   it('publishes the snapshot format for the corrected analyzer and extractors', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
@@ -727,6 +786,315 @@ describe('VersionedSearchIndexCache', () => {
     await database.delete();
   });
 
+  it('consumes delayed publishing when the same handle is explicitly published', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.put(page(1, '显式发布去重', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const handle = await cache.restoreOrRebuild('title', analyzer);
+      const reads = vi.spyOn(database.indexSnapshots, 'get');
+      const serializations = vi.spyOn(handle.index, 'exportSnapshot');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(handle);
+      expect((await cache.publish(handle)).status).toBe('published');
+      const readsAfterPublish = reads.mock.calls.length;
+      expect(readsAfterPublish).toBeGreaterThan(0);
+
+      await vi.advanceTimersByTimeAsync(5_001);
+
+      expect(reads).toHaveBeenCalledTimes(readsAfterPublish);
+      expect(serializations).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('consumes an expired automatic request still waiting behind another publish', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let estimates = 0;
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => {
+        if (++estimates === 1) { started(); await held; }
+        return { usage: 1_000, quota: 1024 * 1024 * 1024 };
+      } },
+    });
+    try {
+      await database.pages.put(page(1, '排队去重', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const title = await cache.restoreOrRebuild('title', analyzer);
+      const serializations = vi.spyOn(title.index, 'exportSnapshot');
+      const reads = vi.spyOn(database.indexSnapshots, 'get');
+      const publishingContent = cache.publish(content);
+      await firstStarted;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(title);
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(serializations).not.toHaveBeenCalled();
+      const publishingTitle = cache.publish(title);
+      release();
+      expect((await publishingContent).status).toBe('published');
+      expect((await publishingTitle).status).toBe('published');
+
+      expect(reads.mock.calls.filter(([key]) => Object.is(key, snapshotKey('title')))).toHaveLength(2);
+      expect(serializations).toHaveBeenCalledTimes(1);
+      expect(estimates).toBe(2);
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('does not let an explicit old handle consume a new handle delayed request', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.put(page(1, '旧标题', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const oldHandle = await cache.restoreOrRebuild('title', analyzer);
+      await database.pages.put(page(1, '新标题', '正文', 'wikitext', 2));
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      const newHandle = await cache.restoreOrRebuild('title', analyzer);
+      const serializations = vi.spyOn(newHandle.index, 'exportSnapshot');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(newHandle);
+      expect(await cache.publish(oldHandle)).toEqual({ status: 'skipped', reason: 'sequence-changed' });
+      await vi.advanceTimersByTimeAsync(5_001);
+      vi.useRealTimers();
+      await vi.waitFor(async () => {
+        expect(await database.indexSnapshots.get(snapshotKey('title'))).toMatchObject({ throughLocalSeq: 2 });
+      });
+      expect(serializations).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('discards a replaced expired request without deleting the newer handle timer', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let estimates = 0;
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => {
+        if (++estimates === 1) { started(); await held; }
+        return { usage: 1_000, quota: 1024 * 1024 * 1024 };
+      } },
+    });
+    try {
+      await database.pages.put(page(1, '替换前标题', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const oldTitle = await cache.restoreOrRebuild('title', analyzer);
+      const oldSerializations = vi.spyOn(oldTitle.index, 'exportSnapshot');
+      const contentPublish = cache.publish(content);
+      await firstStarted;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(oldTitle);
+      await vi.advanceTimersByTimeAsync(5_001);
+      await database.pages.put(page(1, '替换后标题', '正文', 'wikitext', 2));
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      const newTitle = await cache.restoreOrRebuild('title', analyzer);
+      cache.schedulePublish(newTitle);
+      release();
+      expect(await contentPublish).toEqual({ status: 'skipped', reason: 'sequence-changed' });
+      // An explicit old handle is a queue barrier and cannot consume newTitle.
+      expect(await cache.publish(oldTitle)).toEqual({ status: 'skipped', reason: 'sequence-changed' });
+      expect(oldSerializations).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(5_001);
+      vi.useRealTimers();
+      await vi.waitFor(async () => {
+        expect(await database.indexSnapshots.get(snapshotKey('title'))).toMatchObject({ throughLocalSeq: 2 });
+      });
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('retains the next automatic request when pages change during an active publish', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let estimates = 0;
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => {
+        if (++estimates === 1) { started(); await held; }
+        return { usage: 1_000, quota: 1024 * 1024 * 1024 };
+      } },
+    });
+    try {
+      await database.pages.put(page(1, '发布期间旧内容', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const handle = await cache.restoreOrRebuild('title', analyzer);
+      const serializations = vi.spyOn(handle.index, 'exportSnapshot');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(handle);
+      await vi.advanceTimersByTimeAsync(5_001);
+      await firstStarted;
+      await database.pages.put(page(1, '发布期间新内容', '新正文', 'wikitext', 2));
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      expect(await cache.refresh(handle)).toBe(1);
+      cache.schedulePublish(handle);
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(serializations).toHaveBeenCalledTimes(1);
+      release();
+      vi.useRealTimers();
+      await vi.waitFor(async () => {
+        expect(await database.indexSnapshots.get(snapshotKey('title'))).toMatchObject({ throughLocalSeq: 2 });
+      });
+      expect(serializations).toHaveBeenCalledTimes(2);
+      expect(handle.index.search('新内容')[0]?.title).toBe('发布期间新内容');
+      expect(estimates).toBe(2);
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('does not let a failed explicit publish poison later kinds or the next attempt', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.put(page(1, '失败后重试', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const title = await cache.restoreOrRebuild('title', analyzer);
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const failure = new Error('synthetic serialization failure');
+      const serializations = vi.spyOn(title.index, 'exportSnapshot').mockImplementationOnce(() => { throw failure; });
+      const rejected = expect(cache.publish(title)).rejects.toBe(failure);
+      const contentPublish = cache.publish(content);
+      const titleRetry = cache.publish(title);
+
+      await rejected;
+      expect((await contentPublish).status).toBe('published');
+      expect((await titleRetry).status).toBe('published');
+      expect(serializations).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('reports an automatic publish failure and continues the shared publishing queue', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.put(page(1, '自动失败后重试', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const title = await cache.restoreOrRebuild('title', analyzer);
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const failure = new Error('synthetic automatic failure');
+      vi.spyOn(title.index, 'exportSnapshot').mockImplementationOnce(() => { throw failure; });
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(title);
+      cache.schedulePublish(content);
+      await vi.advanceTimersByTimeAsync(5_001);
+      vi.useRealTimers();
+      await vi.waitFor(async () => {
+        expect(await database.indexSnapshots.get(snapshotKey('content'))).toMatchObject({ throughLocalSeq: 1 });
+      });
+
+      expect(warning).toHaveBeenCalledWith('[CU Wiki Search] index snapshot publish failed', failure);
+      expect((await cache.publish(title)).status).toBe('published');
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('invalidates queued automatic and explicit work on clear even if publishing is allowed again', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let estimates = 0;
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => {
+        if (++estimates === 1) { started(); await held; }
+        return { usage: 1_000, quota: 1024 * 1024 * 1024 };
+      } },
+    });
+    try {
+      await database.pages.put(page(1, '清理排队发布', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      const oldTitle = await cache.restoreOrRebuild('title', analyzer);
+      const oldLua = await cache.restoreOrRebuild('lua', analyzer);
+      const oldTitleSerializations = vi.spyOn(oldTitle.index, 'exportSnapshot');
+      const contentPublish = cache.publish(content);
+      await firstStarted;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(oldTitle);
+      await vi.advanceTimersByTimeAsync(5_001);
+      const luaPublish = cache.publish(oldLua);
+      await cache.clear();
+      cache.allowPublishing();
+      const newTitle = await cache.restoreOrRebuild('title', analyzer);
+      const newTitlePublish = cache.publish(newTitle);
+      release();
+
+      expect(await contentPublish).toEqual({ status: 'skipped', reason: 'cleared-this-session' });
+      expect(await luaPublish).toEqual({ status: 'skipped', reason: 'cleared-this-session' });
+      expect((await newTitlePublish).status).toBe('published');
+      expect(oldTitleSerializations).not.toHaveBeenCalled();
+      expect(await database.indexSnapshots.toArray()).toMatchObject([{ kind: 'title', throughLocalSeq: 1 }]);
+      expect(estimates).toBe(2);
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
   it('refreshes through a file-only writer sequence before retrying a debounced publish', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
@@ -765,13 +1133,13 @@ describe('VersionedSearchIndexCache', () => {
     });
     const handle = await cache.restoreOrRebuild('title', analyzer);
     await database.syncState.put({ key: 'local-sequence', value: 6 });
-    const publish = vi.spyOn(cache, 'publish');
+    const refresh = vi.spyOn(cache, 'refresh');
 
     cache.schedulePublish(handle);
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(handle.throughLocalSeq).toBe(7);
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
     expect(await database.indexSnapshots.get(snapshotKey('title'))).toBeUndefined();
 
     await cache.clear();
