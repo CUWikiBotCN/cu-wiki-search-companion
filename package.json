@@ -9,6 +9,7 @@
     "build": "npm run typecheck && vite build",
     "install:userscript": "bash scripts/install-userscript.sh",
     "browser:start": "node scripts/start-browser.mjs",
+    "benchmark:local": "node scripts/benchmark-local-search.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "vite",
