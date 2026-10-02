@@ -941,7 +941,54 @@ describe('VersionedSearchIndexCache', () => {
     }
   });
 
-  it('retains the next automatic request when pages change during an active publish', async () => {
+  it('consumes a sequence retry scheduled while the explicit publication waits in the queue', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    let estimates = 0;
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: { estimate: async () => {
+        if (++estimates === 1) { started(); await held; }
+        return { usage: 1_000, quota: 1024 * 1024 * 1024 };
+      } },
+    });
+    try {
+      await database.pages.put(page(1, '重试前标题', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const handle = await cache.restoreOrRebuild('title', analyzer);
+      const reads = vi.spyOn(database.indexSnapshots, 'get');
+      const serializations = vi.spyOn(handle.index, 'exportSnapshot');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      cache.schedulePublish(handle);
+      await vi.advanceTimersByTimeAsync(5_001);
+      await firstStarted;
+      await database.pages.put(page(1, '重试后标题', '新正文', 'wikitext', 2));
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      const publishing = cache.publish(handle);
+      release();
+      expect(await publishing).toMatchObject({ status: 'published', record: { throughLocalSeq: 2 } });
+      const readsAfterPublish = reads.mock.calls.length;
+
+      await vi.advanceTimersByTimeAsync(5_001);
+
+      expect(reads).toHaveBeenCalledTimes(readsAfterPublish);
+      expect(serializations).toHaveBeenCalledTimes(2);
+      expect(estimates).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      release();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await cache.clear();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it.each(['automatic', 'explicit'] as const)('retains the next automatic request when pages change during an active %s publish', async (origin) => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
     let release!: () => void;
@@ -961,7 +1008,9 @@ describe('VersionedSearchIndexCache', () => {
       const handle = await cache.restoreOrRebuild('title', analyzer);
       const serializations = vi.spyOn(handle.index, 'exportSnapshot');
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-      cache.schedulePublish(handle);
+      let explicitPublishing: ReturnType<typeof cache.publish> | undefined;
+      if (origin === 'automatic') cache.schedulePublish(handle);
+      else explicitPublishing = cache.publish(handle);
       await vi.advanceTimersByTimeAsync(5_001);
       await firstStarted;
       await database.pages.put(page(1, '发布期间新内容', '新正文', 'wikitext', 2));
@@ -971,6 +1020,7 @@ describe('VersionedSearchIndexCache', () => {
       await vi.advanceTimersByTimeAsync(5_001);
       expect(serializations).toHaveBeenCalledTimes(1);
       release();
+      if (explicitPublishing) expect(await explicitPublishing).toEqual({ status: 'skipped', reason: 'sequence-changed' });
       vi.useRealTimers();
       await vi.waitFor(async () => {
         expect(await database.indexSnapshots.get(snapshotKey('title'))).toMatchObject({ throughLocalSeq: 2 });

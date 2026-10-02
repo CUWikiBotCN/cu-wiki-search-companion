@@ -298,12 +298,21 @@ export class VersionedSearchIndexCache {
   publish<K extends SearchIndexKind>(
     handle: SearchIndexHandle<K>,
   ): Promise<SnapshotPublishResult> {
+    this.consumePendingPublish(handle);
+    return this.enqueuePublish(() => {
+      // An earlier queued automatic publication can schedule a sequence retry
+      // while this explicit request waits. Consume it before freezing our JSON.
+      this.consumePendingPublish(handle);
+      return this.publishOnce(handle);
+    });
+  }
+
+  private consumePendingPublish(handle: SearchIndexHandle): void {
     const pending = this.pendingPublishes.get(handle.kind);
     if (pending?.handle === handle) {
       clearTimeout(pending.timer);
       this.pendingPublishes.delete(handle.kind);
     }
-    return this.enqueuePublish(() => this.publishOnce(handle));
   }
 
   private enqueuePublish<T>(operation: () => Promise<T>): Promise<T> {
