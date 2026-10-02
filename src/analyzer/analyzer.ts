@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import OpenCC from 'opencc-js';
+import OpenCC from 'opencc-js/t2cn';
 
 export interface WordSegmenter {
   cut(text: string): string[];
