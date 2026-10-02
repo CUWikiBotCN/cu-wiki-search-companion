@@ -11,7 +11,7 @@ async page => {
   const environment = typeof process === 'undefined' ? {} : process.env;
   const expectedVersion = environment.CU_WIKI_EXPECTED_VERSION ?? '0.3.9';
   const expectedMarker = environment.CU_WIKI_EXPECTED_MARKER ??
-    'CU_WIKI_BUILD_ID:local022-027-final-039-r2-20261003';
+    'CU_WIKI_BUILD_ID:local022-027-final-039-r3-20261003';
   const editUrl = environment.CU_WIKI_BENCHMARK_EDIT_URL ??
     'https://casualtiesunknown.huijiwiki.com/index.php?title=12%E5%8F%B7%E9%B9%BF%E5%BC%B9&action=edit';
   const target = new URL(editUrl);
@@ -41,6 +41,10 @@ async page => {
       return debug?.contentReadyMs !== undefined && debug.indexedContentPages >= 1500;
     },
       undefined, { timeout: 120000 });
+    const prepared = await tab.evaluate(() => ({
+      engine: window.__CU_WIKI_SEARCH__.engine,
+      contentReadyMs: window.__CU_WIKI_SEARCH__.contentReadyMs,
+    }));
 
     // Retain the original 12-English-word warm-once/sample-once regression exactly.
     const queries = [
@@ -76,6 +80,7 @@ async page => {
       maxMs: sorted.at(-1),
       durations,
       initial,
+      prepared,
       browserVersion: tab.context().browser()?.version(),
       legacyScope: 'Original 12 English queries, warm once and sample each once; percentiles unchanged.',
     };

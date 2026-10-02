@@ -150,6 +150,7 @@ async page => {
 
     return {
       passed: true, version: '0.3.9', buildId, reports,
+      engine: await fixturePage.evaluate(() => window.__CU_WIKI_SEARCH__.engine),
       panelTab: true, siteTab: true, focusReturn: ['Escape', 'Alt+K'],
       insertionUndone: true,
     };

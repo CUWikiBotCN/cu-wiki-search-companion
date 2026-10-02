@@ -14,9 +14,9 @@ const BrowserURL = globalThis.URL;
 
 describe('browser tooling scripts', () => {
   it.each([
-    ['snapshot', testIndexSnapshotsSource, 'https://example.test/?action=edit'],
-    ['benchmark', benchmarkContentSearchSource, 'https://example.test/?action=submit'],
-  ])('runs the %s harness on the activated edit page', async (_name, source, editorUrl) => {
+    'https://example.test/?action=edit',
+    'https://example.test/?action=submit',
+  ])('runs the snapshot harness on the activated edit page %s', async (editorUrl) => {
     let wrongPageUsed = false;
     let pages: unknown[] = [];
     const context = { pages: () => pages };
@@ -38,7 +38,7 @@ describe('browser tooling scripts', () => {
       evaluate: async () => { throw new Error('selected-page-probe'); },
     };
     pages = [reader, editor];
-    const run = Function(`return (${source}\n)`)() as RunCodeScript;
+    const run = Function(`return (${testIndexSnapshotsSource}\n)`)() as RunCodeScript;
     vi.stubGlobal('URL', undefined);
 
     await expect(run(reader)).rejects.toThrow('selected-page-probe');
@@ -46,6 +46,43 @@ describe('browser tooling scripts', () => {
 
     pages = [reader];
     await expect(run(reader)).rejects.toThrow('找不到已激活的维基编辑页');
+  });
+
+  it('benchmarks on its own edit page and cleans up without retrying failed readiness', async () => {
+    const context = new InstallContext(new Error('benchmark readiness timeout'));
+    const reader = context.addInitial(
+      'https://casualtiesunknown.huijiwiki.com/wiki/首页',
+    );
+    const editor = context.addInitial(
+      'https://casualtiesunknown.huijiwiki.com/index.php?title=首页&action=edit',
+    );
+    // The run-code VM has no process.env; exercise the public defaults directly.
+    const benchmark = Function('process', `return (${benchmarkContentSearchSource}\n)`)(
+      undefined,
+    ) as RunCodeScript;
+
+    await expect(benchmark(reader)).rejects.toThrow('benchmark readiness timeout');
+
+    expect(context.createdPages).toHaveLength(1);
+    const dedicatedWikiPage = context.createdPages[0];
+    expect(dedicatedWikiPage?.navigations).toEqual([
+      'https://casualtiesunknown.huijiwiki.com/index.php?title=12%E5%8F%B7%E9%B9%BF%E5%BC%B9&action=edit',
+    ]);
+    expect(dedicatedWikiPage?.readyChecks).toHaveLength(1);
+    expect(dedicatedWikiPage?.readyChecks[0]?.predicate).toContain('__CU_WIKI_SEARCH__');
+    expect(dedicatedWikiPage?.reloads).toBe(0);
+    expect(dedicatedWikiPage?.bringToFrontCalls).toBe(1);
+    expect(dedicatedWikiPage?.closed).toBe(true);
+    expect(context.requestedUrls).toEqual([]);
+    for (const existingPage of [reader, editor]) {
+      expect(existingPage.navigations).toEqual([]);
+      expect(existingPage.reloads).toBe(0);
+      expect(existingPage.closed).toBe(false);
+      expect(existingPage.readyChecks).toEqual([]);
+      expect(existingPage.activationChecks).toEqual([]);
+    }
+    expect(reader.bringToFrontCalls).toBe(1);
+    expect(editor.bringToFrontCalls).toBe(0);
   });
 
   it('resets deep search state before every snapshot reload', () => {
