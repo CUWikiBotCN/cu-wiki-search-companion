@@ -10,7 +10,7 @@ import {
   browserTaskScheduler,
   type CooperativeTaskScheduler,
 } from '../runtime/cooperative-task-scheduler';
-import type { PageRecord, RedirectTarget } from '../types';
+import type { NamespaceInfo, PageRecord, RedirectTarget } from '../types';
 import { currentRedirectResolution } from '../redirect';
 import { ConcurrentRebuildLifecycle } from './rebuild-lifecycle';
 
@@ -21,6 +21,11 @@ interface IndexedTitle extends RedirectSearchMetadata {
   namespace: number;
   namespaceName: string;
   tokens: string;
+}
+
+interface TitleIndexState {
+  miniSearch: MiniSearch<IndexedTitle>;
+  compactTitleById: Map<number, string>;
 }
 
 interface RedirectSearchMetadata {
@@ -47,6 +52,7 @@ interface LinearTitle extends RedirectSearchMetadata {
   title: string;
   namespace: number;
   namespaceName: string;
+  localSeq: number;
   compactTitle: string;
 }
 
@@ -77,10 +83,31 @@ export class LinearTitleIndex implements TitleSearchBackend {
         title: page.title,
         namespace: page.namespace,
         namespaceName: page.namespaceName,
+        localSeq: page.localSeq,
         compactTitle: this.analyzer.compactNormalized(page.normalizedTitle),
         ...redirectSearchMetadata(page),
       });
     }
+  }
+
+  namespaceSummary(): NamespaceInfo[] {
+    const latestByNamespace = new Map<number, LinearTitle>();
+    for (const title of this.titles.values()) {
+      const previous = latestByNamespace.get(title.namespace);
+      if (
+        !previous ||
+        title.localSeq > previous.localSeq ||
+        (title.localSeq === previous.localSeq && title.id > previous.id)
+      ) {
+        latestByNamespace.set(title.namespace, title);
+      }
+    }
+    return [...latestByNamespace.values()]
+      .map(({ namespace: id, namespaceName }) => ({
+        id,
+        name: namespaceName || '（主）',
+      }))
+      .sort((left, right) => left.id - right.id);
   }
 
   search(query: string, namespace?: number, limit = 20): TitleSearchResult[] {
@@ -95,6 +122,7 @@ export class LinearTitleIndex implements TitleSearchBackend {
       title,
       namespace: pageNamespace,
       namespaceName,
+      localSeq: _localSeq,
       compactTitle,
       ...redirect
     } of this.titles.values()) {
@@ -151,11 +179,11 @@ export class CombinedTitleIndex implements TitleSearchBackend {
 
 export class TitleIndex implements TitleSearchBackend {
   private readonly lifecycle = new ConcurrentRebuildLifecycle<
-    MiniSearch<IndexedTitle>,
+    TitleIndexState,
     PageRecord[]
   >(
-    this.createIndex(),
-    (index, pages) => this.applyPages(index, pages),
+    this.createState(),
+    (state, pages) => this.applyPages(state, pages),
     (pages) => pages.map((page) => ({ ...page })),
   );
 
@@ -166,20 +194,20 @@ export class TitleIndex implements TitleSearchBackend {
   ) {}
 
   rebuild(pages: PageRecord[]): void {
-    const nextIndex = this.createIndex();
-    this.applyPages(nextIndex, pages);
-    this.lifecycle.rebuild(nextIndex);
+    const nextState = this.createState();
+    this.applyPages(nextState, pages);
+    this.lifecycle.rebuild(nextState);
   }
 
   async rebuildAsync(pages: PageRecord[], batchSize = 5): Promise<void> {
     await this.lifecycle.rebuildAsync(async () => {
-      const nextIndex = this.createIndex();
+      const nextState = this.createState();
       const activePages = pages.filter((page) => !page.deleted);
       for (let offset = 0; offset < activePages.length; offset += batchSize) {
-        this.applyPages(nextIndex, activePages.slice(offset, offset + batchSize));
+        this.applyPages(nextState, activePages.slice(offset, offset + batchSize));
         await this.taskScheduler.yield();
       }
-      return nextIndex;
+      return nextState;
     });
   }
 
@@ -187,8 +215,10 @@ export class TitleIndex implements TitleSearchBackend {
     this.lifecycle.update(pages);
   }
 
-  private applyPages(index: MiniSearch<IndexedTitle>, pages: PageRecord[]): void {
+  private applyPages(state: TitleIndexState, pages: PageRecord[]): void {
+    const index = state.miniSearch;
     for (const page of pages) {
+      state.compactTitleById.delete(page.id);
       if (page.deleted) {
         if (index.has(page.id)) index.discard(page.id);
         continue;
@@ -207,17 +237,19 @@ export class TitleIndex implements TitleSearchBackend {
   }
 
   exportSnapshot(): unknown {
-    return { miniSearch: this.lifecycle.current.toJSON() };
+    return { miniSearch: this.lifecycle.current.miniSearch.toJSON() };
   }
 
   async importSnapshot(payload: unknown): Promise<void> {
     if (!payload || typeof payload !== 'object' || !('miniSearch' in payload)) {
       throw new Error('标题快照 payload 结构无效');
     }
-    await this.lifecycle.rebuildAsync(() =>
-      MiniSearch.loadJSAsync<IndexedTitle>(
-        payload.miniSearch as AsPlainObject,
-        this.indexOptions(),
+    await this.lifecycle.rebuildAsync(async () =>
+      this.createState(
+        await MiniSearch.loadJSAsync<IndexedTitle>(
+          payload.miniSearch as AsPlainObject,
+          this.indexOptions(),
+        ),
       ),
     );
   }
@@ -245,9 +277,10 @@ export class TitleIndex implements TitleSearchBackend {
       filter: (result: SearchResult): boolean =>
         namespace === undefined || result.namespace === namespace,
     };
-    let results = this.lifecycle.current.search(normalizedQuery, options);
+    const state = this.lifecycle.current;
+    let results = state.miniSearch.search(normalizedQuery, options);
     if (!results.length && terms.length > 1 && !shortCjkOnly) {
-      results = this.lifecycle.current.search(normalizedQuery, {
+      results = state.miniSearch.search(normalizedQuery, {
         ...options,
         combineWith: 'OR',
       });
@@ -256,14 +289,19 @@ export class TitleIndex implements TitleSearchBackend {
     const compactQuery = this.analyzer.compact(normalizedQuery);
     return results
       .map((result) => {
+        const id = Number(result.id);
         const title = String(result.title);
-        const compactTitle = this.analyzer.compact(title);
+        let compactTitle = state.compactTitleById.get(id);
+        if (compactTitle === undefined) {
+          compactTitle = this.analyzer.compact(title);
+          state.compactTitleById.set(id, compactTitle);
+        }
         let boost = 1;
         if (compactTitle === compactQuery) boost = 100;
         else if (compactTitle.startsWith(compactQuery)) boost = 10;
         else if (compactTitle.includes(compactQuery)) boost = 3;
         return {
-          id: Number(result.id),
+          id,
           title,
           namespace: Number(result.namespace),
           namespaceName: String(result.namespaceName),
@@ -280,11 +318,13 @@ export class TitleIndex implements TitleSearchBackend {
   }
 
   get size(): number {
-    return this.lifecycle.current.documentCount;
+    return this.lifecycle.current.miniSearch.documentCount;
   }
 
-  private createIndex(): MiniSearch<IndexedTitle> {
-    return new MiniSearch<IndexedTitle>(this.indexOptions());
+  private createState(
+    miniSearch = new MiniSearch<IndexedTitle>(this.indexOptions()),
+  ): TitleIndexState {
+    return { miniSearch, compactTitleById: new Map() };
   }
 
   private indexOptions(): Options<IndexedTitle> {

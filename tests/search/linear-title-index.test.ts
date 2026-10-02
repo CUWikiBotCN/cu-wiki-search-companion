@@ -74,6 +74,52 @@ describe('LinearTitleIndex', () => {
     expect(index.search('待删除')).toEqual([]);
     expect(index.size).toBe(2);
   });
+
+  it('summarizes namespaces from active lightweight entries and drops the last deleted page', () => {
+    const index = new LinearTitleIndex(analyzer, pages);
+
+    expect(index.namespaceSummary()).toEqual([
+      { id: 0, name: '（主）' },
+      { id: 10, name: '模板' },
+    ]);
+    index.update([{ ...page(2, '模板:PopupNotice', 10, '模板'), deleted: true }]);
+    expect(index.namespaceSummary()).toEqual([{ id: 0, name: '（主）' }]);
+    index.update([
+      { ...page(1, '12号鹿弹', 0, ''), deleted: true },
+      { ...page(3, '鹿弹', 0, ''), deleted: true },
+    ]);
+    expect(index.namespaceSummary()).toEqual([]);
+  });
+
+  it('updates namespace moves and picks the latest name regardless of insertion order', () => {
+    const older = { ...page(9, '模板:旧页', 10, '旧模板名'), localSeq: 1 };
+    const newer = { ...page(1, '模板:新页', 10, '新模板名'), localSeq: 3 };
+    const index = new LinearTitleIndex(analyzer, [newer, older]);
+
+    expect(index.namespaceSummary()).toEqual([{ id: 10, name: '新模板名' }]);
+    index.update([{ ...older, namespaceName: '更新模板名', localSeq: 4 }]);
+    expect(index.namespaceSummary()).toEqual([{ id: 10, name: '更新模板名' }]);
+    index.update([{ ...page(9, '模块:移动页', 828, '模块'), localSeq: 5 }]);
+    expect(index.namespaceSummary()).toEqual([
+      { id: 10, name: '新模板名' },
+      { id: 828, name: '模块' },
+    ]);
+    index.update([{ ...page(1, '模块:移动新页', 828, '模块'), localSeq: 6 }]);
+    expect(index.namespaceSummary()).toEqual([{ id: 828, name: '模块' }]);
+    expect(index.search('移动').every((result) => !('localSeq' in result))).toBe(true);
+  });
+
+  it('uses a stable page-id tie-breaker for equal-sequence namespace names', () => {
+    const sameSequence = [
+      { ...page(1, '模板:一', 10, '旧模板名'), localSeq: 5 },
+      { ...page(2, '模板:二', 10, '新模板名'), localSeq: 5 },
+    ];
+    const forward = new LinearTitleIndex(analyzer, sameSequence);
+    const reverse = new LinearTitleIndex(analyzer, [...sameSequence].reverse());
+
+    expect(forward.namespaceSummary()).toEqual([{ id: 10, name: '新模板名' }]);
+    expect(reverse.namespaceSummary()).toEqual(forward.namespaceSummary());
+  });
 });
 
 function page(id: number, title: string, namespace: number, namespaceName: string): PageRecord {

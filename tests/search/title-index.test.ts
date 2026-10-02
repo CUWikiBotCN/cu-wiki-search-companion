@@ -56,6 +56,139 @@ describe('TitleIndex', () => {
     expect(index.search('测试').map(({ id }) => id)).not.toContain(1);
   });
 
+  it('normalizes each broad-match candidate once while still normalizing every query', () => {
+    const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const compact = vi.spyOn(tracedAnalyzer, 'compact');
+    const normalize = vi.spyOn(tracedAnalyzer, 'normalize');
+    const index = new TitleIndex(tracedAnalyzer);
+    const candidates = Array.from({ length: 2_000 }, (_, offset) =>
+      page(offset + 1, `缓存候选 ${offset + 1}`),
+    );
+    index.rebuild(candidates);
+    compact.mockClear();
+    normalize.mockClear();
+
+    const cold = index.search('缓存', undefined, candidates.length);
+
+    expect(cold).toHaveLength(candidates.length);
+    expect(compact).toHaveBeenCalledTimes(candidates.length + 1);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.startsWith('缓存候选 ')),
+    ).toHaveLength(candidates.length);
+    compact.mockClear();
+    normalize.mockClear();
+
+    expect(index.search('缓存', undefined, candidates.length)).toEqual(cold);
+    expect(compact).toHaveBeenCalledExactlyOnceWith('缓存');
+    expect(normalize.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.startsWith('缓存候选 ')),
+    ).toEqual([]);
+  });
+
+  it('computes cached boosts from raw titles instead of legacy normalizedTitle values', async () => {
+    const index = new TitleIndex(analyzer);
+    index.rebuild([
+      { ...page(1, '醫療'), normalizedTitle: 'unrelated legacy value' },
+      { ...page(2, '醫療指南'), normalizedTitle: '医疗' },
+      page(3, '模块:Ｐｏｐｕｐｓ', 828),
+    ]);
+
+    const cold = index.search('医疗');
+
+    expect(cold.map(({ id }) => id)).toEqual([1, 2]);
+    expect(index.search('医疗')).toEqual(cold);
+    expect(index.search('POPU', 828)[0]?.id).toBe(3);
+    expect(index.search('POPU', 828)).toEqual(index.search('ＰＯＰＵ', 828));
+    const restored = new TitleIndex(analyzer);
+    await restored.importSnapshot(index.exportSnapshot());
+    expect(restored.search('医疗')).toEqual(cold);
+    expect(restored.search('POPU', 828)).toEqual(index.search('POPU', 828));
+  });
+
+  it('invalidates only changed candidates and removes tombstoned candidates', () => {
+    const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const compact = vi.spyOn(tracedAnalyzer, 'compact');
+    const index = new TitleIndex(tracedAnalyzer);
+    const unchanged = page(1, '缓存候选 保留');
+    const renamed = page(2, '缓存候选 改名');
+    const initial = [
+      unchanged,
+      page(2, '缓存候选 旧名'),
+      page(3, '缓存候选 删除'),
+    ];
+    const updates = [renamed, { ...page(3, '缓存候选 删除'), deleted: true }];
+    index.rebuild(initial);
+    index.search('缓存');
+
+    index.update(updates);
+    compact.mockClear();
+    const refreshed = index.search('缓存');
+
+    expect(compact.mock.calls).toEqual([['缓存'], [renamed.title]]);
+    expect(refreshed.map(({ id }) => id)).not.toContain(3);
+    // MiniSearch prunes discarded postings during queries; compare the same
+    // incremental query history so its existing score changes stay identical.
+    const uncached = new TitleIndex(analyzer);
+    uncached.rebuild(initial);
+    uncached.update(updates);
+    expect(refreshed).toEqual(uncached.search('缓存'));
+    compact.mockClear();
+    expect(index.search('缓存')).toEqual(uncached.search('缓存'));
+    expect(compact).toHaveBeenCalledExactlyOnceWith('缓存');
+  });
+
+  it.each(['synchronous', 'asynchronous', 'snapshot'] as const)(
+    'starts with an empty candidate cache after a %s replacement',
+    async (replacement) => {
+      const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+      const compact = vi.spyOn(tracedAnalyzer, 'compact');
+      const index = new TitleIndex(tracedAnalyzer, { yield: async () => undefined });
+      const titles = [page(1, '缓存候选 甲'), page(2, '缓存候选 乙')];
+      index.rebuild(titles);
+      const snapshot = index.exportSnapshot();
+      const expected = index.search('缓存');
+      expect(index.exportSnapshot()).toEqual(snapshot);
+      expect(Object.keys(snapshot as object)).toEqual(['miniSearch']);
+
+      if (replacement === 'synchronous') index.rebuild(titles);
+      else if (replacement === 'asynchronous') await index.rebuildAsync(titles, 1);
+      else await index.importSnapshot(snapshot);
+      compact.mockClear();
+
+      expect(index.search('缓存')).toEqual(expected);
+      expect(compact).toHaveBeenCalledTimes(titles.length + 1);
+      compact.mockClear();
+      expect(index.search('缓存')).toEqual(expected);
+      expect(compact).toHaveBeenCalledExactlyOnceWith('缓存');
+    },
+  );
+
+  it('replays cache invalidation for updates during a yielding rebuild', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const compact = vi.spyOn(tracedAnalyzer, 'compact');
+    const index = new TitleIndex(tracedAnalyzer, { yield: () => blocked });
+    const initial = [page(1, '缓存候选 旧名'), page(2, '缓存候选 待删除')];
+    index.rebuild(initial);
+    index.search('缓存');
+
+    const rebuilding = index.rebuildAsync(initial, 2);
+    const renamed = page(1, '缓存候选 最新');
+    index.update([renamed, { ...initial[1]!, deleted: true }]);
+    const expected = index.search('缓存');
+    release();
+    await rebuilding;
+    compact.mockClear();
+
+    expect(index.search('缓存')).toEqual(expected);
+    expect(compact.mock.calls).toEqual([['缓存'], [renamed.title]]);
+    compact.mockClear();
+    expect(index.search('缓存')).toEqual(expected);
+    expect(compact).toHaveBeenCalledExactlyOnceWith('缓存');
+  });
+
   it('uses page id as a stable tie-breaker regardless of index insertion order', () => {
     const forward = new TitleIndex(analyzer);
     const reverse = new TitleIndex(analyzer);
