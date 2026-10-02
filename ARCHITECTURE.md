@@ -1,6 +1,6 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.8 架构（包含搜索运行态与浮窗模块拆分），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文对应 0.3.9 架构，面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
@@ -13,7 +13,7 @@
 3. 离线可用：网络失败时保留已有本地搜索能力。
 4. 多标签一致性：同一浏览器只允许一个同步写者，其他标签从 IndexedDB 刷新。
 5. 派生可重建：索引、摘要和符号表损坏时，不触碰远端游标即可从本地事实恢复。
-6. 搜索域隔离：标题、正文、Lua、Data 代码、文件资源不隐式混排。
+6. 搜索域隔离：标题、正文、Lua、CSS、Data 代码、文件资源不隐式混排。
 
 以下不属于当前系统：服务端组件、编辑提交自动化、云备份、跨浏览器迁移、JavaScript 正文索引、Data JSON 查看器和轮询式逐页抓取。
 
@@ -105,6 +105,8 @@ sequenceDiagram
 启动的版本检查只读；事实写入必须在取得跨标签写锁后重新检查并按需登记 legacy 契约。启动旧键清理采用机会性取锁，也可能完成这次登记；锁被占用时跳过，不阻塞本地搜索等待其他标签。
 
 bootstrap analyzer 使用 OpenCC 归一和一个极轻的整串 segmenter。冷启动以游标方式只物化 id、标题、命名空间和 localSeq 等标题头，LinearTitleIndex 再复制自己需要的稳定字段，不保留 PageRecord 或正文引用。此时标题通过线性 compact substring 查询；Data 代码也可从已缓存记录恢复。
+
+bootstrap 标题头与全局序列在同一只读事务内初始化，之后使用自己的已应用序列读取标题增量并处理 tombstone。命名空间从线性索引的轻量条目汇总，普通刷新不全表读取。页面刷新串行执行；每个快照 handle 仍按自己的序列追平。显式重建实际安装新索引时才推进 generation，安装前失败保留当前 handle 已应用的通知；安装后 CSS 或诊断失败也通知已替换的模式。旧刷新不能覆盖新 bootstrap、计数或结果通知，只能让当前索引重新追平。协作式让步发生在读取事务结束后。标题头读取减少正文对象的物化和保留，并不表示 IndexedDB 支持字段投影。
 
 ### 3.3 用户打开搜索后的增强启动
 
@@ -240,6 +242,8 @@ syncTitles()：
 
 prepareContentJobs() 从活动、非 redirect 且 content model 为 wikitext、BSON、Scribunto、css 或 sanitized-css 的页面生成 wikitext-content jobs。名称保留是持久化兼容要求，虽然当前范围已不只 wikitext。
 
+内部准备过程在修复 jobs 的事务中同时返回本次 scope 的 page ID 集合，syncContent() 复用该集合，不再次扫描 pages。全范围 eligible 集合继续用于清理过期 jobs；进度仍从当前 jobs 读取。公开 prepareContentJobs() 保持 Promise<void> 契约。
+
 syncContent() 每批最多 50 页。下载范围分为既有 content（wikitext/BSON/Scribunto）与 css，两者单独合并在途请求，共用既有跨标签写锁。force 只重排所选范围；维护修复队列仍覆盖两者。CSS 的 RC 变化只排队，已加载 CSS 时续传。
 
 syncContent() 的批次流程：
@@ -337,6 +341,8 @@ BroadcastChannel cu-wiki-local-search:changes:v1 只做失效通知：
 
 jieba 不可用时使用 Intl.Segmenter。实际 analyzer engine 进入三类快照 compatibility key，防止不同分词结果误用旧快照。Data 代码和文件索引始终使用冷启动的 fallbackAnalyzer；它们依赖归一化、compact substring 与轻量线性扫描，不等待 jieba，也不创建快照。
 
+OpenCC 只打包已安装依赖的 opencc-js/t2cn 入口，Converter 的 t→cn 配置及归一化顺序保持不变；这不改变 analyzer compatibility key。
+
 ### 8.2 六种搜索后端
 
 | 模式 | 后端 | 输入事实 | 特殊行为 |
@@ -350,11 +356,15 @@ jieba 不可用时使用 Intl.Segmenter。实际 analyzer engine 进入三类快
 
 MiniSearch 查询优先 AND，完全无结果时才退化为 OR。标题允许受控 fuzzy；正文/Lua 不启用 MiniSearch fuzzy，避免大型代码词典导致延迟失控。页面类结果以 page id 作为稳定末级排序键，保证序列化恢复前后并列项顺序一致；Data 代码结果没有 page id，按 score 后再按 code 排序。
 
+ContentIndex 仅在摘要不能直接或大小写不敏感地命中原文时，按需缓存完整归一化文本。每个索引 state 使用 Map 顺序维护 LRU，最多 128 页、8 × 1024 × 1024 字节文本载荷；计费为字符串 length × 2，不包含对象开销，不能当作 JS heap 上限。单篇超过预算仍生成完整正确摘要，但不缓存也不清空其他条目。TitleIndex 按候选 page ID 缓存从原始标题计算的 compact 值，不信任旧 normalizedTitle。两类缓存均随现有 rebuild lifecycle 管理，更新或删除清除该页，同步/异步重建及快照导入创建空缓存；快照不保存缓存。关闭面板保留缓存。首次长文 fallback 仍需完整归一化。
+
 ### 8.3 CSS 源码运行态
 
 PageSearchRuntime 持有 CssSourceIndex；选择 CSS 时先从本地恢复源码，再同步 CSS 待办，不要求 jieba 或标题快照。CSS 只接受当前 contentRevisionId 与 revisionId 一致的活动非重定向源码，保留原始大小写、Unicode、标点与换行。查询按字面子串匹配，按标题/page ID 稳定排序，最多 20 页、每页 3 个片段（每片段最多 240 UTF-16 单元）；行号按原文 LF/CRLF/CR 计算，不声称选择器语义或生效样式。
 
 CSS 在同一只读事务内读取自己的序列和增量记录，删除及模型变化移除旧来源，协作式让步后原子替换内存数据。冷启动不物化 CSS 正文，不增 CSS 快照；显式本地重建刷新已加载 CSS。CSS 下载与正文/Lua 在途任务独立，锁由既有协调器串行授予。维护诊断分别展示 CSS 缓存和队列数量。
+
+CSS refresh 返回是否应用来源变化；没有增量且未强制刷新时，只推进序列，不复制 sources Map 或通知结果失效。
 
 ### 8.4 内容抽取
 
@@ -436,6 +446,8 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 已有同兼容版本且不低于候选序列的快照会在 JSON 序列化和配额检查前直接返回 not-newer，避免把无需写入误报成低配额。序列在构建期间变化时拒绝旧候选，刷新 handle 后重新防抖。clear() 在一个事务中推进 generation 并删除三类 key，因此其他标签的旧 handle 即使稍后醒来也无法回写；维护界面的显式重建会取得新 generation 的 handle。搜索不依赖发布成功；容量或配额不足只显示提示，维护界面会明确说明内存索引仍可用。
 
+显式和自动发布共用可从失败恢复的串行队列。pending 保存 handle、定时器和请求对象身份；显式发布在调用时及真正开始时消费同 handle 的旧请求，到期但尚未执行的自动任务再次核对身份。旧 handle 不取消同 kind 新 handle 的任务，发布运行期间的新变更继续排队。页面刷新仅在实际重放页面时新增自动发布，文件产生的序列空号仍推进 handle，但不新建发布任务，也不取消已有真实变更的任务。单次 JSON 序列化仍是同步工作。
+
 ## 11. UI、编辑器与维护
 
 视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及 Vue/宿主生命周期；`PanelGeometry` 持有浮窗位置、拖动、视口、ResizeObserver 和布局/滚动动画帧；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现六模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
@@ -448,7 +460,9 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过继承的 CSS 自定义属性复用本站主题色。纯 Alt+K 开关面板；中文 IME composition 期间不触发搜索或结果快捷键，普通输入 120ms 防抖。
 
-面板是非模态对话框：仅焦点位于内部时处理 Tab/Shift+Tab，按当前可见、可用控件在边界循环，并阻止面板快捷键继续冒泡给站点；内部普通 Tab 仍由浏览器完成。鼠标可直接离开面板，关闭后恢复原焦点，不接管整个页面。搜索框和结果主按钮的 Enter/Ctrl 或 Cmd+Enter/Shift+Enter 分别复制、打开、插入；次要按钮保留原生激活语义，修饰方向键仍用于文本操作。结果主按钮按自己所在行分发动作，focusin 同步选中提示；后台刷新移除聚焦结果前先回到搜索框，避免焦点落入站点。快捷键不写入 preference，也不引入独立焦点管理框架。
+运行态的 onStateChange 只更新计数、准备状态、命名空间与诊断，onResultsChanged 才通知对应模式失效；main 映射到 SearchPanel.invalidateResults。页面一次成功 refresh 聚合通知一次；部分 handle 已更新而后续刷新失败时，仍通知当前 generation 已应用的模式。面板维护六模式 dirty 集合，隐藏或组词期间只标脏；外部失效合并已有输入防抖，没有待办时安排一次零延时查询。关闭/销毁取消定时工作，重开或 composition 结束按 dirty/条件变化补查；主动切模式、改 namespace 或显式刷新消费旧任务并立即查询。设置框中的组词同样阻止外部结果查询。同步查询与 debug 接口保持不变。
+
+面板是非模态对话框：仅焦点位于内部时处理 Tab/Shift+Tab，按当前可见、可用控件在边界循环，并阻止面板快捷键继续冒泡给站点；内部普通 Tab 仍由浏览器完成。鼠标可直接离开面板，关闭后恢复原焦点，不接管整个页面。搜索框和结果主按钮的 Enter/Ctrl 或 Cmd+Enter/Shift+Enter 分别复制、打开、插入；次要按钮保留原生激活语义，修饰方向键仍用于文本操作。结果主按钮按自己所在行分发动作，focusin 同步选中提示。后台失效且查询条件未变时，以模式/page ID 或 Data source/code 保留选择；仍存在的结果按钮与重定向链接保留焦点。仅原焦点所在结果被移除、用户未转到其他控件时，才在 Vue 更新后回到搜索框。用户改变查询、模式或 namespace 时仍选择首项。namespace 列表内容不变时不替换，当前筛选项消失则回到全部并使当前标题/正文查询失效。快捷键不写入 preference，也不引入独立焦点管理框架。
 
 面板布局和位置属于 PanelGeometry 的页面内状态，不进入 main.ts、索引或 GM preference。整体按视口限高，标题/搜索/状态区域不随内容滚动，设置、维护和结果共享一个可收缩滚动区。宽屏取实际可用视口宽度的 36%，下限 420px、上限 960px；640px 及以下随可用宽度排列。布局与拖动共用扣除滚动条后的可用视口尺寸，避免直接使用 100vw 导致窄窗口越界。拖动和键盘移动仅在宽屏启用，内容/视口变化时保持位置在边界内；位置只在当前页面关闭重开时保留。长状态以两行预览加完整文本展开呈现，不积累状态历史。
 
