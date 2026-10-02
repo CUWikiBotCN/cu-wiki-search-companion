@@ -45,7 +45,13 @@ export interface ContentSearchResult {
 interface ContentIndexState {
   index: MiniSearch<IndexedContent>;
   extractedById: Map<number, string>;
+  normalizedById: Map<number, string>;
+  /** UTF-16 text payload estimate; excludes Map and other object overhead. */
+  normalizedTextBytes: number;
 }
+
+const MAX_NORMALIZED_TEXT_BYTES = 8 * 1024 * 1024;
+const MAX_NORMALIZED_TEXT_ENTRIES = 128;
 
 export class ContentIndex {
   private readonly lifecycle = new ConcurrentRebuildLifecycle<
@@ -53,8 +59,7 @@ export class ContentIndex {
     PageRecord[]
   >(
     this.createState(),
-    ({ index, extractedById }, pages) =>
-      this.applyPages(index, extractedById, pages),
+    (state, pages) => this.applyPages(state, pages),
     (pages) => pages.map((page) => ({ ...page })),
   );
 
@@ -66,7 +71,7 @@ export class ContentIndex {
 
   rebuild(pages: PageRecord[]): void {
     const nextState = this.createState();
-    this.applyPages(nextState.index, nextState.extractedById, pages);
+    this.applyPages(nextState, pages);
     this.lifecycle.rebuild(nextState);
   }
 
@@ -74,11 +79,7 @@ export class ContentIndex {
     await this.lifecycle.rebuildAsync(async () => {
       const nextState = this.createState();
       for (let offset = 0; offset < pages.length; offset += batchSize) {
-        this.applyPages(
-          nextState.index,
-          nextState.extractedById,
-          pages.slice(offset, offset + batchSize),
-        );
+        this.applyPages(nextState, pages.slice(offset, offset + batchSize));
         await this.taskScheduler.yield();
       }
       return nextState;
@@ -90,11 +91,12 @@ export class ContentIndex {
   }
 
   private applyPages(
-    index: MiniSearch<IndexedContent>,
-    extractedById: Map<number, string>,
+    state: ContentIndexState,
     pages: PageRecord[],
   ): void {
+    const { index, extractedById } = state;
     for (const page of pages) {
+      this.removeNormalizedText(state, page.id);
       const document = this.toDocument(page, extractedById);
       if (!document) {
         if (index.has(page.id)) index.discard(page.id);
@@ -145,7 +147,12 @@ export class ContentIndex {
       if (restoredExtractedById.size !== restored.documentCount) {
         throw new Error('正文快照摘要数量不一致');
       }
-      return { index: restored, extractedById: restoredExtractedById };
+      return {
+        index: restored,
+        extractedById: restoredExtractedById,
+        normalizedById: new Map<number, string>(),
+        normalizedTextBytes: 0,
+      };
     });
   }
 
@@ -162,7 +169,8 @@ export class ContentIndex {
       filter: (result: SearchResult): boolean =>
         namespace === undefined || result.namespace === namespace,
     };
-    const { index, extractedById } = this.lifecycle.current;
+    const state = this.lifecycle.current;
+    const { index, extractedById } = state;
     let results = index.search(normalizedQuery, options);
     if (!results.length && terms.length > 1) {
       results = index.search(normalizedQuery, { ...options, combineWith: 'OR' });
@@ -191,7 +199,7 @@ export class ContentIndex {
         const snippet = makeSnippet(
           extractedById.get(result.id) ?? '',
           normalizedQuery,
-          this.analyzer,
+          (text) => this.normalizedTextFor(state, result.id, text),
           terms,
         );
         return {
@@ -208,7 +216,46 @@ export class ContentIndex {
   }
 
   private createState(): ContentIndexState {
-    return { index: this.createIndex(), extractedById: new Map<number, string>() };
+    return {
+      index: this.createIndex(),
+      extractedById: new Map<number, string>(),
+      normalizedById: new Map<number, string>(),
+      normalizedTextBytes: 0,
+    };
+  }
+
+  private normalizedTextFor(
+    state: ContentIndexState,
+    id: number,
+    text: string,
+  ): string {
+    if (state.normalizedById.has(id)) {
+      const normalized = state.normalizedById.get(id)!;
+      state.normalizedById.delete(id);
+      state.normalizedById.set(id, normalized);
+      return normalized;
+    }
+
+    const normalized = this.analyzer.normalize(text);
+    const bytes = normalized.length * 2;
+    if (bytes > MAX_NORMALIZED_TEXT_BYTES) return normalized;
+
+    while (
+      state.normalizedById.size >= MAX_NORMALIZED_TEXT_ENTRIES ||
+      state.normalizedTextBytes + bytes > MAX_NORMALIZED_TEXT_BYTES
+    ) {
+      this.removeNormalizedText(state, state.normalizedById.keys().next().value!);
+    }
+    state.normalizedById.set(id, normalized);
+    state.normalizedTextBytes += bytes;
+    return normalized;
+  }
+
+  private removeNormalizedText(state: ContentIndexState, id: number): void {
+    const previous = state.normalizedById.get(id);
+    if (previous === undefined) return;
+    state.normalizedById.delete(id);
+    state.normalizedTextBytes -= previous.length * 2;
   }
 
   private createIndex(): MiniSearch<IndexedContent> {
@@ -275,7 +322,7 @@ const MAX_HIGHLIGHT_RANGES = 6;
 function makeSnippet(
   text: string,
   normalizedQuery: string,
-  analyzer: Analyzer,
+  normalizeText: (text: string) => string,
   matchedTerms: readonly string[],
 ): Snippet {
   const compactText = text.replace(/\s+/g, ' ').trim();
@@ -302,7 +349,7 @@ function makeSnippet(
       highlights: [{ start: matchStart, end: matchStart + matchLength }],
     };
   }
-  const normalizedText = analyzer.normalize(compactText);
+  const normalizedText = normalizeText(compactText);
   const displayText = normalizedText || compactText;
   const position = normalizedText.indexOf(normalizedQuery);
   let anchor =

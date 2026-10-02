@@ -48,11 +48,11 @@ export async function syncContent(
   options: ContentSyncOptions = {},
 ): Promise<ContentSyncProgress> {
   const scope = options.scope ?? 'content';
-  await prepareContentJobs(database, options.force ?? false, scope);
-  const selectedIds = new Set<number>();
-  await database.pages.each((page) => {
-    if (isContentJobEligible(page) && matchesContentScope(page.contentModel, scope)) selectedIds.add(page.id);
-  });
+  const selectedIds = await prepareContentJobsInScope(
+    database,
+    options.force ?? false,
+    scope,
+  );
   let currentProgress = await progress(database, selectedIds);
   reportProgress(currentProgress, options.onProgress);
   const claimedJobs = new Map<number, number>();
@@ -220,20 +220,31 @@ export async function prepareContentJobs(
   force: boolean,
   scope?: ContentSyncScope,
 ): Promise<void> {
-  await database.transaction('rw', database.pages, database.jobs, async () => {
+  await prepareContentJobsInScope(database, force, scope);
+}
+
+async function prepareContentJobsInScope(
+  database: WikiSearchDatabase,
+  force: boolean,
+  scope?: ContentSyncScope,
+): Promise<Set<number>> {
+  return database.transaction('rw', database.pages, database.jobs, async () => {
     const existingJobs = await database.jobs
       .where('type')
       .equals(CONTENT_JOB_TYPE)
       .toArray();
     const existingByPage = new Map(existingJobs.map((job) => [job.pageId, job]));
     const eligiblePageIds = new Set<number>();
+    const selectedIds = new Set<number>();
     const now = Date.now();
     const jobsToPut: JobRecord[] = [];
     await database.pages.each((page) => {
       if (!isContentJobEligible(page)) return;
       eligiblePageIds.add(page.id);
+      const selected = !scope || matchesContentScope(page.contentModel, scope);
+      if (selected) selectedIds.add(page.id);
       const existing = existingByPage.get(page.id);
-      const projection = projectContentJob(page, force && (!scope || matchesContentScope(page.contentModel, scope)));
+      const projection = projectContentJob(page, force && selected);
       if (!contentJobMatchesProjection(existing, page.id, projection)) {
         jobsToPut.push(contentJobFromProjection(page.id, projection, existing, now));
       }
@@ -243,6 +254,7 @@ export async function prepareContentJobs(
       .map((job) => job.id as number);
     if (staleJobIds.length) await database.jobs.bulkDelete(staleJobIds);
     if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);
+    return selectedIds;
   });
 }
 
