@@ -532,12 +532,60 @@ async function storageChecks() {
     await delay(5_200);
     check(reads === duringExplicit.reads && serializations === duringExplicit.serializations,
       'Consumed 5-second publish timer performed residual work');
+    const residual = { reads: reads - duringExplicit.reads, serializations: serializations - duringExplicit.serializations };
+    const concurrent = await concurrentPublicationChecks();
     return { status: 'passed', delayMs: 5_200, duringExplicit,
-      residual: { reads: reads - duringExplicit.reads, serializations: serializations - duringExplicit.serializations } };
+      residual, concurrent };
   } finally {
     database.indexSnapshots.get = get;
     handle.index.exportSnapshot = exportSnapshot;
     await cache.clear();
     cache = undefined;
   }
+}
+
+async function concurrentPublicationChecks() {
+  const writer = new WikiSearchDatabase(database.name);
+  const results = [];
+  await writer.open();
+  try {
+    for (const race of ['sequence', 'clear']) {
+      let release;
+      const blocked = new Promise(resolve => { release = resolve; });
+      let entered;
+      const paused = new Promise(resolve => { entered = resolve; });
+      const contender = new VersionedSearchIndexCache(database, {
+        storage: { estimate: async () => {
+          entered(); await blocked;
+          return { usage: 0, quota: 1024 * 1024 * 1024 };
+        } },
+      });
+      const handle = await contender.restoreOrRebuild(race === 'sequence' ? 'content' : 'title', analyzer);
+      const publishing = contender.publish(handle);
+      try {
+        await Promise.race([paused, publishing.then(() => { throw new Error('Publication did not reach quota gate'); })]);
+        if (race === 'sequence') {
+          await writer.transaction('rw', writer.pages, writer.syncState, async () => {
+            await writer.pages.put(page(7_003, '并发写入测试', '并发正文 freshmarker'));
+            await writer.syncState.put({ key: 'local-sequence', value: 7_003 });
+          });
+          await contender.refresh(handle);
+        } else {
+          await new VersionedSearchIndexCache(writer).clear();
+        }
+      } finally { release(); }
+      const result = await publishing;
+      const reason = race === 'sequence' ? 'sequence-changed' : 'cleared-this-session';
+      check(result.status === 'skipped' && result.reason === reason, 'Unsafe concurrent candidate: ' + race);
+      if (race === 'sequence') {
+        const retried = await contender.publish(handle);
+        check(retried.status === 'published' && retried.record.throughLocalSeq === 7_003 &&
+          retried.record.json.includes('freshmarker'), 'Concurrent update was lost after retry');
+      } else {
+        check(await writer.indexSnapshots.count() === 0, 'A cleared candidate wrote back');
+      }
+      results.push({ race, reason, status: 'passed' });
+    }
+    return { connection: 'Second connection to the same synthetic IndexedDB only', results };
+  } finally { writer.close(); }
 }
