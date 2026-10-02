@@ -17,6 +17,140 @@ const analyzer = new Analyzer(
 );
 
 describe('VersionedSearchIndexCache', () => {
+  it('returns detached last-observed metadata without IO and refreshes it only through explicit observation', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    try {
+      await database.pages.put(page(1, '轻量状态', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      expect(cache.getObservedStatus(1).every(({ status }) => status === 'not-started')).toBe(true);
+      await cache.publish(await cache.restoreOrRebuild('title', analyzer));
+      const reads = vi.spyOn(database.indexSnapshots, 'toArray');
+      const get = vi.spyOn(database.indexSnapshots, 'get');
+      const digest = vi.spyOn(crypto.subtle, 'digest');
+      const observed = cache.getObservedStatus(1);
+      expect(observed[0]).toMatchObject({ kind: 'title', status: 'available', throughLocalSeq: 1 });
+      expect(observed[0]).not.toHaveProperty('json');
+      observed[0]!.status = 'corrupt';
+      expect(cache.getObservedStatus(2)[0]?.status).toBe('replay-required');
+      expect(cache.getObservedStatus(1)[0]?.status).toBe('available');
+      expect(cache.getObservedStatus(0)[0]?.status).toBe('available');
+      expect(reads).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+      expect(digest).not.toHaveBeenCalled();
+      reads.mockRestore(); get.mockRestore(); digest.mockRestore();
+
+      // Another writer changes the payload without changing its metadata.
+      await database.indexSnapshots.update(snapshotKey('title'), { json: '{broken' });
+      expect(cache.getObservedStatus(1)[0]?.status).toBe('available');
+      expect((await cache.inspect())[0]?.status).toBe('corrupt');
+      expect(cache.getObservedStatus(1)[0]?.status).toBe('corrupt');
+      await cache.clear();
+      expect(cache.getObservedStatus(1).every(({ status }) => status === 'missing')).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('does not let an in-flight inspection overwrite a later clear observation', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await database.pages.put(page(1, '清理竞态', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      await cache.publish(await cache.restoreOrRebuild('title', analyzer));
+      const digest = crypto.subtle.digest.bind(crypto.subtle);
+      const hashing = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+        await held;
+        return digest(algorithm, data);
+      });
+      const inspection = cache.inspect();
+      await vi.waitFor(() => expect(hashing).toHaveBeenCalled());
+      await cache.clear();
+      release();
+      await inspection;
+      expect(cache.getObservedStatus(1).every(({ status }) => status === 'missing')).toBe(true);
+    } finally {
+      release();
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('registers a restored snapshot when a diagnostic finishes before its first restoration', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const publisher = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    const reader = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await database.pages.put(page(1, '诊断恢复竞态', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      await publisher.publish(await publisher.restoreOrRebuild('title', analyzer));
+      const digest = crypto.subtle.digest.bind(crypto.subtle);
+      const hashing = vi.spyOn(crypto.subtle, 'digest').mockImplementationOnce(async (algorithm, data) => {
+        await held;
+        return digest(algorithm, data);
+      });
+      const restoring = reader.restoreOrRebuild('title', analyzer);
+      await vi.waitFor(() => expect(hashing).toHaveBeenCalled());
+      expect((await reader.inspect())[0]?.status).toBe('not-started');
+      release();
+      const handle = await restoring;
+
+      expect(handle.index.search('诊断恢复竞态')[0]?.title).toBe('诊断恢复竞态');
+      expect(reader.getObservedStatus(1)[0]?.status).toBe('available');
+      expect(await reader.publish(handle)).toEqual({ status: 'skipped', reason: 'not-newer' });
+      expect((await reader.inspect())[0]?.status).toBe('available');
+    } finally {
+      release();
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
+  it('keeps a later clear authoritative when a snapshot restoration finishes afterwards', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const publisher = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    const reader = new VersionedSearchIndexCache(database, { storage: unlimitedStorage() });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      await database.pages.put(page(1, '恢复竞态', '正文', 'wikitext', 1));
+      await database.syncState.put({ key: 'local-sequence', value: 2 });
+      await publisher.publish(await publisher.restoreOrRebuild('title', analyzer));
+      const digest = crypto.subtle.digest.bind(crypto.subtle);
+      const hashing = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
+        await held;
+        return digest(algorithm, data);
+      });
+      const restoring = reader.restoreOrRebuild('title', analyzer);
+      await vi.waitFor(() => expect(hashing).toHaveBeenCalled());
+      await reader.clear();
+      release();
+      const handle = await restoring;
+      expect(handle.index.search('恢复竞态')[0]?.title).toBe('恢复竞态');
+      expect(reader.getObservedStatus(1)[0]?.status).toBe('missing');
+      expect((await reader.inspect())[0]?.status).toBe('missing');
+      expect(await reader.publish(handle)).toEqual({ status: 'skipped', reason: 'cleared-this-session' });
+    } finally {
+      release();
+      vi.restoreAllMocks();
+      database.close();
+      await database.delete();
+    }
+  });
+
   it('rebuilds a missing title snapshot without bulk-loading page bodies', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();

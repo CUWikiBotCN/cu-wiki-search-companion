@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 import { Analyzer, createBootstrapSegmenter } from './analyzer/analyzer';
 import { loadAnalyzer, type AnalyzerLoadResult } from './analyzer/load-jieba';
-import {
-  DEFAULT_DATA_CODE_RULES,
-  parseDataFieldRules,
-  upgradeDefaultDataCodeRules,
-} from './data/data-field-rules';
+import { DEFAULT_DATA_CODE_RULES } from './data/data-field-rules';
 import { insertAtEditorSelection, wikiLink } from './editor';
 import { LocalDataMaintenance } from './maintenance/local-data-maintenance';
 import { changeBroadcastEffect } from './runtime/change-broadcast';
 import { browserTaskScheduler } from './runtime/cooperative-task-scheduler';
-import { DataCodeSyncSession } from './runtime/data-code-sync-session';
+import { DataCodeRuntime, type DataCodeCommit } from './runtime/data-code-runtime';
+import { FileSearchRuntime } from './runtime/file-search-runtime';
 import { InitialBackgroundRefreshCoordinator } from './runtime/initial-background-refresh';
 import {
   MirrorSyncOrchestrator,
@@ -31,16 +28,13 @@ import {
 } from './runtime/runtime-lifecycle-coordinator';
 import type { CssSearchResult } from './search/css-source-index';
 import type { ContentSearchResult } from './search/content-index';
-import { DataCodeIndex, type DataCodeSearchResult } from './search/data-code-index';
+import type { DataCodeSearchResult } from './search/data-code-index';
 import type { LuaModuleSearchResult } from './search/lua-module-index';
 import {
   type SnapshotInspection,
   VersionedSearchIndexCache,
 } from './search/versioned-search-index-cache';
-import {
-  LinearTitleIndex,
-  type TitleSearchResult,
-} from './search/title-index';
+import type { TitleSearchResult } from './search/title-index';
 import { WikiSearchDatabase } from './storage/database';
 import { dataRulesPreference } from './storage/data-rules-preference';
 import { highlightPreference } from './storage/highlight-preference';
@@ -49,8 +43,6 @@ import {
   inspectVersionContract,
 } from './storage/version-contract';
 import { syncContent } from './sync/content-sync';
-import { readDataCodeSyncState, syncDataCodes } from './sync/data-code-sync';
-import { syncFileResources } from './sync/file-resource-sync';
 import { IncrementalSyncCoordinator } from './sync/incremental-sync-coordinator';
 import {
   readRecentChangeSyncState,
@@ -131,12 +123,6 @@ type ReconciliationRuntimeStatus =
   | 'lock-unavailable'
   | 'error';
 
-interface DataCodeCommit {
-  origin: 'refresh' | 'save';
-  rulesSource: string;
-  result: Awaited<ReturnType<typeof syncDataCodes>>;
-}
-
 const pageWindow = unsafeWindow as unknown as MediaWikiWindow;
 const bootStartedAt = performance.now();
 const LEGACY_DATA_EXTRACTION_RULES_KEY = 'data-extraction-rules';
@@ -166,19 +152,13 @@ async function start(): Promise<void> {
     broadcast: { postMessage: (message) => incrementalChannel?.postMessage(message) },
   });
   let pageSearchRuntime: PageSearchRuntime | undefined;
-  let fileSearchBackend: LinearTitleIndex | undefined;
-  let dataCodeIndex: DataCodeIndex | undefined;
-  let fileSyncPromise: Promise<void> | undefined;
+  let fileSearchRuntime: FileSearchRuntime | undefined;
+  let dataCodeRuntime: DataCodeRuntime | undefined;
   let incrementalCoordinator: IncrementalSyncCoordinator | undefined;
   let runtimeLifecycle: RuntimeLifecycleCoordinator | undefined;
-  let dataCodeSyncSession: DataCodeSyncSession<DataCodeCommit> | undefined;
   let mirrorSyncOrchestrator: MirrorSyncOrchestrator | undefined;
   let redirectFactsCommitted = false;
   let writesCompatible = true;
-  let lastAppliedFileChangeSeq = 0;
-  let dataCodeRulesSource = DEFAULT_DATA_CODE_RULES;
-  let fileReady: Promise<void> | undefined;
-  let fileReadySettled = false;
   let resolveInitialCacheReady!: () => void;
   let rejectInitialCacheReady!: (error: unknown) => void;
   const initialCacheReady = new Promise<void>((resolve, reject) => {
@@ -226,12 +206,12 @@ async function start(): Promise<void> {
     },
     search: (query, namespace) =>
       pageSearchRuntime?.searchTitles(query, namespace) ?? [],
-    searchFiles: (query) => fileSearchBackend?.search(query) ?? [],
+    searchFiles: (query) => fileSearchRuntime?.search(query) ?? [],
     searchLua: (query) => pageSearchRuntime?.searchLua(query) ?? [],
     searchCss: (query) => pageSearchRuntime?.searchCss(query) ?? [],
     searchContent: (query, namespace) =>
       pageSearchRuntime?.searchContent(query, namespace) ?? [],
-    searchCodes: (query) => dataCodeIndex?.search(query) ?? [],
+    searchCodes: (query) => dataCodeRuntime?.search(query) ?? [],
     insert: (result, query) => {
       if (!canInsertWikiText) {
         panel.setStatus(`当前为 ${contentModel}，不支持插入维基链接`, 'error');
@@ -333,8 +313,8 @@ async function start(): Promise<void> {
     snapshots: [],
     search: (query, namespace) =>
       pageSearchRuntime?.searchTitles(query, namespace) ?? [],
-    searchFiles: (query) => fileSearchBackend?.search(query) ?? [],
-    searchCodes: (query) => dataCodeIndex?.search(query) ?? [],
+    searchFiles: (query) => fileSearchRuntime?.search(query) ?? [],
+    searchCodes: (query) => dataCodeRuntime?.search(query) ?? [],
     searchContent: (query, namespace) =>
       pageSearchRuntime?.searchContent(query, namespace) ?? [],
     searchLua: (query) => pageSearchRuntime?.searchLua(query) ?? [],
@@ -412,37 +392,52 @@ async function start(): Promise<void> {
   });
   resolvePageSearchRuntimeReady(pageSearchRuntime);
   await pageSearchRuntime.initialize();
-  const [
-    dataCodes,
-    dataCodeSyncState,
-    recentChangeState,
-    reconciliationState,
-  ] = await Promise.all([
-    database.dataCodes.toArray(),
-    readDataCodeSyncState(database),
+  fileSearchRuntime = new FileSearchRuntime({
+    database,
+    api,
+    analyzer: fallbackAnalyzer,
+    waitUntilReady: () => initialCacheReady,
+    canWrite: ensureWritesAllowed,
+    runExclusive: (task) => incrementalCoordinator!.runExclusive(task),
+    onStateChange: (state) => {
+      debugApi.indexedFiles = state.indexedFiles;
+      panel.refreshResults();
+    },
+    onRestored: (count) => panel.setStatus(
+      count ? `已恢复 ${count} 个文件资源` : '正在首次同步文件资源…',
+      count ? 'success' : 'normal',
+    ),
+    onProgress: (progress) => {
+      if (progress.status === 'running') {
+        panel.setStatus(`同步文件资源 ${progress.pagesFetched} 页…`);
+      }
+    },
+    onCommitted: async (state) => {
+      await refreshIndexesFromStorage({ files: true });
+      incrementalChannel?.postMessage({ type: 'files-committed' });
+      panel.setStatus(`文件资源同步完成 · ${state.pagesFetched} 项可独立搜索`, 'success');
+    },
+  });
+  dataCodeRuntime = new DataCodeRuntime({
+    database,
+    analyzer: fallbackAnalyzer,
+    preference: dataRulesPreference,
+    runWriter: runCoordinatedWriter,
+    onStateChange: (state) => {
+      debugApi.indexedDataCodes = state.indexedDataCodes;
+      panel.refreshResults();
+    },
+    onRulesChange: (source) => panel.setDataCodeRules(source, DEFAULT_DATA_CODE_RULES),
+    onCommitted: applyDataCodeCommit,
+    onInvalidRules: (origin, error) => {
+      console.warn(`[CU Wiki Search] ignored invalid ${origin} Data code rules`, error);
+    },
+  });
+  const [, recentChangeState, reconciliationState] = await Promise.all([
+    dataCodeRuntime.initialize(),
     readRecentChangeSyncState(database),
     readReconciliationSyncState(database),
   ]);
-  const preferenceRules = await dataRulesPreference.get();
-  for (const [source, origin] of [
-    [upgradeDefaultDataCodeRules(preferenceRules), 'GM preference'],
-    [upgradeDefaultDataCodeRules(dataCodeSyncState?.rulesSource), 'data-code-sync'],
-  ] as const) {
-    if (typeof source !== 'string') continue;
-    try {
-      parseDataFieldRules(source);
-      dataCodeRulesSource = source;
-      if (
-        (origin === 'GM preference' && source !== preferenceRules) ||
-        (origin === 'data-code-sync' && preferenceRules === undefined)
-      ) {
-        await dataRulesPreference.set(source);
-      }
-      break;
-    } catch (error) {
-      console.warn(`[CU Wiki Search] ignored invalid ${origin} Data code rules`, error);
-    }
-  }
   if (writesCompatible) {
     try {
       await incrementalCoordinator.runExclusiveIfAvailable(() =>
@@ -453,7 +448,6 @@ async function start(): Promise<void> {
       else throw error;
     }
   }
-  panel.setDataCodeRules(dataCodeRulesSource, DEFAULT_DATA_CODE_RULES);
   panel.setHighlightPreferences(await highlightPreference.get());
   const committedReconciliationRefresh = new CommittedReconciliationRefresh({
     readState: () => readReconciliationSyncState(database),
@@ -465,7 +459,7 @@ async function start(): Promise<void> {
     refresh: (invalidation) => refreshIndexesFromStorage(invalidation),
     broadcast: (message) => incrementalChannel?.postMessage(message),
   });
-  lastAppliedFileChangeSeq = recentChangeState?.fileChangeSeq ?? 0;
+  await fileSearchRuntime.refresh(recentChangeState?.fileChangeSeq ?? 0);
   debugApi.incrementalThrough = recentChangeState?.through;
   debugApi.reconciliationStatus =
     reconciliationState?.status === 'complete'
@@ -476,12 +470,6 @@ async function start(): Promise<void> {
           ? 'error'
           : 'idle';
   debugApi.reconciliationCompletedAt = reconciliationState?.completedAt;
-  dataCodeIndex = new DataCodeIndex(fallbackAnalyzer, dataCodes);
-  dataCodeSyncSession = new DataCodeSyncSession<DataCodeCommit>({
-    refresh: (force) => performDataCodeRefresh(force),
-    save: (source) => performDataCodeSave(source),
-    apply: (commit) => applyDataCodeCommit(commit),
-  });
   mirrorSyncOrchestrator = new MirrorSyncOrchestrator({
     coordinator: incrementalCoordinator,
     facts: {
@@ -516,12 +504,12 @@ async function start(): Promise<void> {
   debugApi.ready = true;
   debugApi.engine = pageSearchRuntime.state.engine;
   debugApi.indexedPages = pageSearchRuntime.state.indexedPages;
-  debugApi.indexedDataCodes = dataCodeIndex.size;
+  debugApi.indexedDataCodes = dataCodeRuntime.state.indexedDataCodes;
   debugApi.snapshots = [...pageSearchRuntime.state.snapshots];
   debugApi.startupMs = Math.round(performance.now() - bootStartedAt);
   panel.setStatus(
     writesCompatible
-      ? `已恢复 ${pageSearchRuntime.state.indexedPages} 个标题 · ${dataCodeIndex.size} 个 Data 代码 · 各模式按需加载`
+      ? `已恢复 ${pageSearchRuntime.state.indexedPages} 个标题 · ${dataCodeRuntime.state.indexedDataCodes} 个 Data 代码 · 各模式按需加载`
       : `本地数据版本不兼容，已停止后台写入；可搜索现有数据或执行完整重置`,
     writesCompatible ? 'success' : 'error',
   );
@@ -584,74 +572,9 @@ async function start(): Promise<void> {
     );
   }
 
-  function ensureFileSearchStarted(force: boolean): Promise<void> {
-    if (!fileReady) {
-      fileReadySettled = false;
-      const loading = (async () => {
-        await initialCacheReady;
-        const cachedFiles = await database.fileResources
-          .filter((file) => !file.deleted)
-          .toArray();
-        fileSearchBackend = new LinearTitleIndex(fallbackAnalyzer, cachedFiles);
-        debugApi.indexedFiles = fileSearchBackend.size;
-        panel.refreshResults();
-        if (cachedFiles.length) {
-          panel.setStatus(`已恢复 ${cachedFiles.length} 个文件资源`, 'success');
-        } else {
-          panel.setStatus('正在首次同步文件资源…');
-        }
-        await runFileSync(force);
-      })();
-      fileReady = loading.then(() => {
-        fileReadySettled = true;
-      }).catch((error: unknown) => {
-        fileReady = undefined;
-        fileReadySettled = false;
-        throw error;
-      });
-      return fileReady;
-    }
-    return force && fileReadySettled ? runFileSync(true) : fileReady;
-  }
-
-  async function runFileSync(force: boolean): Promise<void> {
-    if (!ensureWritesAllowed()) return;
-    if (fileSyncPromise) return fileSyncPromise;
-    const task = (async () => {
-      let finalState: Awaited<ReturnType<typeof syncFileResources>> | undefined;
-      const run = async (): Promise<void> => {
-        finalState = await syncFileResources(database, api, fallbackAnalyzer, {
-          force,
-          onBatch: (batch) => {
-            fileSearchBackend?.update(batch);
-            debugApi.indexedFiles = fileSearchBackend?.size ?? 0;
-            panel.refreshResults();
-          },
-          onProgress: (progress) => {
-            if (progress.status === 'running') {
-              panel.setStatus(`同步文件资源 ${progress.pagesFetched} 页…`);
-            }
-          },
-        });
-      };
-      const coordinated = await incrementalCoordinator!.runExclusive(run);
-      if (coordinated === 'lock-unavailable') {
-        throw new Error('无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试');
-      }
-      if (!finalState) throw new Error('文件资源同步未返回结果');
-      await refreshIndexesFromStorage({ files: true });
-      incrementalChannel?.postMessage({ type: 'files-committed' });
-      panel.setStatus(
-        `文件资源同步完成 · ${finalState.pagesFetched} 项可独立搜索`,
-        'success',
-      );
-    })();
-    fileSyncPromise = task;
-    try {
-      await task;
-    } finally {
-      if (fileSyncPromise === task) fileSyncPromise = undefined;
-    }
+  async function ensureFileSearchStarted(force: boolean): Promise<void> {
+    await initialCacheReady;
+    return fileSearchRuntime!.prepare(force);
   }
 
   async function refreshRedirectFacts(): Promise<void> {
@@ -673,11 +596,8 @@ async function start(): Promise<void> {
 
   async function saveDataCodeRules(source: string): Promise<void> {
     assertWritesAllowed();
-    parseDataFieldRules(source);
-    const session = dataCodeSyncSession;
-    if (!session) throw new Error('Data 代码同步尚未就绪');
-    const outcome = await session.save(source);
-    if (outcome.status === 'error') throw outcome.error;
+    if (!dataCodeRuntime) throw new Error('Data 代码同步尚未就绪');
+    await dataCodeRuntime.save(source);
   }
 
   async function requestDataCodeSync(force: boolean): Promise<SyncAttemptResult> {
@@ -685,84 +605,33 @@ async function start(): Promise<void> {
       initialBackgroundRefresh.markPending();
       return { status: 'error', error: new Error('本地数据版本不兼容') };
     }
-    const session = dataCodeSyncSession;
-    if (!session) {
+    const runtime = dataCodeRuntime;
+    if (!runtime) {
       return { status: 'error', error: new Error('Data 代码同步尚未就绪') };
     }
-    const outcome = await session.refresh(force);
+    const outcome = await runtime.refresh(force);
     if (outcome.status === 'complete') return { status: 'complete' };
     initialBackgroundRefresh.markPending();
     const message = errorMessage(outcome.error);
     panel.setStatus(
-      `Data 代码更新失败，${dataCodeIndex?.size ? '继续使用本地缓存' : '标题搜索仍可用'}：${message}`,
+      `Data 代码更新失败，${dataCodeRuntime?.state.indexedDataCodes ? '继续使用本地缓存' : '标题搜索仍可用'}：${message}`,
       'error',
     );
     console.error('[CU Wiki Search] Data code sync failed', outcome.error);
     return outcome;
   }
 
-  async function performDataCodeRefresh(force: boolean): Promise<DataCodeCommit> {
-    let result: Awaited<ReturnType<typeof syncDataCodes>> | undefined;
-    let canonicalRules = dataCodeRulesSource;
-    await runCoordinatedWriter('data-refresh', async () => {
-      canonicalRules = await readCanonicalDataRules();
-      result = await syncDataCodes(database, fallbackAnalyzer, {
-        force,
-        rulesSource: canonicalRules,
-      });
-    });
-    if (!result) throw new Error('Data 代码同步未返回结果');
-    return { origin: 'refresh', rulesSource: canonicalRules, result };
-  }
-
-  async function performDataCodeSave(source: string): Promise<DataCodeCommit> {
-    let result: Awaited<ReturnType<typeof syncDataCodes>> | undefined;
-    await runCoordinatedWriter('data-save', async () => {
-      result = await syncDataCodes(database, fallbackAnalyzer, {
-        force: true,
-        rulesSource: source,
-      });
-      // Keep the preference and matching cache commit under the same writer lock.
-      await dataRulesPreference.set(source);
-    });
-    if (!result) throw new Error('Data 代码规则保存未返回结果');
-    return { origin: 'save', rulesSource: source, result };
-  }
-
   function applyDataCodeCommit(commit: DataCodeCommit): void {
-    dataCodeIndex = new DataCodeIndex(fallbackAnalyzer, commit.result.records);
-    dataCodeRulesSource = commit.rulesSource;
-    debugApi.indexedDataCodes = dataCodeIndex.size;
-    panel.setDataCodeRules(dataCodeRulesSource, DEFAULT_DATA_CODE_RULES);
-    panel.refreshResults();
     initialBackgroundRefresh.markComplete();
     if (commit.result.refreshed || commit.origin === 'save') {
       incrementalChannel?.postMessage({ type: 'data-committed' });
     }
+    const count = dataCodeRuntime?.state.indexedDataCodes ?? 0;
     if (commit.origin === 'save') {
-      panel.setStatus(`Data 代码检索字段已保存 · ${dataCodeIndex.size} 条`, 'success');
+      panel.setStatus(`Data 代码检索字段已保存 · ${count} 条`, 'success');
     } else if (commit.result.refreshed) {
-      panel.setStatus(`Data 代码更新完成 · ${dataCodeIndex.size} 条`, 'success');
+      panel.setStatus(`Data 代码更新完成 · ${count} 条`, 'success');
     }
-  }
-
-  async function readCanonicalDataRules(): Promise<string> {
-    const preference = await dataRulesPreference.get();
-    const stored = await readDataCodeSyncState(database);
-    for (const source of [
-      upgradeDefaultDataCodeRules(preference),
-      upgradeDefaultDataCodeRules(stored?.rulesSource),
-      upgradeDefaultDataCodeRules(dataCodeRulesSource),
-    ]) {
-      if (typeof source !== 'string') continue;
-      try {
-        parseDataFieldRules(source);
-        return source;
-      } catch {
-        // Continue to the next durable/local source.
-      }
-    }
-    return DEFAULT_DATA_CODE_RULES;
   }
 
   async function requestManualDataCodeSync(): Promise<void> {
@@ -929,42 +798,15 @@ async function start(): Promise<void> {
   async function applyStorageInvalidation(
     invalidation: StorageInvalidation,
   ): Promise<void> {
-    const [incrementalState, dataState] = await Promise.all([
-      invalidation.pages || invalidation.files
-        ? readRecentChangeSyncState(database)
-        : undefined,
-      invalidation.data ? readDataCodeSyncState(database) : undefined,
-    ]);
+    const incrementalState = invalidation.pages || invalidation.files
+      ? await readRecentChangeSyncState(database)
+      : undefined;
     if (invalidation.pages) await pageSearchRuntime?.refresh();
-
-    const fileChangeSeq = incrementalState?.fileChangeSeq ?? 0;
-    if (invalidation.files || fileChangeSeq > lastAppliedFileChangeSeq) {
-      if (fileSearchBackend) {
-        const files = await database.fileResources
-          .filter((file) => !file.deleted)
-          .toArray();
-        fileSearchBackend = new LinearTitleIndex(fallbackAnalyzer, files);
-        debugApi.indexedFiles = fileSearchBackend.size;
-      }
-      lastAppliedFileChangeSeq = fileChangeSeq;
-    }
+    await fileSearchRuntime?.refresh(
+      incrementalState?.fileChangeSeq ?? 0, invalidation.files,
+    );
     if (incrementalState) debugApi.incrementalThrough = incrementalState.through;
-    if (invalidation.data && dataCodeIndex) {
-      const records = await database.dataCodes.toArray();
-      dataCodeIndex = new DataCodeIndex(fallbackAnalyzer, records);
-      debugApi.indexedDataCodes = dataCodeIndex.size;
-      if (typeof dataState?.rulesSource === 'string') {
-        try {
-          const source =
-            upgradeDefaultDataCodeRules(dataState.rulesSource) ?? dataState.rulesSource;
-          parseDataFieldRules(source);
-          dataCodeRulesSource = source;
-          panel.setDataCodeRules(dataCodeRulesSource, DEFAULT_DATA_CODE_RULES);
-        } catch (error) {
-          console.warn('[CU Wiki Search] ignored invalid broadcast Data code rules', error);
-        }
-      }
-    }
+    if (invalidation.data) await dataCodeRuntime?.reloadFromStorage();
     panel.refreshResults();
   }
 

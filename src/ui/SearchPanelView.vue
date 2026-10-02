@@ -4,21 +4,14 @@ import { computed } from 'vue';
 import type { SearchPanel } from './search-panel';
 import PanelResults from './PanelResults.vue';
 import PanelMaintenance from './PanelMaintenance.vue';
+import { SEARCH_MODES } from './search-panel-model';
 const MIRROR_REFRESH_HELP =
   '重新同步本地数据（需要联网）：执行全量页面对账，刷新 Data 代码缓存，并修复或续传正文、Lua 与已加载的 CSS 队列；不会清空本地镜像，也不会修改 wiki 页面。';
 const FILE_REFRESH_HELP =
   '重新同步文件资源（需要联网）：重新枚举文件命名空间并更新本地文件缓存与索引；不会影响普通页面、正文、Data 代码或 Lua，也不会修改 wiki 页面。';
 
 const props = defineProps<{ state: SearchPanel['state']; actions: SearchPanel['actions'] }>();
-const presentations: Record<string, { heading: string; label: string; placeholder: string }> = {
-  title: { heading: '搜索页面标题', label: '搜索页面标题', placeholder: '标题、片段或英文中缀' },
-  content: { heading: '搜索页面正文', label: '搜索页面正文', placeholder: '输入正文关键词' },
-  'data-code': { heading: '查找 Data 代码名', label: '搜索 Data 代码', placeholder: '中文名、英文代码片段或已配置字段值' },
-  files: { heading: '查找文件资源', label: '搜索文件资源', placeholder: '文件名、片段或扩展名' },
-  css: { heading: '查找 CSS 样式', label: '搜索 CSS 源码', placeholder: 'class、选择器或源码片段（区分大小写）' },
-  lua: { heading: '查找 Lua 模块', label: '搜索 Lua 模块', placeholder: '函数名、返回键、字符串或 require 目标' },
-};
-const presentation = computed(() => presentations[props.state.mode] ?? presentations.title!);
+const presentation = computed(() => SEARCH_MODES[props.state.mode]);
 const refreshHelp = computed(() => props.state.mode === 'files' ? FILE_REFRESH_HELP : MIRROR_REFRESH_HELP);
 </script>
 
@@ -26,7 +19,7 @@ const refreshHelp = computed(() => props.state.mode === 'files' ? FILE_REFRESH_H
   <button class="toggle" type="button" :aria-expanded="state.visible" @click="actions.toggle">本地搜索</button>
   <section class="panel" role="dialog" :hidden="!state.visible" @keydown="actions.keydown" @compositionstart="actions.compositionStart" @compositionend="actions.compositionEnd" aria-label="未知伤亡维基本地搜索">
     <header class="header">
-      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调" @keydown="actions.dragKeydown" @pointerdown="actions.dragStart" @pointermove="actions.dragMove" @pointerup="actions.dragEnd" @pointercancel="actions.dragEnd">{{ presentation.heading }}</span>
+      <span class="heading drag-handle" role="button" tabindex="0" title="拖动搜索面板；方向键移动，Shift 加方向键微调">{{ presentation.heading }}</span>
       <button class="icon reload-startup" type="button" title="重新加载页面" :hidden="!state.reload" @click="state.reload?.()">重新加载</button>
       <button class="icon configure" type="button" title="配置 Data 代码检索字段" :hidden="state.mode !== 'data-code'" @click="actions.configure">⚙</button>
       <button class="icon maintenance-toggle" type="button" title="本地数据与维护" :aria-expanded="state.maintenanceOpen" @click="actions.maintenance">▤</button>
@@ -37,14 +30,9 @@ const refreshHelp = computed(() => props.state.mode === 'files' ? FILE_REFRESH_H
     <div class="controls">
       <input class="query" type="search" autocomplete="off" :placeholder="presentation.placeholder" :aria-label="presentation.label" v-model="state.query" @input="actions.input" aria-describedby="cu-keyboard-hint">
       <select class="mode" v-model="state.mode" @change="actions.mode" aria-label="搜索类型">
-        <option value="title">页面标题</option>
-        <option value="content">页面正文</option>
-        <option value="data-code">Data 代码</option>
-        <option value="lua">Lua 模块</option>
-        <option value="css">CSS 样式</option>
-        <option value="files">文件资源</option>
+        <option v-for="(mode, value) in SEARCH_MODES" :key="value" :value="value">{{ mode.option }}</option>
       </select>
-      <select class="namespace" v-model="state.namespace" :hidden="!['title', 'content'].includes(state.mode)" @change="actions.search" aria-label="筛选命名空间"><option value="">全部命名空间</option><option v-for="namespace in state.namespaces" :key="namespace.id" :value="String(namespace.id)">{{ namespace.name || '（主）' }}</option></select>
+      <select class="namespace" v-model="state.namespace" :hidden="!presentation.namespace" @change="actions.search" aria-label="筛选命名空间"><option value="">全部命名空间</option><option v-for="namespace in state.namespaces" :key="namespace.id" :value="String(namespace.id)">{{ namespace.name || '（主）' }}</option></select>
     </div>
     <div class="panel-body">
     <p v-if="state.mode === 'css'" class="css-search-help">搜索站内 CSS 源码，包含注释；行号对应本地缓存，不代表当前页面生效样式。</p>

@@ -4,6 +4,7 @@ import type {
   ReconciliationSyncResult,
   ReconciliationSyncState,
 } from '../types';
+import type { CommittedRefreshResult } from './recent-change-commit-refresh';
 
 export type SyncAttemptResult =
   | { status: 'complete' }
@@ -25,10 +26,7 @@ export interface MirrorSyncFacts {
   resolveRedirects?(): Promise<void>;
 }
 
-export interface CommittedReconciliationResult {
-  dataCodesInvalidated: boolean;
-  refreshError?: unknown;
-}
+export type CommittedReconciliationResult = CommittedRefreshResult;
 
 export interface MirrorSyncCommittedRefresh {
   refreshStorage(): Promise<void>;
@@ -36,7 +34,7 @@ export interface MirrorSyncCommittedRefresh {
   refreshReconciliation(): Promise<CommittedReconciliationResult | undefined>;
   refreshRecentChanges(
     result: Extract<RecentChangeSyncResult, { status: 'complete' }>,
-  ): Promise<{ dataCodesInvalidated: boolean }>;
+  ): Promise<CommittedRefreshResult>;
 }
 
 export interface MirrorSyncDerivedRefresh {
@@ -193,10 +191,13 @@ export class MirrorSyncOrchestrator {
 
     let dataInvalidated = committedReconciliation?.dataCodesInvalidated === true;
     if (recentChanges?.status === 'complete') {
+      // Invalidation belongs to the committed facts, even if local refresh fails.
+      dataInvalidated ||= recentChanges.dataCodesInvalidated;
       try {
         const committedRecentChanges =
           await this.options.committed.refreshRecentChanges(recentChanges);
         dataInvalidated ||= committedRecentChanges.dataCodesInvalidated;
+        committedRefreshError ??= committedRecentChanges.refreshError;
       } catch (error) {
         committedRefreshError ??= error;
       }

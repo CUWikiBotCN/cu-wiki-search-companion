@@ -74,22 +74,3 @@ export function contentJobFromProjection(
     updatedAt,
   };
 }
-
-/** Facts shared by RecentChanges and reconciliation for searchable page rows. */
-export function searchablePageFactChanged(
-  previous: PageRecord | undefined,
-  next: PageRecord,
-): boolean {
-  if (!previous) return true;
-  return (
-    previous.title !== next.title ||
-    previous.namespace !== next.namespace ||
-    previous.namespaceName !== next.namespaceName ||
-    previous.isRedirect !== next.isRedirect ||
-    previous.deleted !== next.deleted ||
-    previous.revisionId !== next.revisionId ||
-    previous.contentModel !== next.contentModel ||
-    previous.contentRevisionId !== next.contentRevisionId ||
-    previous.content !== next.content
-  );
-}

@@ -4,6 +4,7 @@ import 'fake-indexeddb/auto';
 import { cut, cut_for_search } from 'jieba-wasm/node';
 
 import { Analyzer } from '../../src/analyzer/analyzer';
+import { VersionedSearchIndexCache } from '../../src/search/versioned-search-index-cache';
 import { WikiSearchDatabase } from '../../src/storage/database';
 import { syncTitles } from '../../src/sync/title-sync';
 import { WikiApi } from '../../src/sync/wiki-api';
@@ -12,6 +13,76 @@ import { abortTransactionAfterCallback } from '../helpers/transaction-abort';
 const analyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
 
 describe('title sync', () => {
+  it('replays a namespace-label-only change into another instance without sequencing duplicate scans', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    const reader = new WikiSearchDatabase(database.name);
+    try {
+      await database.open();
+      await database.pages.put({
+        id: 1,
+        title: '标签变更页',
+        normalizedTitle: analyzer.normalize('标签变更页'),
+        namespace: 0,
+        namespaceName: '旧名称',
+        isRedirect: false,
+        deleted: false,
+        revisionId: 12,
+        contentModel: 'wikitext',
+        content: '保留的正文',
+        contentRevisionId: 12,
+        localSeq: 7,
+      });
+      await database.syncState.put({ key: 'local-sequence', value: 7 });
+      await reader.open();
+      const cache = new VersionedSearchIndexCache(reader);
+      const content = await cache.restoreOrRebuild('content', analyzer);
+      expect(content.index.search('正文')[0]?.namespaceName).toBe('旧名称');
+      const api = new WikiApi({
+        retries: 0,
+        fetcher: async (input) => {
+          const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+          if (url.searchParams.get('meta') === 'siteinfo') {
+            return json({ query: { namespaces: { 0: { id: 0, name: '新名称' } } } });
+          }
+          return json({
+            query: {
+              pages: [{
+                pageid: 1,
+                ns: 0,
+                title: '标签变更页',
+                lastrevid: 12,
+                contentmodel: 'wikitext',
+              }],
+            },
+          });
+        },
+      });
+
+      await syncTitles(database, api, analyzer, { force: true, requestIntervalMs: 0 });
+
+      expect(await reader.pages.get(1)).toMatchObject({
+        namespaceName: '新名称',
+        localSeq: 8,
+        revisionId: 12,
+        content: '保留的正文',
+        contentRevisionId: 12,
+      });
+      expect((await reader.syncState.get('local-sequence'))?.value).toBe(8);
+      await cache.refresh(content);
+      expect(content.throughLocalSeq).toBe(8);
+      expect(content.index.search('正文')[0]?.namespaceName).toBe('新名称');
+
+      await syncTitles(database, api, analyzer, { force: true, requestIntervalMs: 0 });
+
+      expect((await reader.pages.get(1))?.localSeq).toBe(8);
+      expect((await reader.syncState.get('local-sequence'))?.value).toBe(8);
+    } finally {
+      reader.close();
+      database.close();
+      await database.delete();
+    }
+  });
+
   it('retries a title batch whose transaction aborts during commit', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {

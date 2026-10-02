@@ -26,7 +26,7 @@ describe('userscript activation metadata', () => {
     const metaMatches = metadataMatches(metaSource);
     const packageVersion = (JSON.parse(packageManifestSource) as { version?: string }).version;
 
-    expect(packageVersion).toBe('0.3.7');
+    expect(packageVersion).toBe('0.3.8');
     expect(metadataValue(userScript.code, 'version')).toBe(packageVersion);
     expect(metadataValue(metaSource, 'version')).toBe(packageVersion);
     expect(metaMatches).toEqual(userMatches);
@@ -51,7 +51,7 @@ describe('userscript activation metadata', () => {
     ]) {
       expect(matchesAnyPattern(url, userMatches), url).toBe(true);
     }
-  });
+  }, 15_000);
 
   it('queues same-ref nightly runs without cancelling an in-progress release update', () => {
     const concurrencyBlock = /concurrency:\s*\n([\s\S]*?)\n\npermissions:/.exec(

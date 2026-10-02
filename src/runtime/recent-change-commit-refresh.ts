@@ -16,15 +16,32 @@ export interface CommittedRecentChangeRefreshOptions {
   broadcast(message: RecentChangeCommitBroadcast): void;
 }
 
+export interface CommittedRefreshResult {
+  dataCodesInvalidated: boolean;
+  refreshError?: unknown;
+}
+
 /** Applies one durable recent-change result after its writer lock is released. */
 export class CommittedRecentChangeRefresh {
   constructor(private readonly options: CommittedRecentChangeRefreshOptions) {}
 
   async apply(
     committed: CommittedRecentChange,
-  ): Promise<{ dataCodesInvalidated: boolean }> {
-    await this.options.refresh({ pages: true, files: committed.filesChanged });
-    this.options.broadcast({ type: 'committed', ...committed });
-    return { dataCodesInvalidated: committed.dataCodesInvalidated };
+  ): Promise<CommittedRefreshResult> {
+    let refreshError: unknown;
+    try {
+      await this.options.refresh({ pages: true, files: committed.filesChanged });
+    } catch (error) {
+      refreshError = error;
+    }
+    try {
+      this.options.broadcast({ type: 'committed', ...committed });
+    } catch (error) {
+      refreshError ??= error;
+    }
+    return {
+      dataCodesInvalidated: committed.dataCodesInvalidated,
+      ...(refreshError !== undefined ? { refreshError } : {}),
+    };
   }
 }

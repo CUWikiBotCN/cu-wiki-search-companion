@@ -132,6 +132,8 @@ export class VersionedSearchIndexCache {
     ReturnType<typeof setTimeout>
   >();
   private readonly runtime = new Map<SearchIndexKind, RuntimeState>();
+  private readonly observed = new Map<SearchIndexKind, SnapshotInspection>();
+  private observationVersion = 0;
   private readonly refreshQueues = new WeakMap<object, Promise<void>>();
   private publishQueue: Promise<void> = Promise.resolve();
   private publishingSuppressed = false;
@@ -150,6 +152,7 @@ export class VersionedSearchIndexCache {
     kind: K,
     analyzer: Analyzer,
   ): Promise<SearchIndexHandle<K>> {
+    const runtimeBefore = this.runtime.get(kind);
     const startedAt = this.clock();
     const compatibilityKey = createCompatibilityKey(
       kind,
@@ -208,13 +211,24 @@ export class VersionedSearchIndexCache {
       await index.rebuildAsync(rebuildPages);
     }
     const restoreMs = Math.max(0, this.clock() - startedAt);
-    this.runtime.set(kind, {
-      compatibilityKey,
-      status: runtimeStatus,
-      restoreMs,
-      message: runtimeMessage,
-      validatedSnapshotFingerprint,
-    });
+    // Clear/publish replace runtime state; a read-only inspection must not prevent
+    // a completed restoration from registering its compatibility and validation.
+    if (this.runtime.get(kind) === runtimeBefore) {
+      this.runtime.set(kind, {
+        compatibilityKey,
+        status: runtimeStatus,
+        restoreMs,
+        message: runtimeMessage,
+        validatedSnapshotFingerprint,
+      });
+      this.observe({
+        kind,
+        ...snapshotMetadata(bundle.snapshot),
+        status: runtimeStatus,
+        restoreMs,
+        message: runtimeMessage,
+      });
+    }
     return {
       kind,
       index,
@@ -362,6 +376,12 @@ export class VersionedSearchIndexCache {
         message: undefined,
         validatedSnapshotFingerprint: fingerprintOf(record),
       });
+      this.observe({
+        kind: handle.kind,
+        ...snapshotMetadata(record),
+        status: 'available',
+        restoreMs: this.runtime.get(handle.kind)?.restoreMs,
+      });
     }
     return result;
   }
@@ -387,7 +407,25 @@ export class VersionedSearchIndexCache {
     this.pendingPublishes.set(handle.kind, timer);
   }
 
+  /** Last observed metadata only: no storage reads, payload retention, or validation. */
+  getObservedStatus(currentSequence: number): SnapshotInspection[] {
+    return (['title', 'content', 'lua'] as const).map((kind) => {
+      const snapshot = this.observed.get(kind);
+      if (!snapshot) return { kind, status: 'not-started' };
+      // The caller can lag a validated snapshot (e.g. sequence gaps from files).
+      const status = snapshot.status === 'available' && snapshot.throughLocalSeq! < currentSequence
+        ? 'replay-required' : snapshot.status;
+      return { ...snapshot, status };
+    });
+  }
+
+  private observe(snapshot: SnapshotInspection): void {
+    this.observationVersion += 1;
+    this.observed.set(snapshot.kind, snapshot);
+  }
+
   async inspect(): Promise<SnapshotInspection[]> {
+    const observationVersion = this.observationVersion;
     const { records, currentSequence } = await this.database.transaction(
       'r',
       this.database.indexSnapshots,
@@ -399,7 +437,7 @@ export class VersionedSearchIndexCache {
         currentSequence: await readLocalSequence(this.database),
       }),
     );
-    return Promise.all((['title', 'content', 'lua'] as const).map(async (kind) => {
+    const inspections = await Promise.all((['title', 'content', 'lua'] as const).map(async (kind): Promise<SnapshotInspection> => {
       const record = records.find((candidate) => candidate.key === snapshotKey(kind));
       const runtime = this.runtime.get(kind);
       if (!record) {
@@ -445,6 +483,11 @@ export class VersionedSearchIndexCache {
         message: runtime?.message,
       };
     }));
+    // A diagnostic that started earlier must not overwrite a later local clear/publish.
+    if (observationVersion === this.observationVersion) {
+      for (const inspection of inspections) this.observe(inspection);
+    }
+    return inspections;
   }
 
   async clear(): Promise<void> {
@@ -475,6 +518,7 @@ export class VersionedSearchIndexCache {
         status: 'missing',
         message: undefined,
       });
+      this.observe({ kind, status: 'missing', restoreMs: this.runtime.get(kind)?.restoreMs });
     }
   }
 
@@ -581,6 +625,17 @@ export class VersionedSearchIndexCache {
       },
     );
   }
+}
+
+function snapshotMetadata(record: IndexSnapshotRecord | undefined): Partial<SnapshotInspection> {
+  if (!record) return {};
+  return {
+    throughLocalSeq: record.throughLocalSeq,
+    documentCount: record.documentCount,
+    payloadBytes: record.payloadBytes,
+    createdAt: record.createdAt,
+    serializationMs: record.serializationMs,
+  };
 }
 
 export function snapshotKey(kind: SearchIndexKind): string {

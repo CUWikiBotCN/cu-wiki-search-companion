@@ -35,6 +35,36 @@ it('initializes lightly and coalesces content preparation without loading Lua', 
   expect(synchronizeContent).toHaveBeenCalledOnce();
 });
 
+it('prepares and refreshes titles without inspecting unused content or Lua snapshots', async () => {
+  const { runtime, database, cache } = await harness();
+  const analyzer = new Analyzer(createIntlSegmenter(), 'Intl.Segmenter');
+  for (const kind of ['content', 'lua'] as const) {
+    await cache.publish(await cache.restoreOrRebuild(kind, analyzer));
+  }
+  const inspect = vi.spyOn(cache, 'inspect');
+  const allSnapshots = vi.spyOn(database.indexSnapshots, 'toArray');
+  const get = vi.spyOn(database.indexSnapshots, 'get');
+  await runtime.prepare('title');
+  expect(runtime.searchContent('绷带')).toEqual([]);
+  expect(runtime.searchLua('heal')).toEqual([]);
+  for (const [key] of get.mock.calls) expect(key).toBe('search-index:title');
+  expect(inspect).not.toHaveBeenCalled();
+  expect(allSnapshots).not.toHaveBeenCalled();
+
+  await database.pages.update(1, { title: '新版医疗指南', normalizedTitle: '新版医疗指南', localSeq: 3 });
+  await database.syncState.put({ key: 'local-sequence', value: 3 });
+  const digest = vi.spyOn(crypto.subtle, 'digest');
+  get.mockClear();
+  await runtime.refresh();
+  expect(runtime.searchTitles('新版')[0]?.title).toBe('新版医疗指南');
+  expect(runtime.state.snapshots.find(({ kind }) => kind === 'title')?.status).toBe('replay-required');
+  expect(inspect).not.toHaveBeenCalled();
+  expect(allSnapshots).not.toHaveBeenCalled();
+  expect(get).not.toHaveBeenCalled();
+  expect(digest).not.toHaveBeenCalled();
+  digest.mockRestore(); get.mockRestore(); allSnapshots.mockRestore(); inspect.mockRestore();
+});
+
 it.each([false, true])('finishes same-turn preparation/rebuild without a circular wait (rebuild first: %s)', async (rebuildFirst) => {
   const { runtime } = await harness();
   await runtime.initialize();

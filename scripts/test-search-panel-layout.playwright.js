@@ -61,18 +61,24 @@ async page => {
         snapshots: [],
         storage: { usage: 4096, quota: 16384, persisted: false },
       };
-      const state = { refreshes: 0, maintenanceLoads: 0, siteTabs: 0 };
+      const state = { refreshes: 0, maintenanceLoads: 0, siteTabs: 0, sourceSearches: 0 };
       window.addEventListener('keydown', (event) => {
         if (event.key === 'Tab') state.siteTabs += 1;
       });
       const callbacks = {
         prepareSearch: () => undefined,
         prepareFiles: () => undefined,
-        search: () => [{ id: 901, title: '重定向源', namespace: 0, namespaceName: '（主）', score: 1,
-          isRedirect: true, redirectResolved: true, redirectTarget: { title: 'LongTarget'.repeat(60), fragment: '长章节'.repeat(40) } }],
+        search: () => {
+          state.sourceSearches += 1;
+          return [{ id: 901, title: '重定向源', namespace: 0, namespaceName: '（主）', score: 1,
+            isRedirect: true, redirectResolved: true, redirectTarget: { title: 'LongTarget'.repeat(60), fragment: '长章节'.repeat(40) } }];
+        },
         redirectUrl: () => 'https://casualtiesunknown.huijiwiki.com/wiki/感染#败血症',
-        searchCss: () => [{ kind: 'css', id: 902, title: 'MediaWiki:Gadget-' + 'long'.repeat(80) + '.css', namespace: 8, namespaceName: 'MediaWiki',
-          matches: [{ line: 99, text: '.sample { --long: ' + 'x'.repeat(600) + '; }', highlights: [{ start: 0, end: 7 }] }] }],
+        searchCss: () => {
+          state.sourceSearches += 1;
+          return [{ kind: 'css', id: 902, title: 'MediaWiki:Gadget-' + 'long'.repeat(80) + '.css', namespace: 8, namespaceName: 'MediaWiki',
+            matches: [{ line: 99, text: '.sample { --long: ' + 'x'.repeat(600) + '; }', highlights: [{ start: 0, end: 7 }] }] }];
+        },
         searchFiles: () => [],
         searchLua: () => [],
         searchContent: (query) => (query ? results : []),
@@ -303,7 +309,14 @@ async page => {
       await fixturePage.setViewportSize({ width: viewport.width, height: viewport.height });
       for (const mode of ['title', 'css']) {
         await host.locator('.mode').selectOption(mode);
+        const sourceSearches = await fixturePage.evaluate(() => window.__CU_WIKI_LAYOUT_ACCEPTANCE__.state.sourceSearches);
         await host.locator('.query').fill('sample');
+        // Existing mode results can precede the debounced query; wait before moving focus.
+        await fixturePage.waitForFunction(
+          previous => window.__CU_WIKI_LAYOUT_ACCEPTANCE__.state.sourceSearches > previous,
+          sourceSearches,
+          { timeout: 5_000 },
+        );
         await host.locator(mode === 'title' ? '.redirect-target' : '.css-match').waitFor({ timeout: 5000 });
         await fixturePage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const dimensions = await fixturePage.evaluate(() => {

@@ -85,7 +85,7 @@ CSS 模式按大小写原样匹配 class、选择器、属性和变量片段，�
 
 ## 开发与发布记录
 
-当前源码版本为 **0.3.7**。本版增加标题结果的重定向目标链接和独立 CSS 源码搜索；验收范围见 [0.3.7 验收记录](docs/acceptance/0.3.7.md)。Vue 3 迁移及浏览器工具的历史记录见 [0.3.6](docs/acceptance/0.3.6.md)。
+当前源码版本为 **0.3.8**。本版修复同步提交后的失败处理与页面事实序列遗漏，减少普通状态更新的快照检查，并拆分搜索运行态和浮窗模块；验收范围见 [0.3.8 验收记录](docs/acceptance/0.3.8.md)。重定向目标与 CSS 搜索的历史记录见 [0.3.7](docs/acceptance/0.3.7.md)，Vue 3 迁移见 [0.3.6](docs/acceptance/0.3.6.md)。
 
 此前的 Firefox 光标修复见 [2026-09-07 的 0.3.5 验收记录](docs/acceptance/0.3.5.md)；历史记录见 [0.3.4](docs/acceptance/0.3.4.md)、[0.3.3](docs/acceptance/0.3.3.md) 和 [0.3.1](docs/acceptance/0.3.1.md)。不同构建的结果不混作本次实测，也不据此声称其他部署成功。
 
@@ -100,7 +100,7 @@ npm run typecheck
 npm run build
 ```
 
-界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。当前类型工具链固定 TypeScript 6.0.3，因为已验证的 `vue-tsc` 尚不能加载 TypeScript 7 的编译器入口；升级时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。
+界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。当前类型工具链固定 TypeScript 6.0.3，因为已验证的 `vue-tsc` 尚不能加载 TypeScript 7 的编译器入口；升级时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。文件与 Data 搜索运行态、浮窗几何和六模式展示规则各有独立模块，职责与验收约束见架构文档。
 
 `dist/` 中生成可安装的 `cu-wiki-local-search.user.js`、更新元数据和第三方许可清单；构建产物不进入 Git。
 

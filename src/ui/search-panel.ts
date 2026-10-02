@@ -2,6 +2,7 @@
 import { createApp, nextTick, reactive, shallowReactive, type App } from 'vue';
 import SearchPanelView from './SearchPanelView.vue';
 import styles from './search-panel.css?inline';
+import { PanelGeometry } from './panel-geometry';
 import { focusEditorElement } from '../editor';
 import type { CssSearchResult } from '../search/css-source-index';
 import type { NamespaceInfo, RedirectTarget } from '../types';
@@ -22,20 +23,20 @@ import type {
   PersistenceRequestResult,
 } from '../maintenance/local-data-maintenance';
 
-export type SearchPreparationKind = 'title' | 'content' | 'lua' | 'css';
+import {
+  canInsertResult,
+  isDataCodeResult,
+  type SearchMode,
+  type SearchPanelResult,
+  type SearchPreparationKind,
+  type WikiPageSearchResult,
+} from './search-panel-model';
+export type { SearchMode, SearchPanelResult, SearchPreparationKind } from './search-panel-model';
 
 export interface MaintenanceActionFeedback {
   message: string;
   tone?: 'normal' | 'error' | 'success';
 }
-
-export type SearchPanelResult =
-  | TitleSearchResult
-  | DataCodeSearchResult
-  | ContentSearchResult
-  | LuaModuleSearchResult
-  | CssSearchResult;
-type WikiPageSearchResult = TitleSearchResult | ContentSearchResult | LuaModuleSearchResult | CssSearchResult;
 
 export interface SearchPanelCallbacks {
   prepareSearch(kind: SearchPreparationKind): void;
@@ -43,7 +44,7 @@ export interface SearchPanelCallbacks {
   search(query: string, namespace?: number): TitleSearchResult[];
   searchFiles(query: string): TitleSearchResult[];
   searchLua(query: string): LuaModuleSearchResult[];
-  searchCss?(query: string): CssSearchResult[];
+  searchCss(query: string): CssSearchResult[];
   searchContent(query: string, namespace?: number): ContentSearchResult[];
   searchCodes(query: string): DataCodeSearchResult[];
   insert(result: WikiPageSearchResult, query: string): void;
@@ -80,7 +81,7 @@ export class SearchPanel {
 
   readonly state = shallowReactive({
     visible: false,
-    mode: 'title',
+    mode: 'title' as SearchMode,
     query: '',
     namespace: '',
     namespaces: [] as NamespaceInfo[],
@@ -105,33 +106,17 @@ export class SearchPanel {
   private readonly host: HTMLDivElement;
   private readonly root: ShadowRoot;
   private readonly panel: HTMLElement;
-  private readonly panelBody: HTMLElement;
   private readonly input: HTMLInputElement;
   private readonly resultList: HTMLUListElement;
   private readonly toggle: HTMLButtonElement;
-  private readonly dragHandle: HTMLElement;
+  private readonly geometry: PanelGeometry;
   private defaultDataRules = '';
   private composing = false;
   private startupFailed = false;
   private destroyed = false;
   private searchTimer?: number;
   private returnFocus?: HTMLElement;
-  private positioned = false;
-  private drag?: {
-    pointerId: number;
-    startX: number;
-    startY: number;
-    startLeft: number;
-    startTop: number;
-    wasPositioned: boolean;
-  };
-  private resizeObserver?: ResizeObserver;
   private disconnectObserver?: MutationObserver;
-  private layoutFrame?: number;
-  private readonly handleViewportResize = (): void => {
-    this.syncViewportBounds();
-    this.scheduleLayoutUpdate();
-  };
 
   constructor(private readonly callbacks: SearchPanelCallbacks) {
     this.host = document.createElement('div');
@@ -144,13 +129,20 @@ export class SearchPanel {
     style.textContent = styles;
     this.root.prepend(style);
     this.panel = this.requireElement('.panel');
-    this.panelBody = this.requireElement('.panel-body');
     this.input = this.requireElement('.query');
     this.resultList = this.requireElement('.results');
     this.toggle = this.requireElement('.toggle');
-    this.dragHandle = this.requireElement('.drag-handle');
     SearchPanel.claimGlobalShortcut(this);
-    this.bindLayout();
+    this.geometry = new PanelGeometry(
+      this.host, this.panel, this.requireElement('.panel-body'),
+      this.requireElement('.drag-handle'), () => this.syncStatusPresentation(),
+    );
+    if (typeof MutationObserver === 'function') {
+      this.disconnectObserver = new MutationObserver(() => {
+        if (!this.host.isConnected) this.destroy();
+      });
+      this.disconnectObserver.observe(document.documentElement, { childList: true });
+    }
     this.applyHighlightColors();
   }
 
@@ -158,7 +150,7 @@ export class SearchPanel {
     if (this.destroyed) return;
     this.state.status = message;
     this.state.tone = tone;
-    this.scheduleLayoutUpdate();
+    this.geometry.scheduleLayoutUpdate();
   }
 
   setNamespaces(namespaces: NamespaceInfo[]): void {
@@ -194,7 +186,7 @@ export class SearchPanel {
     if (!this.state.visible) this.returnFocus = returnFocus ?? this.currentReturnFocus();
     if (!this.startupFailed) this.prepareCurrentMode();
     this.state.visible = true;
-    this.scheduleLayoutUpdate();
+    this.geometry.scheduleLayoutUpdate();
     // Vue batches visibility updates; focus only after the dialog is actually shown.
     void nextTick(() => {
       if (!this.host.isConnected || !this.state.visible) return;
@@ -205,7 +197,7 @@ export class SearchPanel {
 
   close(): void {
     if (!this.state.visible) return;
-    this.finishDrag(false);
+    this.geometry.finishDrag(false);
     this.state.visible = false;
     const returnFocus = this.returnFocus;
     this.returnFocus = undefined;
@@ -225,7 +217,8 @@ export class SearchPanel {
     this.close();
     this.destroyed = true;
     if (this.searchTimer !== undefined) window.clearTimeout(this.searchTimer);
-    this.disconnectLayoutTracking();
+    this.disconnectObserver?.disconnect();
+    this.geometry.destroy();
     if (SearchPanel.shortcutOwner?.deref() === this) {
       SearchPanel.shortcutWindow?.removeEventListener('keydown', SearchPanel.globalShortcutKeydown);
       SearchPanel.shortcutOwner = undefined;
@@ -240,7 +233,7 @@ export class SearchPanel {
     close: () => this.close(),
     refresh: () => {
       if (!this.startupFailed) {
-        if (this.fileMode) this.callbacks.refreshFiles();
+        if (this.state.mode === 'files') this.callbacks.refreshFiles();
         else this.callbacks.refresh();
       }
     },
@@ -256,15 +249,15 @@ export class SearchPanel {
       this.state.maintenanceOpen = !this.state.maintenanceOpen;
       this.state.settingsOpen = false;
       if (this.state.maintenanceOpen) {
-        this.scheduleBodyScroll(this.requireElement('.maintenance'), 'start');
+        this.geometry.scheduleBodyScroll(this.requireElement('.maintenance'), 'start');
         void this.loadMaintenance();
       }
     },
     details: () => {
       this.state.detailsOpen = !this.state.detailsOpen;
-      if (this.state.detailsOpen) this.scheduleBodyScroll(this.requireElement('.status-details'), 'nearest');
+      if (this.state.detailsOpen) this.geometry.scheduleBodyScroll(this.requireElement('.status-details'), 'nearest');
     },
-    resetPosition: () => this.resetPosition(),
+    resetPosition: () => this.geometry.resetPosition(),
     saveRules: () => this.saveDataRules(this.state.dataRules),
     resetRules: () => {
       this.state.dataRules = this.defaultDataRules;
@@ -291,63 +284,19 @@ export class SearchPanel {
     search: () => this.performSearch(),
     mode: () => {
       if (!this.startupFailed) this.prepareCurrentMode();
-      if (!this.codeMode) this.state.settingsOpen = false;
+      if (this.state.mode !== 'data-code') this.state.settingsOpen = false;
       this.performSearch();
     },
     keydown: (event: KeyboardEvent) => this.handleKeydown(event),
-    dragKeydown: (event: KeyboardEvent) => this.handleDragHandleKeydown(event),
-    dragStart: (event: PointerEvent) => this.startDrag(event),
-    dragMove: (event: PointerEvent) => this.moveDrag(event),
-    dragEnd: (event: PointerEvent) => {
-      if (event.pointerId === this.drag?.pointerId) this.finishDrag(event.type === 'pointercancel');
-    },
     select: (index: number) => { this.state.selectedIndex = index; this.updateSelection(); },
     copy: (result: SearchPanelResult) => this.copyResult(result),
     redirectUrl: (target: RedirectTarget) => this.callbacks.redirectUrl?.(target),
     open: (result: SearchPanelResult) => this.openResult(result),
-    copyLink: (result: WikiPageSearchResult) => this.callbacks.copy(result, this.input.value),
+    copyLink: (result: SearchPanelResult) => {
+      if (canInsertResult(result)) this.callbacks.copy(result, this.input.value);
+    },
     insert: (result: SearchPanelResult) => this.insert(result),
   };
-
-  private bindLayout(): void {
-    this.syncViewportBounds();
-    window.addEventListener('resize', this.handleViewportResize);
-    window.visualViewport?.addEventListener('resize', this.handleViewportResize);
-    if (typeof ResizeObserver === 'function') {
-      this.resizeObserver = new ResizeObserver(() => this.scheduleLayoutUpdate());
-      this.resizeObserver.observe(this.panel);
-    }
-    if (typeof MutationObserver === 'function') {
-      this.disconnectObserver = new MutationObserver(() => {
-        if (!this.host.isConnected) this.destroy();
-      });
-      this.disconnectObserver.observe(document.documentElement, { childList: true });
-    }
-  }
-
-  private disconnectLayoutTracking(): void {
-    window.removeEventListener('resize', this.handleViewportResize);
-    window.visualViewport?.removeEventListener('resize', this.handleViewportResize);
-    this.resizeObserver?.disconnect();
-    this.disconnectObserver?.disconnect();
-    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
-    this.layoutFrame = undefined;
-    this.finishDrag(false);
-  }
-
-  private scheduleLayoutUpdate(): void {
-    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
-    this.layoutFrame = window.requestAnimationFrame(() => {
-      this.layoutFrame = undefined;
-      if (!this.host.isConnected) {
-        this.disconnectLayoutTracking();
-        return;
-      }
-      if (!this.state.visible) return;
-      this.reclampPosition();
-      this.syncStatusPresentation();
-    });
-  }
 
   private static claimGlobalShortcut(panel: SearchPanel): void {
     if (SearchPanel.shortcutWindow !== window) {
@@ -367,32 +316,33 @@ export class SearchPanel {
   }
 
   private prepareCurrentMode(): void {
-    if (this.fileMode) this.callbacks.prepareFiles();
-    else if (this.codeMode) return;
-    else if (this.state.mode === 'css') this.callbacks.prepareSearch('css');
-    else if (this.luaMode) this.callbacks.prepareSearch('lua');
-    else if (this.contentMode) this.callbacks.prepareSearch('content');
-    else this.callbacks.prepareSearch('title');
+    const mode = this.state.mode;
+    switch (mode) {
+      case 'files': this.callbacks.prepareFiles(); return;
+      case 'data-code': return;
+      case 'title':
+      case 'content':
+      case 'lua':
+      case 'css': this.callbacks.prepareSearch(mode); return;
+      default: return unreachableMode(mode);
+    }
   }
 
   private performSearch(): void {
     if (this.destroyed) return;
     if (this.resultList.contains(this.root.activeElement)) this.input.focus();
-    this.state.query = this.input.value;
-    if (this.fileMode) {
-      this.state.results = this.callbacks.searchFiles(this.input.value);
-    } else if (this.codeMode) {
-      this.state.results = this.callbacks.searchCodes(this.input.value);
-    } else if (this.state.mode === 'css') {
-      this.state.results = this.callbacks.searchCss?.(this.input.value) ?? [];
-    } else if (this.luaMode) {
-      this.state.results = this.callbacks.searchLua(this.input.value);
-    } else {
-      const namespaceValue = this.state.namespace;
-      const namespace = namespaceValue ? Number(namespaceValue) : undefined;
-      this.state.results = this.contentMode
-        ? this.callbacks.searchContent(this.input.value, namespace)
-        : this.callbacks.search(this.input.value, namespace);
+    const query = this.input.value;
+    this.state.query = query;
+    const namespace = this.state.namespace ? Number(this.state.namespace) : undefined;
+    const mode = this.state.mode;
+    switch (mode) {
+      case 'title': this.state.results = this.callbacks.search(query, namespace); break;
+      case 'content': this.state.results = this.callbacks.searchContent(query, namespace); break;
+      case 'data-code': this.state.results = this.callbacks.searchCodes(query); break;
+      case 'lua': this.state.results = this.callbacks.searchLua(query); break;
+      case 'css': this.state.results = this.callbacks.searchCss(query); break;
+      case 'files': this.state.results = this.callbacks.searchFiles(query); break;
+      default: return unreachableMode(mode);
     }
     this.state.selectedIndex = this.state.results.length ? 0 : -1;
   }
@@ -406,10 +356,7 @@ export class SearchPanel {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      if (this.drag) {
-        this.finishDrag(true);
-        return;
-      }
+      if (this.geometry.finishDrag(true)) return;
       this.close();
       return;
     }
@@ -497,7 +444,7 @@ export class SearchPanel {
   }
 
   private insert(result: SearchPanelResult): void {
-    if (!this.state.insertMode || isDataCodeResult(result) || isLuaResult(result) || ('kind' in result && result.kind === 'css')) {
+    if (!this.state.insertMode || !canInsertResult(result)) {
       this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
       return;
     }
@@ -505,160 +452,12 @@ export class SearchPanel {
     this.callbacks.insert(result, this.input.value);
   }
 
-  private get codeMode(): boolean {
-    return this.state.mode === 'data-code';
-  }
-
-  private get contentMode(): boolean {
-    return this.state.mode === 'content';
-  }
-
-  private get fileMode(): boolean {
-    return this.state.mode === 'files';
-  }
-
-  private get luaMode(): boolean {
-    return this.state.mode === 'lua';
-  }
-
   private updateSelection(): void {
     void nextTick(() => {
       if (!this.host.isConnected || !this.state.visible) return;
       const selected = this.resultList.querySelector<HTMLElement>('[data-selected="true"]');
-      if (selected) this.scrollBodyTo(selected, 'nearest');
+      if (selected) this.geometry.scrollBodyTo(selected, 'nearest');
     });
-  }
-
-  private handleDragHandleKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && this.drag) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.finishDrag(true);
-      return;
-    }
-    if (this.viewportBounds().width <= 640 || !event.key.startsWith('Arrow')) return;
-    const directions: Record<string, [number, number]> = {
-      ArrowLeft: [-1, 0],
-      ArrowRight: [1, 0],
-      ArrowUp: [0, -1],
-      ArrowDown: [0, 1],
-    };
-    const direction = directions[event.key];
-    if (!direction) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = this.panel.getBoundingClientRect();
-    const step = event.shiftKey ? 1 : 10;
-    this.positionPanel(rect.left + direction[0] * step, rect.top + direction[1] * step);
-  }
-
-  private startDrag(event: PointerEvent): void {
-    if (
-      event.button !== 0 ||
-      this.viewportBounds().width <= 640 ||
-      typeof window.matchMedia !== 'function' ||
-      !window.matchMedia('(pointer: fine)').matches
-    ) {
-      return;
-    }
-    event.preventDefault();
-    const rect = this.panel.getBoundingClientRect();
-    this.drag = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startLeft: rect.left,
-      startTop: rect.top,
-      wasPositioned: this.positioned,
-    };
-    this.panel.dataset.dragging = 'true';
-    this.dragHandle.setPointerCapture(event.pointerId);
-  }
-
-  private moveDrag(event: PointerEvent): void {
-    if (event.pointerId !== this.drag?.pointerId) return;
-    event.preventDefault();
-    this.positionPanel(
-      this.drag.startLeft + event.clientX - this.drag.startX,
-      this.drag.startTop + event.clientY - this.drag.startY,
-    );
-  }
-
-  private finishDrag(cancel: boolean): void {
-    const drag = this.drag;
-    if (!drag) return;
-    this.drag = undefined;
-    delete this.panel.dataset.dragging;
-    if (this.dragHandle.hasPointerCapture(drag.pointerId)) {
-      this.dragHandle.releasePointerCapture(drag.pointerId);
-    }
-    if (cancel) {
-      if (drag.wasPositioned) this.positionPanel(drag.startLeft, drag.startTop);
-      else this.resetPosition();
-    }
-  }
-
-  private positionPanel(left: number, top: number): void {
-    const rect = this.panel.getBoundingClientRect();
-    const viewport = this.viewportBounds();
-    const margin = 12;
-    const maxLeft = Math.max(margin, viewport.width - rect.width - margin);
-    const maxTop = Math.max(margin, viewport.height - rect.height - margin);
-    this.panel.style.left = `${Math.min(Math.max(left, margin), maxLeft)}px`;
-    this.panel.style.top = `${Math.min(Math.max(top, margin), maxTop)}px`;
-    this.panel.style.right = 'auto';
-    this.panel.style.bottom = 'auto';
-    this.panel.dataset.positioned = 'true';
-    this.positioned = true;
-  }
-
-  private reclampPosition(): void {
-    if (!this.positioned || this.viewportBounds().width <= 640) return;
-    const rect = this.panel.getBoundingClientRect();
-    this.positionPanel(rect.left, rect.top);
-  }
-
-  private viewportBounds(): { width: number; height: number } {
-    const layoutWidth = document.documentElement.clientWidth || window.innerWidth;
-    const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
-    return {
-      width: Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth),
-      height: Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight),
-    };
-  }
-
-  private syncViewportBounds(): void {
-    const { width, height } = this.viewportBounds();
-    this.host.style.setProperty('--cu-panel-fluid-width', `${width * 0.36}px`);
-    this.host.style.setProperty('--cu-panel-max-width', `${Math.max(0, width - 24)}px`);
-    this.host.style.setProperty('--cu-panel-max-height', `${Math.max(0, height - 84)}px`);
-    this.host.style.setProperty('--cu-panel-mobile-max-height', `${Math.max(0, height - 80)}px`);
-    this.host.toggleAttribute('data-narrow', width <= 640);
-  }
-
-  private resetPosition(): void {
-    this.panel.style.removeProperty('left');
-    this.panel.style.removeProperty('top');
-    this.panel.style.removeProperty('right');
-    this.panel.style.removeProperty('bottom');
-    delete this.panel.dataset.positioned;
-    this.positioned = false;
-  }
-
-  private scheduleBodyScroll(element: HTMLElement, block: 'nearest' | 'start'): void {
-    window.requestAnimationFrame(() => {
-      if (element.isConnected && !element.hidden) this.scrollBodyTo(element, block);
-    });
-  }
-
-  private scrollBodyTo(element: HTMLElement, block: 'nearest' | 'start'): void {
-    const bodyRect = this.panelBody.getBoundingClientRect();
-    const elementRect = element.getBoundingClientRect();
-    if (block === 'start' || elementRect.top < bodyRect.top) {
-      this.panelBody.scrollTop += elementRect.top - bodyRect.top;
-    } else if (elementRect.bottom > bodyRect.bottom) {
-      this.panelBody.scrollTop += elementRect.bottom - bodyRect.bottom;
-    }
   }
 
   private syncStatusPresentation(): void {
@@ -789,12 +588,8 @@ export class SearchPanel {
   }
 }
 
-function isDataCodeResult(result: SearchPanelResult): result is DataCodeSearchResult {
-  return 'kind' in result && result.kind === 'data-code';
-}
-
-function isLuaResult(result: SearchPanelResult): result is LuaModuleSearchResult {
-  return 'kind' in result && result.kind === 'lua';
+function unreachableMode(mode: never): never {
+  throw new Error(`Unknown search mode: ${mode}`);
 }
 
 function formatDiagnostics(diagnostics: LocalDataDiagnostics): string {

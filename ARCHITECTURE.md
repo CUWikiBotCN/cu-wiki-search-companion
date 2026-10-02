@@ -1,6 +1,6 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.7 架构（包含重定向目标与 CSS 源码搜索），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文对应 0.3.8 架构（包含搜索运行态与浮窗模块拆分），面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
@@ -48,8 +48,10 @@ flowchart LR
   Cache --> TitleIndex[TitleIndex]
   Cache --> ContentIndex[ContentIndex]
   Cache --> LuaIndex[LuaModuleIndex]
-  DB --> FileIndex[LinearTitleIndex / files]
-  DB --> DataIndex[DataCodeIndex]
+  Entry --> FileRuntime[FileSearchRuntime]
+  Entry --> DataRuntime[DataCodeRuntime]
+  DB --> FileRuntime --> FileIndex[LinearTitleIndex / files]
+  DB --> DataRuntime --> DataIndex[DataCodeIndex]
 
   CssIndex --> UI
   TitleIndex --> UI
@@ -59,7 +61,7 @@ flowchart LR
   DataIndex --> UI
 ~~~
 
-src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua、CSS 页面搜索索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；DataCodeIndex 与文件 LinearTitleIndex 仍按既定边界留在 main.ts。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。
+src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua、CSS 页面搜索索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；`DataCodeRuntime` 持有 Data 索引、字段规则和串行同步会话；`FileSearchRuntime` 持有文件索引、按需准备、在途同步与变化序号。main.ts 只装配依赖并适配 UI/debug/广播，不持有这些索引或同步 Promise。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。
 
 ## 3. 激活条件与启动时序
 
@@ -116,7 +118,7 @@ SearchPanel 按当前模式触发 `PageSearchRuntime` 的准备函数，单例 P
 6. Data 代码模式继续使用冷启动缓存；文件模式只按需读取 fileResources，二者都不加载 jieba 或三类 MiniSearch。
 7. 正文或 Lua 模式就绪后修复或续传共享正文 jobs；完整缓存不会重复请求 revisions，未加载的另一类索引日后从事实与快照追平。
 
-普通按模式准备时，正文和 Lua 只恢复当前选择的模式，彼此独立；增强标题是它们共有的本地前置准备。显式维护重建则按约定一次性本地重建并替换三类索引。`refreshSnapshotStatus()` 为维护/debug 诊断可以扫描三类快照并执行完整性检查，这不等于恢复索引。冷启动的 `initialize()` 仍不读取快照。文件表也只在首次切换到“文件资源”模式时读取。CSS 模式独立读取 CSS 源码，不要求增强标题准备。
+普通按模式准备时，正文和 Lua 只恢复当前选择的模式，彼此独立；增强标题是它们共有的本地前置准备。显式维护重建则按约定一次性本地重建并替换三类索引。`refreshSnapshotStatus()` 只使用缓存模块的 `getObservedStatus(currentSequence)`，返回本实例最近观察到的轻量元数据，不读 IndexedDB、不计算哈希、不解析 JSON。完整 `inspect()` 仅由显式维护诊断调用，实际恢复仍做完整校验。debug 快照字段不是存储的实时健康检查；其他标签的快照变化在下次实际恢复或显式诊断时核实。冷启动的 `initialize()` 仍不读取快照。文件表也只在首次切换到“文件资源”模式时读取。CSS 模式独立读取 CSS 源码，不要求增强标题准备。
 
 ### 3.4 后台页面与协作式调度
 
@@ -194,6 +196,8 @@ localSeq 是本地派生索引的增量重放依据，不是远端 revision，�
 - 重复写入完全相同的正文。
 - 只更新同步进度而没有事实变化。
 
+标题、RC 与对账共用 `sync/page-fact-policy.ts` 的事实比较，包含 namespaceName；仅命名空间显示名变化也必须推进序列。generation 与核对时间仍属于同步进度，重定向目标由其专用规则比较。
+
 页面事实写入、页面自身 localSeq 与 syncState 的 local-sequence 必须在同一个 Dexie 事务提交。事务失败时两者都不能前进。
 
 文件早期版本曾把 PageRecord.localSeq 用作远端 revision，因此文件并发栅栏使用 writerSeq。文件变化仍占用全局序列，但 title/content/lua 重放只查询 pages.localSeq；由文件产生的序列空号是合法状态，不能据此判定快照损坏。
@@ -263,7 +267,7 @@ syncRecentChanges() 需要完整标题基线：
 
 RC 游标只能随事实提交。不能先推进游标再写页面，否则刷新或失败会永久漏掉变化。
 
-自动 RC 与全量对账后的手动 RC catch-up 使用同一个锁后提交处理器：先按已提交 throughLocalSeq 刷新当前标签已经加载的索引，再广播页面、文件和 Data 失效标记。锁内只维护事实；派生刷新失败不会延长或回滚事实事务。
+自动 RC 与全量对账后的手动 RC catch-up 使用同一个锁后提交处理器：先按已提交 throughLocalSeq 刷新当前标签已经加载的索引，再广播页面、文件和 Data 失效标记。锁内只维护事实；派生刷新失败不会延长或回滚事实事务。RC 本地刷新失败后仍尝试广播，并返回 `{ dataCodesInvalidated, refreshError? }`。协调器从已提交 RC 结果保留 Data 失效标记，继续处理 Data 刷新，同时报告提交后错误；广播也失败时保留首个错误。
 
 ### 6.5 周期全量对账
 
@@ -295,7 +299,7 @@ Data 代码：
 - 默认最多缓存 24 小时，500 条一页，设有 20 页安全上限。
 - 字段规则决定 REST projection 和可搜索标量值。
 - 缓存兼容性同时检查规则文本与 Data index format。
-- 规则保存在 GM preference，data-code-sync 只保存副本用于缓存判断。
+- 规则保存在 GM preference，data-code-sync 只保存副本用于缓存判断。DataCodeRuntime 复用 DataCodeSyncSession 合并刷新并按 FIFO 串行保存与应用结果；保存缓存后在同一写锁内写 preference。跨标签重载只在持久规则有效时更新编辑框，无效/缺失规则不覆盖未保存草稿。
 - 页面进入或离开 Data namespace 都会使派生缓存失效。REST 刷新失败、标签转入后台或其他标签广播失效时，待办会保留到下次可见机会；成功的 data-committed 通知才清除待办。
 
 ## 7. 多标签协调
@@ -307,7 +311,7 @@ Data 代码：
 
 标题、正文、Data、文件同步、手动对账与正文队列修复共用同一写入缝隙。没有 Web Locks 时，周期和显式写入都返回 lock-unavailable，不在当前标签绕过互斥；已有本地镜像仍可只读搜索。正文批次在锁内只提交事实并广播失效，可能受 Page Visibility 暂停的内存索引刷新在锁释放后执行，因此隐藏标签不会仅因派生重建而长期占住跨标签写锁。
 
-`IncrementalSyncCoordinator` 只有在锁已授予（定时任务还须已到期）后，才重新读取持久化版本契约并调用 `ensureVersionContractForWrite`；兼容性检查通过后才运行任务。缺少契约的已知 schema-v3 legacy 也只在这条锁内路径登记。启动旧同步键清理同样走 `runExclusiveIfAvailable`，锁不可用时跳过。标题/正文由 `PageSearchRuntime` 接线，RC/对账由 `MirrorSyncOrchestrator` 接线，Data、文件与正文队列维护由 main.ts 接线；这些生产事实写入口没有无锁直写兜底。索引快照等派生写入和用户明确触发的完整重置不属于事实写入许可。
+`IncrementalSyncCoordinator` 只有在锁已授予（定时任务还须已到期）后，才重新读取持久化版本契约并调用 `ensureVersionContractForWrite`；兼容性检查通过后才运行任务。缺少契约的已知 schema-v3 legacy 也只在这条锁内路径登记。启动旧同步键清理同样走 `runExclusiveIfAvailable`，锁不可用时跳过。标题/正文由 `PageSearchRuntime` 接线，RC/对账由 `MirrorSyncOrchestrator` 接线，Data/文件运行态及正文队列维护由 main.ts 装配协调写入能力；这些生产事实写入口没有无锁直写兜底。索引快照等派生写入和用户明确触发的完整重置不属于事实写入许可。
 
 BroadcastChannel cu-wiki-local-search:changes:v1 只做失效通知：
 
@@ -418,6 +422,8 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 通过后异步载入 MiniSearch，再按 localSeq 重放新增、修改、正文变化和 tombstone。标题索引的全量读取、增量读取以及 corrupt 回退都只保留轻量标题头；正文与 Lua 才物化完整页面事实。corrupt 快照会被删除并从当前 pages 全量重建；compatibility key 不匹配的 outdated 快照只会被忽略并本地重建，之后由新兼容版本发布覆盖。两种恢复路径都没有 Wiki API 依赖。
 
+轻量观察只保存元数据，不保留 JSON 或编码后的 payload。恢复、发布、清理与完整诊断更新观察值；较旧的调用方序列不会推翻已验证状态。异步恢复或诊断不得覆盖稍后清理/发布的观察结果；只读诊断抢先完成不能阻止恢复登记其兼容键与已验证状态。完整诊断即使元数据指纹不变也重新校验哈希，保留内容篡改检测。
+
 ### 10.3 发布协议
 
 发布先冻结候选序列、文档数和 JSON，再检查：
@@ -432,17 +438,19 @@ VersionedSearchIndexCache 是 title/content/lua 三类快照的唯一入口：
 
 ## 11. UI、编辑器与维护
 
-视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及浮窗几何；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现六模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
+视图使用构建期编译的 Vue 3 SFC。`SearchPanel` 保留原有公开方法和 `SearchPanelCallbacks`，负责业务接线、搜索防抖、键盘/IME、编辑器回焦及 Vue/宿主生命周期；`PanelGeometry` 持有浮窗位置、拖动、视口、ResizeObserver 和布局/滚动动画帧；`SearchPanelView.vue` 管理模板与表单绑定，`PanelResults.vue` 呈现六模式结果，`HighlightedText.vue` 只生成文本与 mark，`PanelMaintenance.vue` 呈现维护状态和二次确认。搜索结果只在顶层替换，不递归代理业务结果或索引对象；没有 Router、全局状态库或运行时模板编译器。
 
 `search-panel.css?inline` 由适配器显式放入开放的 shadow root，保留现有宿主主题变量；组件不依赖站点样式表注入或 scoped CSS。Vue 批量更新 DOM，调用公开 setter 后需等待 `nextTick` 才读取新 DOM；业务状态同步更新。打开时在更新后聚焦，关闭时立即通过原有编辑器接口恢复焦点，待执行的打开任务会检查面板是否仍打开。结果按来源/代码或模式/页面 ID 保持节点身份，配色变更只改变 CSS 变量。
 
-`destroy()` 幂等卸载 Vue、取消搜索和布局任务并清理监听器；宿主被移除时自动执行。重建结果或移除当前插入按钮前会把焦点移回搜索框。布局工具的独立构建入口也必须加载官方 Vue 插件，不能沿用无 SFC 插件的 `configFile: false` 构建。
+`search-panel-model.ts` 集中六种 `SearchMode` 的穷尽展示配置，准备/查询也按穷尽分支接线；已展示的 CSS 模式必须提供查询回调。结果的复制维基链接与插入资格共用判断，插入另受当前编辑页 content model 限制。
+
+`destroy()` 幂等卸载 Vue、取消搜索和几何模块的所有布局/滚动任务并清理监听器；宿主被移除时自动执行。重建结果或移除当前插入按钮前会把焦点移回搜索框。布局工具的独立构建入口也必须加载官方 Vue 插件，不能沿用无 SFC 插件的 `configFile: false` 构建。
 
 SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过继承的 CSS 自定义属性复用本站主题色。纯 Alt+K 开关面板；中文 IME composition 期间不触发搜索或结果快捷键，普通输入 120ms 防抖。
 
 面板是非模态对话框：仅焦点位于内部时处理 Tab/Shift+Tab，按当前可见、可用控件在边界循环，并阻止面板快捷键继续冒泡给站点；内部普通 Tab 仍由浏览器完成。鼠标可直接离开面板，关闭后恢复原焦点，不接管整个页面。搜索框和结果主按钮的 Enter/Ctrl 或 Cmd+Enter/Shift+Enter 分别复制、打开、插入；次要按钮保留原生激活语义，修饰方向键仍用于文本操作。结果主按钮按自己所在行分发动作，focusin 同步选中提示；后台刷新移除聚焦结果前先回到搜索框，避免焦点落入站点。快捷键不写入 preference，也不引入独立焦点管理框架。
 
-面板布局和位置属于 SearchPanel 的页面内状态，不进入 main.ts、索引或 GM preference。整体按视口限高，标题/搜索/状态区域不随内容滚动，设置、维护和结果共享一个可收缩滚动区。宽屏取实际可用视口宽度的 36%，下限 420px、上限 960px；640px 及以下随可用宽度排列。布局与拖动共用扣除滚动条后的可用视口尺寸，避免直接使用 100vw 导致窄窗口越界。拖动和键盘移动仅在宽屏启用，内容/视口变化时保持位置在边界内；位置只在当前页面关闭重开时保留。长状态以两行预览加完整文本展开呈现，不积累状态历史。
+面板布局和位置属于 PanelGeometry 的页面内状态，不进入 main.ts、索引或 GM preference。整体按视口限高，标题/搜索/状态区域不随内容滚动，设置、维护和结果共享一个可收缩滚动区。宽屏取实际可用视口宽度的 36%，下限 420px、上限 960px；640px 及以下随可用宽度排列。布局与拖动共用扣除滚动条后的可用视口尺寸，避免直接使用 100vw 导致窄窗口越界。拖动和键盘移动仅在宽屏启用，内容/视口变化时保持位置在边界内；位置只在当前页面关闭重开时保留。长状态以两行预览加完整文本展开呈现，不积累状态历史。
 
 高亮配色继续只更新 CSS 变量，同时根据底色设置黑/白前景以保证对比度；不引入主题配置或用户 CSS 覆盖协议。UI 几何验收使用固定结果和诊断数据复用实际组件，不依赖线上检索数量，也不把 jsdom 的模拟布局当作浏览器排版证据。`scripts/test-search-panel-layout.playwright.js` 提供独立测试标签页的可重跑验收，临时构建和运行命令见脚本开头；不接入真实维护回调。
 
@@ -498,6 +506,8 @@ SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过�
 - jsdom：SearchPanel 路由、提示、维护入口、行内二次确认和 preference 语义。
 - Playwright 辅助脚本：真实 userscript 安装、冷启动、快照签名、维护 UI、对账与故障恢复。安装成功必须同时匹配待安装脚本的版本和唯一 build marker，不能只检查旧版同样具备的 ready 标志。安装和 UI 验收创建独立编辑标签页，清理仅限本次创建的页面；加载或交互超时立即返回，不自动刷新重试已有编辑页。jsdom 不替代浏览器原生 Tab 导航或站点键盘冲突验收。
 
+构建元数据测试调用真实 Vite 构建，真实入口集成测试首次动态加载完整入口与 Vue 依赖图，两者单用例超时均为 15 秒；不改变默认全套并行策略或放宽业务单测时限。
+
 修改后的最低验证：
 
     npm test
@@ -549,7 +559,9 @@ push 工作流先在只读权限 job 中安装锁定依赖、运行测试和生�
 | 改持久化结构 | storage/database.ts | Dexie schema 与显式迁移 |
 | 改版本语义 | version-contract.ts | legacy/future 测试、游标保留 |
 | 改维护操作 | local-data-maintenance.ts | SearchPanel 文案、离线或删除边界、reset 广播 |
-| 新 UI 模式 | SearchPanel + main callbacks | 搜索域隔离、冷启动、键盘/IME |
+| 新 UI 模式 | search-panel-model + SearchPanel + main callbacks | 搜索域隔离、冷启动、键盘/IME |
+| 文件 / Data 生命周期 | FileSearchRuntime / DataCodeRuntime | 冷启动、写锁、FIFO、广播失效与 UI/debug 接线 |
+| 浮窗位置与拖动 | PanelGeometry | 视口限制、取消拖动、销毁清理及真实浏览器焦点 |
 | 新同步入口 | 独立 sync 深模块 | Web Lock、事务游标、重试、BroadcastChannel |
 
 不要把新协议直接堆进 main.ts。优先建立可独立测试的深模块，让组合根只负责生命周期和 UI 状态。

@@ -1,8 +1,46 @@
 // SPDX-License-Identifier: MPL-2.0
 import { MirrorSyncOrchestrator } from '../../src/runtime/mirror-sync-orchestrator';
+import { CommittedRecentChangeRefresh } from '../../src/runtime/recent-change-commit-refresh';
 import type { RecentChangeSyncResult, ReconciliationSyncResult } from '../../src/types';
 
 describe('MirrorSyncOrchestrator', () => {
+  it.each(['reported', 'thrown'])('refreshes committed RC Data after a %s local refresh failure outside the lock', async (failure) => {
+    const options = baseOptions();
+    const originalError = new Error('local index refresh failed');
+    let lockHeld = false;
+    options.coordinator.runIfDue = async (task) => {
+      lockHeld = true;
+      await task();
+      lockHeld = false;
+      return 'ran';
+    };
+    const committed = { ...completeRecentChanges(), dataCodesInvalidated: true };
+    options.facts.reconcile = async () => reconciliationResult('not-due');
+    options.facts.catchUp = async () => committed;
+    options.committed.refreshReconciliation = async () => undefined;
+    const broadcast = vi.fn(() => { expect(lockHeld).toBe(false); });
+    const refresh = new CommittedRecentChangeRefresh({
+      refresh: async () => { throw originalError; },
+      broadcast,
+    });
+    options.committed.refreshRecentChanges = failure === 'reported'
+      ? (result) => refresh.apply(result)
+      : async () => { throw originalError; };
+    const refreshData = vi.fn(async () => {
+      expect(lockHeld).toBe(false);
+      return { status: 'complete' as const };
+    });
+    options.derived.refreshData = refreshData;
+    const outcome = await new MirrorSyncOrchestrator(options).runScheduled();
+    expect(outcome).toMatchObject({
+      status: 'error', recentChanges: committed,
+      errors: { committedRefresh: originalError },
+      dataRefresh: { status: 'complete' },
+    });
+    expect(refreshData).toHaveBeenCalledOnce();
+    if (failure === 'reported') expect(broadcast).toHaveBeenCalledOnce();
+  });
+
   it('returns an exact lock-unavailable outcome without starting synchronization', async () => {
     const reconcile = vi.fn();
     const catchUp = vi.fn();

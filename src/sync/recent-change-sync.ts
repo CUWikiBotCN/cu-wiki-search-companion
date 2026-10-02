@@ -22,9 +22,9 @@ import {
   isSearchableContentModel,
   isCssContentModel,
   projectContentJob,
-  searchablePageFactChanged,
 } from './content-job-policy';
 import { readFileResourceSyncState } from './file-resource-sync';
+import { searchablePageFactChanged } from './page-fact-policy';
 import { readTitleSyncState } from './title-sync';
 import { delay, isWikiLoginRequired, type WikiApi } from './wiki-api';
 

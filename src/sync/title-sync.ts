@@ -13,6 +13,7 @@ import type {
   TitleSyncState,
 } from '../types';
 import { requestAllPages } from './all-pages';
+import { searchablePageFactChanged } from './page-fact-policy';
 import { delay, WikiApi } from './wiki-api';
 
 const TITLE_SYNC_KEY = 'title-sync';
@@ -109,15 +110,6 @@ export async function syncTitles(
               seenInTitleSync: state.generation,
             };
           }
-          const changed =
-            !oldPage ||
-            oldPage.title !== rawPage.title ||
-            oldPage.namespace !== rawPage.ns ||
-            oldPage.isRedirect !== Boolean(rawPage.redirect) ||
-            oldPage.revisionId !== rawPage.lastrevid ||
-            oldPage.contentModel !== rawPage.contentmodel ||
-            oldPage.deleted;
-          if (changed) sequence += 1;
           const nextPage: PageRecord = {
             ...oldPage,
             id: rawPage.pageid,
@@ -128,11 +120,15 @@ export async function syncTitles(
             isRedirect: Boolean(rawPage.redirect),
             revisionId: rawPage.lastrevid,
             contentModel: rawPage.contentmodel,
-            localSeq: changed ? sequence : (oldPage?.localSeq ?? sequence),
+            localSeq: oldPage?.localSeq ?? sequence,
             seenInTitleSync: state.generation,
             deleted: false,
           };
           nextPage.redirectResolution = currentRedirectResolution(nextPage);
+          if (searchablePageFactChanged(oldPage, nextPage)) {
+            sequence += 1;
+            nextPage.localSeq = sequence;
+          }
           return nextPage;
         });
 

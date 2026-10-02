@@ -28,6 +28,7 @@ describe('SearchPanel file resource mode', () => {
       search: vi.fn(() => []),
       searchFiles: vi.fn(() => [fileResult]),
       searchLua: vi.fn(() => []),
+      searchCss: vi.fn(() => []),
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
@@ -78,6 +79,7 @@ describe('SearchPanel Lua module mode', () => {
       search: vi.fn(() => []),
       searchFiles: vi.fn(() => []),
       searchLua: vi.fn(() => [luaResult]),
+      searchCss: vi.fn(() => []),
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
@@ -260,6 +262,7 @@ describe('SearchPanel local maintenance', () => {
       search: vi.fn(() => []),
       searchFiles: vi.fn(() => []),
       searchLua: vi.fn(() => []),
+      searchCss: vi.fn(() => []),
       searchContent: vi.fn(() => []),
       searchCodes: vi.fn(() => []),
       insert: vi.fn(),
@@ -1354,6 +1357,7 @@ function maintenanceCallbacks(
     search: vi.fn(() => []),
     searchFiles: vi.fn(() => []),
     searchLua: vi.fn(() => []),
+    searchCss: vi.fn(() => []),
     searchContent: vi.fn(() => []),
     searchCodes: vi.fn(() => []),
     insert: vi.fn(),
@@ -1618,6 +1622,53 @@ describe('redirect links and CSS source results', () => {
     expect(callbacks.copyTitle).toHaveBeenCalledWith(result);
     root.querySelector<HTMLButtonElement>('.open-result')!.click();
     expect(callbacks.open).toHaveBeenCalledWith(result);
+    panel.destroy();
+  });
+});
+
+describe('SearchPanel six-mode contract', () => {
+  const page = { id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 };
+  const scenarios = [
+    { mode: 'title', search: 'search', preparation: 'title', namespace: true, insertable: true, result: page },
+    { mode: 'content', search: 'searchContent', preparation: 'content', namespace: true, insertable: true,
+      result: { ...page, kind: 'content', snippet: '正文' } },
+    { mode: 'data-code', search: 'searchCodes', preparation: undefined, namespace: false, insertable: false,
+      result: { kind: 'data-code', code: 'example', chineseName: '例子', dataType: 'item', source: 'Data:example', score: 1 } },
+    { mode: 'lua', search: 'searchLua', preparation: 'lua', namespace: false, insertable: false,
+      result: { ...page, kind: 'lua', matches: [] } },
+    { mode: 'css', search: 'searchCss', preparation: 'css', namespace: false, insertable: false,
+      result: { ...page, kind: 'css', matches: [] } },
+    { mode: 'files', search: 'searchFiles', preparation: undefined, namespace: false, insertable: true, result: page },
+  ] as const;
+
+  it.each(scenarios)('routes $mode and agrees on button, keyboard and copy-link eligibility', async (scenario) => {
+    const search = vi.fn(() => [scenario.result]);
+    const callbacks = maintenanceCallbacks({ [scenario.search]: search });
+    const panel = new SearchPanel(callbacks);
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const mode = root.querySelector<HTMLSelectElement>('.mode')!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    panel.open();
+    await nextTick();
+    vi.mocked(callbacks.prepareSearch).mockClear();
+    input.value = 'query';
+    mode.value = scenario.mode;
+    mode.dispatchEvent(new Event('change'));
+    await nextTick();
+
+    expect(search).toHaveBeenCalledExactlyOnceWith(...(scenario.namespace ? ['query', undefined] : ['query']));
+    for (const other of scenarios) {
+      if (other.search !== scenario.search) expect(callbacks[other.search]).not.toHaveBeenCalled();
+    }
+    if (scenario.preparation) expect(callbacks.prepareSearch).toHaveBeenCalledExactlyOnceWith(scenario.preparation);
+    else expect(callbacks.prepareSearch).not.toHaveBeenCalled();
+    expect(callbacks.prepareFiles).toHaveBeenCalledTimes(scenario.mode === 'files' ? 1 : 0);
+    expect(root.querySelector<HTMLElement>('.namespace')!.hidden).toBe(!scenario.namespace);
+    expect(root.querySelectorAll('.copy-result, .insert-result')).toHaveLength(scenario.insertable ? 2 : 0);
+    panel.actions.copyLink(panel.state.results[0]!);
+    expect(callbacks.copy).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    expect(callbacks.insert).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
     panel.destroy();
   });
 });

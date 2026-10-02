@@ -2,7 +2,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import HighlightedText from './HighlightedText.vue';
-import type { SearchPanel, SearchPanelResult } from './search-panel';
+import type { SearchPanel } from './search-panel';
+import { SEARCH_MODES, canInsertResult, type SearchMode, type SearchPanelResult } from './search-panel-model';
 import type { HighlightPreferences } from '../storage/highlight-preference';
 import type { DataCodeSearchResult } from '../search/data-code-index';
 import type { CssSearchResult } from '../search/css-source-index';
@@ -12,21 +13,13 @@ import type { LuaModuleSearchResult, LuaSymbolKind } from '../search/lua-module-
 const props = defineProps<{
   results: SearchPanelResult[];
   query: string;
-  mode: string;
+  mode: SearchMode;
   selectedIndex: number;
   insertMode: boolean;
   highlights: HighlightPreferences;
   actions: SearchPanel['actions'];
 }>();
-const messages: Record<string, [string, string]> = {
-  title: ['输入标题关键词开始搜索', '没有找到匹配标题'],
-  css: ['输入 class、选择器或源码片段', '没有找到匹配 CSS 源码'],
-  content: ['输入正文关键词开始搜索', '没有找到匹配正文'],
-  files: ['输入文件名、片段或扩展名开始搜索', '没有找到匹配文件'],
-  lua: ['输入函数名、返回键、字符串或依赖目标', '没有找到匹配 Lua 模块'],
-  'data-code': ['输入中文名、英文代码片段或已配置字段值查找代码', '没有找到对应代码名'],
-};
-const message = computed(() => (messages[props.mode] ?? messages.title!)[props.query.trim() ? 1 : 0]);
+const message = computed(() => SEARCH_MODES[props.mode][props.query.trim() ? 'noResults' : 'empty']);
 const luaLabels: Record<LuaSymbolKind, string> = { function: '函数', 'return-key': '返回键', dependency: '依赖', string: '字符串' };
 function isCode(result: SearchPanelResult): result is DataCodeSearchResult {
   return 'kind' in result && result.kind === 'data-code';
@@ -79,7 +72,7 @@ function label(result: SearchPanelResult): string {
         </div>
         <span class="actions">
           <button class="action open-result" type="button" :title="isCode(result) ? '在新标签页打开 Data 来源' : isCss(result) ? '在新标签页打开 CSS 来源' : isLua(result) ? '在新标签页打开模块' : '在新标签页打开'" @click.stop="actions.open(result)">{{ isCode(result) || isCss(result) ? '打开来源' : '打开' }}</button>
-          <template v-if="!isCode(result) && !isLua(result) && !isCss(result)">
+          <template v-if="canInsertResult(result)">
             <button class="action copy-result" type="button" title="复制包含 [[ ]] 的维基链接" @click.stop="actions.copyLink(result)">复制插入内容</button>
             <button v-if="insertMode" class="action insert-result" type="button" title="插入维基链接并返回编辑器" @click.stop="actions.insert(result)">插入</button>
           </template>

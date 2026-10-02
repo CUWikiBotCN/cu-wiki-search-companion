@@ -22,10 +22,10 @@ import {
   contentJobMatchesProjection,
   isContentJobEligible,
   projectContentJob,
-  searchablePageFactChanged,
 } from './content-job-policy';
 import { requestAllPages } from './all-pages';
 import { readFileResourceSyncState } from './file-resource-sync';
+import { searchablePageFactChanged } from './page-fact-policy';
 import { readRecentChangeSyncState } from './recent-change-sync';
 import { readTitleSyncState } from './title-sync';
 import { delay, isWikiLoginRequired, type WikiApi } from './wiki-api';

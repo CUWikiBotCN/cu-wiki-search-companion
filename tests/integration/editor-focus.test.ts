@@ -16,7 +16,7 @@ const result = { id: 1, title: '页面', namespace: 0, namespaceName: '', score:
 function mountPanel() {
   const callbacks: SearchPanelCallbacks = {
     prepareSearch: vi.fn(), prepareFiles: vi.fn(),
-    search: () => [result], searchFiles: () => [], searchLua: () => [],
+    search: () => [result], searchFiles: () => [], searchLua: () => [], searchCss: () => [],
     searchContent: () => [], searchCodes: () => [],
     insert: () => { insertAtEditorSelection('[[页面]]'); },
     copyTitle: vi.fn(), copy: vi.fn(), copyCode: vi.fn(),

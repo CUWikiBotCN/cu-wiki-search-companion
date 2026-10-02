@@ -324,7 +324,7 @@ export class PageSearchRuntime {
   }
 
   async refreshSnapshotStatus(): Promise<void> {
-    this.patchState({ snapshots: await this.indexCache.inspect() });
+    this.patchState({ snapshots: this.indexCache.getObservedStatus(this.mutableState.throughLocalSeq) });
   }
 
   searchTitles(query: string, namespace?: number): TitleSearchResult[] {
