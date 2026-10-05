@@ -137,7 +137,7 @@ export class SearchPanel {
     this.toggle = this.requireElement('.toggle');
     SearchPanel.claimGlobalShortcut(this);
     this.geometry = new PanelGeometry(
-      this.host, this.panel, this.requireElement('.panel-body'),
+      this.host, this.panel, this.toggle, this.requireElement('.panel-body'),
       this.requireElement('.drag-handle'), () => this.syncStatusPresentation(),
     );
     if (typeof MutationObserver === 'function') {
@@ -209,6 +209,8 @@ export class SearchPanel {
     if (!this.state.visible) return;
     this.geometry.finishDrag(false);
     this.state.visible = false;
+    // Reveal the expanded-state-hidden launcher before synchronous focus return.
+    this.toggle.setAttribute('aria-expanded', 'false');
     const returnFocus = this.returnFocus;
     this.returnFocus = undefined;
     if (returnFocus?.isConnected && !returnFocus.matches(':disabled')) {

@@ -12,6 +12,9 @@ export class PanelGeometry {
     wasPositioned: boolean;
   };
   private resizeObserver?: ResizeObserver;
+  private dock?: HTMLElement;
+  private dockDiscovery?: MutationObserver;
+  private dockChanges?: MutationObserver;
   private layoutFrame?: number;
   private readonly scrollFrames = new Set<number>();
   private readonly handleViewportResize = (): void => {
@@ -25,6 +28,7 @@ export class PanelGeometry {
   constructor(
     private readonly host: HTMLElement,
     private readonly panel: HTMLElement,
+    private readonly launcher: HTMLElement,
     private readonly panelBody: HTMLElement,
     private readonly dragHandle: HTMLElement,
     private readonly onLayout: () => void,
@@ -40,6 +44,46 @@ export class PanelGeometry {
     if (typeof ResizeObserver === 'function') {
       this.resizeObserver = new ResizeObserver(() => this.scheduleLayoutUpdate());
       this.resizeObserver.observe(this.panel);
+      this.resizeObserver.observe(this.launcher);
+    }
+    if (typeof MutationObserver === 'function') {
+      this.dockChanges = new MutationObserver(() => this.scheduleLayoutUpdate());
+      this.dockDiscovery = new MutationObserver(() => {
+        if (!this.dock?.isConnected) this.findDock();
+      });
+      this.dockDiscovery.observe(document.body, { childList: true, subtree: true });
+    }
+    this.findDock();
+    this.syncLauncherPosition();
+  }
+
+  private findDock(): void {
+    if (this.destroyed) return;
+    const dock = document.querySelector<HTMLElement>('.skin-dock') ?? undefined;
+    if (dock === this.dock) return;
+    if (this.dock) this.resizeObserver?.unobserve(this.dock);
+    this.dockChanges?.disconnect();
+    this.dock = dock;
+    if (dock) {
+      this.resizeObserver?.observe(dock);
+      this.dockChanges?.observe(dock, {
+        attributes: true, attributeFilter: ['class', 'style', 'hidden'], subtree: true,
+      });
+    }
+    this.scheduleLayoutUpdate();
+  }
+
+  private syncLauncherPosition(): void {
+    // Only the launcher avoids the skin dock; floating-panel coordinates stay independent.
+    const width = document.documentElement.clientWidth || window.innerWidth;
+    const rect = this.dock?.getBoundingClientRect();
+    const visible = this.dock && getComputedStyle(this.dock).visibility !== 'hidden';
+    const right = visible && rect && rect.width > 0 && rect.height > 0
+      ? Math.max(12, width - rect.left + 12) : 12;
+    const maxRight = Math.max(12, width - this.launcher.getBoundingClientRect().width - 12);
+    const value = `${Math.min(right, maxRight)}px`;
+    if (this.host.style.getPropertyValue('--cu-launcher-right') !== value) {
+      this.host.style.setProperty('--cu-launcher-right', value);
     }
   }
 
@@ -48,7 +92,9 @@ export class PanelGeometry {
     if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
     this.layoutFrame = window.requestAnimationFrame(() => {
       this.layoutFrame = undefined;
-      if (!this.host.isConnected || this.panel.hidden || this.destroyed) return;
+      if (!this.host.isConnected || this.destroyed) return;
+      this.syncLauncherPosition();
+      if (this.panel.hidden) return;
       this.reclampPosition();
       this.onLayout();
     });
@@ -65,6 +111,8 @@ export class PanelGeometry {
     this.dragHandle.removeEventListener('pointerup', this.endDrag);
     this.dragHandle.removeEventListener('pointercancel', this.endDrag);
     this.resizeObserver?.disconnect();
+    this.dockDiscovery?.disconnect();
+    this.dockChanges?.disconnect();
     if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
     this.layoutFrame = undefined;
     for (const frame of this.scrollFrames) window.cancelAnimationFrame(frame);

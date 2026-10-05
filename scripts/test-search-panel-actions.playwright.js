@@ -12,7 +12,7 @@ async page => {
     await fixturePage.goto(editURL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await fixturePage.waitForFunction(
       () => window.__CU_WIKI_SEARCH__?.ready === true &&
-        window.__CU_WIKI_SEARCH__.scriptVersion === '0.3.9',
+        window.__CU_WIKI_SEARCH__.scriptVersion === '0.3.10',
       undefined,
       { timeout: 60_000 },
     );
@@ -149,7 +149,7 @@ async page => {
     if (await editorText() !== originalText) throw new Error('原生撤销未恢复原编辑器内容');
 
     return {
-      passed: true, version: '0.3.9', buildId, reports,
+      passed: true, version: '0.3.10', buildId, reports,
       engine: await fixturePage.evaluate(() => window.__CU_WIKI_SEARCH__.engine),
       panelTab: true, siteTab: true, focusReturn: ['Escape', 'Alt+K'],
       insertionUndone: true,

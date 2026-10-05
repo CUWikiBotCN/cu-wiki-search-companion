@@ -1846,3 +1846,21 @@ describe('SearchPanel result invalidation scheduling', () => {
     panel.destroy();
   });
 });
+
+it('reveals the A4 launcher before synchronously returning focus to it', async () => {
+  const { panel, root } = mountLayoutPanel();
+  const toggle = root.querySelector<HTMLButtonElement>('.toggle')!;
+  toggle.focus();
+  toggle.click();
+  await nextTick();
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  const focus = vi.spyOn(toggle, 'focus').mockImplementation(() => {
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+  panel.close();
+  expect(focus).toHaveBeenCalledOnce();
+  await nextTick();
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  focus.mockRestore();
+  panel.destroy();
+});
