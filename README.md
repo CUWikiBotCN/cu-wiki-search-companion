@@ -86,7 +86,9 @@ CSS 模式按大小写原样匹配 class、选择器、属性和变量片段，�
 
 ## 开发与发布记录
 
-当前源码版本为 **0.3.10**。本版调整面板视觉层级与入口，避让新版站点工具栏，并保留拖动位置、快捷键与编辑器回焦；验收范围见 [0.3.10 验收记录](docs/acceptance/0.3.10.md)。此前性能优化见 [0.3.9 验收记录](docs/acceptance/0.3.9.md)及[性能记录](docs/performance/0.3.9.md)，同步修复与模块拆分见 [0.3.8](docs/acceptance/0.3.8.md)，重定向目标与 CSS 搜索见 [0.3.7](docs/acceptance/0.3.7.md)，Vue 3 迁移见 [0.3.6](docs/acceptance/0.3.6.md)。
+当前源码版本为 **0.3.11**。本版为维护性补丁：拆分同步状态展示逻辑、明确启动依赖，补齐 lint、格式与 PR 质量门禁，并统一开发和 CI 工具链；范围与验证边界见 [0.3.11 验收记录](docs/acceptance/0.3.11.md)。
+
+0.3.10 调整面板视觉层级与入口，避让新版站点工具栏，并保留拖动位置、快捷键与编辑器回焦；验收范围见 [0.3.10 验收记录](docs/acceptance/0.3.10.md)。此前性能优化见 [0.3.9 验收记录](docs/acceptance/0.3.9.md)及[性能记录](docs/performance/0.3.9.md)，同步修复与模块拆分见 [0.3.8](docs/acceptance/0.3.8.md)，重定向目标与 CSS 搜索见 [0.3.7](docs/acceptance/0.3.7.md)，Vue 3 迁移见 [0.3.6](docs/acceptance/0.3.6.md)。
 
 此前的 Firefox 光标修复见 [2026-09-07 的 0.3.5 验收记录](docs/acceptance/0.3.5.md)；历史记录见 [0.3.4](docs/acceptance/0.3.4.md)、[0.3.3](docs/acceptance/0.3.3.md) 和 [0.3.1](docs/acceptance/0.3.1.md)。不同构建的结果不混作本次实测，也不据此声称其他部署成功。
 
