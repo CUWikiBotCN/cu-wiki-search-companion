@@ -61,7 +61,7 @@ flowchart LR
   DataIndex --> UI
 ~~~
 
-src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua、CSS 页面搜索索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；`DataCodeRuntime` 持有 Data 索引、字段规则和串行同步会话；`FileSearchRuntime` 持有文件索引、按需准备、在途同步与变化序号。main.ts 只装配依赖并适配 UI/debug/广播，不持有这些索引或同步 Promise。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。
+src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，不拥有标题、正文、Lua、CSS 页面搜索索引或快照 handle。`PageSearchRuntime` 统一持有这些页面搜索运行态、按模式准备、刷新与本地重建；`DataCodeRuntime` 持有 Data 索引、字段规则和串行同步会话；`FileSearchRuntime` 持有文件索引、按需准备、在途同步与变化序号。main.ts 只装配依赖并适配 UI/debug/广播，不持有这些索引或同步 Promise。复杂协议分别封装在 runtime/、sync/、search/、storage/ 与 maintenance/ 中。同步事件与结果的 debug 状态、提示和错误转换由 `runtime/mirror-sync-presentation.ts` 的纯函数维护；入口只读取持久完成时间并应用转换结果，编排器继续负责同步执行顺序。
 
 ## 3. 激活条件与启动时序
 

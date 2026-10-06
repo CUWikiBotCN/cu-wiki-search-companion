@@ -70,5 +70,9 @@ export default defineConfig([
     // playwright-cli consumes these files as function expressions, not modules.
     rules: { '@typescript-eslint/no-unused-expressions': 'off' },
   },
+  {
+    files: ['src/main.ts'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'error' },
+  },
   prettier,
 ]);

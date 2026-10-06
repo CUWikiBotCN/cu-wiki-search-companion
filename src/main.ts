@@ -18,6 +18,13 @@ import {
   type MirrorSyncOutcome,
   type SyncAttemptResult,
 } from './runtime/mirror-sync-orchestrator';
+import {
+  presentMirrorSyncEvent,
+  presentMirrorSyncOutcome,
+  mirrorSyncOutcomeError,
+  type IncrementalRuntimeStatus,
+  type ReconciliationRuntimeStatus,
+} from './runtime/mirror-sync-presentation';
 import { CommittedRecentChangeRefresh } from './runtime/recent-change-commit-refresh';
 import { CommittedReconciliationRefresh } from './runtime/reconciliation-commit-refresh';
 import {
@@ -110,25 +117,6 @@ interface DebugApi {
   requestIncrementalSync(): Promise<void>;
 }
 
-type IncrementalRuntimeStatus =
-  | 'idle'
-  | 'running'
-  | 'complete'
-  | 'no-baseline'
-  | 'login-required'
-  | 'lock-unavailable'
-  | 'error';
-
-type ReconciliationRuntimeStatus =
-  | 'idle'
-  | 'running'
-  | 'complete'
-  | 'not-due'
-  | 'no-baseline'
-  | 'login-required'
-  | 'lock-unavailable'
-  | 'error';
-
 const pageWindow = unsafeWindow as unknown as MediaWikiWindow;
 const bootStartedAt = performance.now();
 const LEGACY_DATA_EXTRACTION_RULES_KEY = 'data-extraction-rules';
@@ -173,6 +161,7 @@ async function start(): Promise<void> {
   let mirrorSyncOrchestrator: MirrorSyncOrchestrator | undefined = undefined;
   let redirectFactsCommitted = false;
   let writesCompatible = true;
+  // Promise executors assign these callbacks synchronously, before any UI callback runs.
   let resolveInitialCacheReady!: () => void;
   let rejectInitialCacheReady!: (error: unknown) => void;
   const initialCacheReady = new Promise<void>((resolve, reject) => {
@@ -359,10 +348,11 @@ async function start(): Promise<void> {
     'bootstrap',
   );
   const incrementalCoordinator = new IncrementalSyncCoordinator(database);
-  runtimeLifecycle = new RuntimeLifecycleCoordinator({
+  const lifecycle = new RuntimeLifecycleCoordinator({
     applyStorageInvalidation: applyStorageInvalidation,
     writer: incrementalCoordinator,
   });
+  runtimeLifecycle = lifecycle;
   pageSearchRuntime = new PageSearchRuntime({
     database,
     indexCache,
@@ -397,7 +387,7 @@ async function start(): Promise<void> {
     },
     synchronizeContent: async (force, scope = 'content') => {
       let progress: Awaited<ReturnType<typeof syncContent>> | undefined;
-      const coordinated = await runtimeLifecycle!.runWriter(
+      const coordinated = await lifecycle.runWriter(
         `content:${scope}`,
         async () => {
           progress = await syncContent(database, api, {
@@ -630,7 +620,9 @@ async function start(): Promise<void> {
 
   async function ensureFileSearchStarted(force: boolean): Promise<void> {
     await initialCacheReady;
-    return fileSearchRuntime!.prepare(force);
+    const runtime = fileSearchRuntime;
+    if (!runtime) throw new Error('文件搜索运行态尚未就绪');
+    return runtime.prepare(force);
   }
 
   async function refreshRedirectFacts(): Promise<void> {
@@ -732,16 +724,9 @@ async function start(): Promise<void> {
   }
 
   function handleMirrorSyncEvent(event: MirrorSyncEvent): void {
-    if (event.type === 'started') {
-      if (event.request === 'scheduled') debugApi.incrementalStatus = 'running';
-      else debugApi.reconciliationStatus = 'running';
-      return;
-    }
-    debugApi.reconciliationStatus = 'running';
-    if (event.type === 'reconciliation-started') return;
-    panel.setStatus(
-      `全量对账 ${event.state.pagesFetched} 页 · ${Math.min(event.state.namespaceIndex + 1, event.state.namespaceIds.length)}/${event.state.namespaceIds.length}`,
-    );
+    const { state, feedback } = presentMirrorSyncEvent(debugApi, event);
+    Object.assign(debugApi, state);
+    if (feedback) panel.setStatus(feedback.message, feedback.tone);
   }
 
   async function applyMirrorSyncOutcome(
@@ -749,105 +734,19 @@ async function start(): Promise<void> {
   ): Promise<void> {
     const reconciliation = outcome.reconciliation;
     if (reconciliation) {
-      debugApi.reconciliationStatus =
-        reconciliation.status === 'complete'
-          ? 'complete'
-          : reconciliation.status;
+      debugApi.reconciliationStatus = reconciliation.status;
       if (reconciliation.status === 'complete') {
         debugApi.reconciliationCompletedAt = (
           await readReconciliationSyncState(database)
         )?.completedAt;
       }
     }
-    const recentChanges = outcome.recentChanges;
-    if (recentChanges?.status === 'complete') {
-      debugApi.incrementalStatus = 'complete';
-      debugApi.incrementalThrough = recentChanges.through;
-    } else if (recentChanges) {
-      debugApi.incrementalStatus = recentChanges.status;
-    } else if (outcome.request === 'scheduled') {
-      debugApi.incrementalStatus =
-        outcome.status === 'not-due'
-          ? 'idle'
-          : outcome.status === 'catch-up-error' ||
-              outcome.status === 'data-error' ||
-              outcome.status === 'content-error'
-            ? 'error'
-            : outcome.status;
-    } else if (outcome.status === 'catch-up-error') {
-      debugApi.incrementalStatus = 'error';
-    }
-    if (!reconciliation && outcome.request === 'manual') {
-      debugApi.reconciliationStatus =
-        outcome.status === 'data-error' ||
-        outcome.status === 'content-error' ||
-        outcome.status === 'catch-up-error'
-          ? 'error'
-          : outcome.status;
-    } else if (
-      !reconciliation &&
-      outcome.errors?.synchronization &&
-      debugApi.reconciliationStatus === 'running'
-    ) {
-      debugApi.reconciliationStatus = 'error';
-    }
-    if (outcome.errors?.committedRefresh) {
-      if (outcome.request === 'scheduled') debugApi.incrementalStatus = 'error';
-      else debugApi.reconciliationStatus = 'error';
-    }
-
+    const { state, feedback } = presentMirrorSyncOutcome(debugApi, outcome);
+    Object.assign(debugApi, state);
     for (const [phase, error] of Object.entries(outcome.errors ?? {})) {
       console.error(`[CU Wiki Search] mirror sync ${phase} failed`, error);
     }
-    if (outcome.status === 'complete') {
-      if (
-        outcome.request === 'manual' &&
-        reconciliation?.status === 'complete'
-      ) {
-        panel.setStatus(
-          `全量对账完成 · ${reconciliation.pagesFetched} 页 · ${reconciliation.pagesChanged} 个页面变化` +
-            (reconciliation.filesChanged ? ' · 文件资源已更新' : ''),
-          'success',
-        );
-      } else if (
-        recentChanges?.status === 'complete' &&
-        (recentChanges.changedPages.length || recentChanges.filesChanged)
-      ) {
-        panel.setStatus(
-          `增量同步完成 · ${recentChanges.changedPages.length} 个页面` +
-            (recentChanges.filesChanged ? ' · 文件资源已更新' : ''),
-          'success',
-        );
-      }
-      return;
-    }
-    if (outcome.status === 'not-due') return;
-    const message = mirrorSyncOutcomeError(outcome).message;
-    const prefix = outcome.request === 'manual' ? '全量对账' : '增量同步';
-    panel.setStatus(`${prefix}暂停，本地已有内容仍可搜索：${message}`, 'error');
-  }
-
-  function mirrorSyncOutcomeError(outcome: MirrorSyncOutcome): Error {
-    const cause =
-      outcome.errors?.synchronization ??
-      outcome.errors?.catchUp ??
-      outcome.errors?.data ??
-      outcome.errors?.content ??
-      outcome.errors?.committedRefresh;
-    if (cause instanceof Error) return cause;
-    if (cause !== undefined) return new Error(String(cause));
-    if (outcome.status === 'login-required')
-      return new Error('请先登录灰机账号');
-    if (outcome.status === 'lock-unavailable') {
-      return new Error(
-        '无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试',
-      );
-    }
-    if (outcome.status === 'no-baseline') {
-      return new Error('尚无完整标题基线，请先重试标题同步');
-    }
-    if (outcome.status === 'not-due') return new Error('全量对账尚未到期');
-    return new Error('同步未完成，请稍后重试');
+    if (feedback) panel.setStatus(feedback.message, feedback.tone);
   }
 
   async function refreshIndexesFromStorage(

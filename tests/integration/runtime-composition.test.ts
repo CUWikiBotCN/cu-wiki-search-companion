@@ -6,6 +6,8 @@ import { DEFAULT_DATA_CODE_RULES } from '../../src/data/data-field-rules';
 import { CURRENT_VERSION_CONTRACT } from '../../src/storage/version-contract';
 
 interface DebugSearch {
+  forceSync(): Promise<void>;
+  forceFileSync(): Promise<void>;
   ready: boolean;
   engine: string;
   indexedPages: number;
@@ -21,10 +23,19 @@ interface DebugSearch {
   searchLua(query: string): Array<{ title: string }>;
 }
 
-it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
+it.each([
+  'normal',
+  'early-click',
+  'early-file',
+  'no-locks',
+  'failed-open',
+  'redirect-refresh-failure',
+])(
   'boots the real entrypoint and prepares cached modes (%s)',
   async (scenario) => {
-    const earlyClick = scenario === 'early-click';
+    const failedOpen = scenario === 'failed-open';
+    const startupFailure = new Error('fixture open failure');
+    const earlyClick = scenario === 'early-click' || failedOpen;
     const earlyFile = scenario === 'early-file';
     const noLocks = scenario === 'no-locks';
     vi.resetModules();
@@ -45,6 +56,7 @@ it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
     });
     let releaseOpen: () => void = () => undefined;
     let changeChannel: EventTarget | undefined;
+    const postMessage = vi.fn();
     class TestChannel extends EventTarget {
       constructor() {
         super();
@@ -52,7 +64,7 @@ it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         changeChannel = this;
       }
-      postMessage(): void {}
+      postMessage = postMessage;
       close(): void {}
     }
     vi.stubGlobal('crypto', webcrypto);
@@ -90,7 +102,8 @@ it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
             ) => callback({ name: 'composition-test', mode: 'exclusive' }),
           },
     });
-    if (noLocks) vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    if (noLocks || failedOpen || scenario === 'redirect-refresh-failure')
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(window, 'setInterval').mockImplementation(vi.fn());
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(
       (handler, timeout, ...args) => {
@@ -221,6 +234,7 @@ it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
           function (this: InstanceType<typeof WikiSearchDatabase>) {
             return open.call(this).then(async (value) => {
               await gate;
+              if (failedOpen) throw startupFailure;
               return value;
             });
           },
@@ -237,9 +251,92 @@ it.each(['normal', 'early-click', 'early-file', 'no-locks'])(
         mode.dispatchEvent(new Event('change'));
         expect(debug()?.ready).toBe(false);
         expect(resource).not.toHaveBeenCalled();
+        if (failedOpen) {
+          mode.value = 'files';
+          mode.dispatchEvent(new Event('change'));
+          const pendingFile = expect(debug()!.forceFileSync()).rejects.toBe(
+            startupFailure,
+          );
+          releaseOpen();
+          await pendingFile;
+          await vi.waitFor(() => {
+            expect(console.error).toHaveBeenCalledWith(
+              '[CU Wiki Search] enhanced search startup failed',
+              startupFailure,
+            );
+            expect(console.error).toHaveBeenCalledWith(
+              '[CU Wiki Search] file resource startup failed',
+              startupFailure,
+            );
+          });
+          expect(debug()?.ready).toBe(false);
+          expect(root.textContent).toContain(startupFailure.message);
+          expect(fetcher).not.toHaveBeenCalled();
+          return;
+        }
         releaseOpen();
       }
       await vi.waitFor(() => expect(debug()?.ready).toBe(true));
+      if (scenario === 'redirect-refresh-failure') {
+        const reconciliation =
+          await import('../../src/sync/reconciliation-sync');
+        const recentChanges = await import('../../src/sync/recent-change-sync');
+        const redirects = await import('../../src/sync/redirect-target-sync');
+        const { PageSearchRuntime } =
+          await import('../../src/runtime/page-search-runtime');
+        vi.spyOn(reconciliation, 'reconcileWikiMirror').mockResolvedValue({
+          status: 'complete',
+          reason: 'manual',
+          serverStartedAt: '2026-10-06T00:00:00Z',
+          pagesFetched: 2,
+          pagesChanged: 0,
+          filesChanged: false,
+          dataCodesInvalidated: false,
+          throughLocalSeq: 2,
+        });
+        vi.spyOn(recentChanges, 'syncRecentChanges').mockResolvedValue({
+          status: 'complete',
+          startedAt: '2026-10-06T00:00:00Z',
+          through: '2026-10-06T00:00:01Z',
+          eventsSeen: 0,
+          candidates: 0,
+          changedPages: [],
+          deferredContentPageIds: [],
+          filesChanged: false,
+          dataCodesInvalidated: false,
+          throughLocalSeq: 2,
+        });
+        vi.spyOn(redirects, 'syncRedirectTargets').mockImplementation(
+          async (storage, _api, options) => {
+            await storage.transaction(
+              'rw',
+              storage.pages,
+              storage.syncState,
+              async () => {
+                await storage.pages.update(1, { localSeq: 3 });
+                await storage.syncState.put({
+                  key: 'local-sequence',
+                  value: 3,
+                });
+              },
+            );
+            const page = await storage.pages.get(1);
+            if (!page) throw new Error('Missing fixture page');
+            options?.onBatch?.([page]);
+          },
+        );
+        const refreshFailure = new Error('fixture local index refresh failure');
+        vi.spyOn(PageSearchRuntime.prototype, 'refresh').mockRejectedValue(
+          refreshFailure,
+        );
+        await expect(debug()!.forceSync()).rejects.toBe(refreshFailure);
+        expect(postMessage).toHaveBeenCalledWith({
+          type: 'redirects-committed',
+        });
+        expect(await database.pages.get(1)).toMatchObject({ localSeq: 3 });
+        expect(fetcher).not.toHaveBeenCalled();
+        return;
+      }
       expect(
         debug()
           ?.search('医疗')
