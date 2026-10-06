@@ -92,14 +92,18 @@ CSS 模式按大小写原样匹配 class、选择器、属性和变量片段，�
 
 单元／集成测试统一放在 `tests/` 并按模块分类；真实浏览器安装、诊断和验收工具保留在 `scripts/`。新增测试请遵循[测试目录规范](ARCHITECTURE.md#131-测试文件归属与执行边界)。
 
-本地开发要求 Node.js `^20.19.0`、`^22.13.0` 或 `>=24`，以及 npm：
+本地开发与 CI 使用同一工具链：Node.js 精确版本以 [.nvmrc](.nvmrc) 为准，npm 精确版本以 [package.json](package.json) 的 `packageManager` 为准。使用 nvm 时，在仓库目录执行：
 
 ```bash
+nvm install
+nvm use
+npm install --global "$(node -p 'require("./package.json").packageManager')"
 npm ci
-npm test
 npm run check
 # 单独运行：npm run lint / npm run format:check / npm test / npm run typecheck / npm run build
 ```
+
+其他版本管理器也应安装上述配置声明的精确版本。每次进入项目先切换到项目版本；CI 通过 `node-version-file` 读取同一份 `.nvmrc`，并从 `packageManager` 安装 npm。升级工具链时修改这两处主来源并重跑完整检查，文档不另抄版本号。
 
 `npm run format` 统一源码、测试、脚本及配置格式；历史文档、私密交接和生成物不在格式化范围内。lint 使用 ESLint、TypeScript 与 Vue essential 规则；`check` 依次运行 lint、格式检查、测试和构建。Playwright CLI 函数表达式文件只执行 lint，避免 formatter 添加语句分号破坏 run-code；Vue 模板使用严格空白策略以保留文本边界。
 

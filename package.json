@@ -43,5 +43,6 @@
     "vite-plugin-monkey": "8.1.1",
     "vitest": "4.1.11",
     "vue-tsc": "3.3.11"
-  }
+  },
+  "packageManager": "npm@12.1.0"
 }
