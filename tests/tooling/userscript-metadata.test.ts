@@ -63,6 +63,63 @@ describe('userscript activation metadata', () => {
     }
   }, 15_000);
 
+  it('runs the complete quality gate for PRs and pushes with read-only verification', () => {
+    const triggers = /^on:\n([\s\S]*?)\nconcurrency:/m.exec(
+      nightlyWorkflow,
+    )?.[1];
+    expect(
+      [...triggers!.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]),
+    ).toEqual(['push', 'pull_request', 'workflow_dispatch']);
+    expect(nightlyWorkflow).toMatch(/permissions:\n {2}contents: read/);
+    const verify = nightlyWorkflow
+      .split('  verify-and-build:')[1]!
+      .split('  update-nightly:')[0]!;
+    expect(verify.split('    steps:')[0]).not.toMatch(/\bif:/);
+    expect(verify).not.toContain('contents: write');
+    expect(verify).toMatch(
+      /- name: Install locked dependencies\n\s+run: npm ci/,
+    );
+    expect(verify).toMatch(/- name: Run quality checks\n\s+run: npm run check/);
+    const { scripts } = JSON.parse(packageManifestSource);
+    expect(scripts.check.split(' && ')).toEqual([
+      'npm run lint',
+      'npm run format:check',
+      'npm test',
+      'npm run build',
+    ]);
+    expect(scripts.build).toMatch(/^npm run typecheck && /);
+  });
+
+  it.each([
+    ['pull_request', 'refs/pull/1/merge', false, false],
+    ['pull_request', 'refs/heads/main', false, false],
+    ['push', 'refs/heads/main', true, true],
+    ['push', 'refs/heads/feature', true, false],
+    ['workflow_dispatch', 'refs/heads/main', true, false],
+  ])(
+    'gates artifact and release effects for %s on %s',
+    (event_name, ref, artifacts, release) => {
+      const github = { event_name, ref };
+      const enabled = (source: string) => {
+        const expression = /if: \$\{\{ (.*?) \}\}/.exec(source)?.[1];
+        if (!expression) throw new Error('Missing workflow guard');
+        return Function('github', `return (${expression})`)(github);
+      };
+      for (const name of [
+        'Prepare verified assets',
+        'Upload commit artifact',
+      ]) {
+        const step = nightlyWorkflow
+          .split(`      - name: ${name}\n`)[1]!
+          .split(/\n {6}- name:|\n {2}update-nightly:/)[0]!;
+        expect(enabled(step)).toBe(artifacts);
+      }
+      const publish = nightlyWorkflow.split('  update-nightly:')[1]!;
+      expect(enabled(publish)).toBe(release);
+      expect(publish).toContain('needs: verify-and-build');
+    },
+  );
+
   it('queues same-ref nightly runs without cancelling an in-progress release update', () => {
     const concurrencyBlock = /concurrency:\s*\n([\s\S]*?)\n\npermissions:/.exec(
       nightlyWorkflow,

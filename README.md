@@ -138,7 +138,7 @@ bash scripts/run-browser-playwright.sh scripts/test-search-panel-actions.playwri
 
 常见排查：CDP 不可达时核对可执行文件、端口、图形窗口和专用 profile；[Chrome 不支持在默认用户目录上启用远程调试](https://developer.chrome.com/blog/remote-debugging-port)。端口占用时选择另一端口，不连接未知浏览器。安装确认页未出现时检查 Tampermonkey 和用户脚本权限；Wiki 无编辑框时检查站点登录与权限。页面加载或交互超时后停止该阶段，检查日志和前台状态，不连续重试。涉及离线验证时，先证明请求确实断网；Service Worker 可能使普通页级请求拦截不足以隔离网络。
 
-GitHub Actions 在 push 后测试和构建，main 成功后更新唯一的滚动 Nightly；更新列表取自提交标题。开发者无需为每次提交手动建立 tag 或 Release。
+GitHub Actions 在 push 和 PR 上运行完整质量检查（lint、格式、测试、类型检查与构建）。PR 仅验证，不上传发布资产；main push 成功后更新唯一的滚动 Nightly，更新列表取自提交标题。开发者无需为每次提交手动建立 tag 或 Release。
 
 数据模型、按需加载、同步和维护约束见 [架构文档](ARCHITECTURE.md)。[灰机平台能力研究](docs/research/huiji-platform-capabilities.md)是注明日期的历史研究，不替代当前架构或验收结论。
 

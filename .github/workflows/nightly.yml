@@ -3,6 +3,7 @@ name: Nightly build
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -32,16 +33,14 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Run test suite
-        run: npm test
-
-      - name: Build production userscript
-        run: npm run build
+      - name: Run quality checks
+        run: npm run check
 
       - name: Check patch whitespace
         run: git diff --check
 
       - name: Prepare verified assets
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           install -d nightly
@@ -62,6 +61,7 @@ jobs:
           )
 
       - name: Upload commit artifact
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-${{ github.sha }}
