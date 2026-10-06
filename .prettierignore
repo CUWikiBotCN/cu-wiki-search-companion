@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.local/
+handoff/
+data/
+*.md
+**/*.md
+package-lock.json
+# These files are expressions passed directly to playwright-cli run-code.
+scripts/*.playwright.js

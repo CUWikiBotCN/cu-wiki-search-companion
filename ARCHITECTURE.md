@@ -528,9 +528,10 @@ SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过�
 
 修改后的最低验证：
 
-    npm test
-    npm run build
+    npm run check
     git diff --check
+
+`check` 包含 ESLint、Prettier 检查、Vitest 和带类型检查的生产构建；格式规则由配置维护。注释只解释实现处难以推导的契约原因，不复制流程或状态表。
 
 涉及真实浏览器脚本时，还应做 JavaScript 语法检查和 shell bash -n。只有改动对应网络或数据库协议时才重跑会修改真实缓存的专用验收；普通开发优先使用 fake-indexeddb/jsdom。
 

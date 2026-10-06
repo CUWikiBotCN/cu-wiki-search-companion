@@ -40,7 +40,10 @@ const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 interface SiteInfoResponse {
   curtimestamp?: string;
   query?: {
-    namespaces?: Record<string, { id: number; name: string; canonical?: string }>;
+    namespaces?: Record<
+      string,
+      { id: number; name: string; canonical?: string }
+    >;
   };
 }
 
@@ -86,10 +89,14 @@ export async function reconcileWikiMirror(
   const interruptedState =
     existingState?.status === 'running' || existingState?.status === 'failed';
   const canResume =
-    interruptedState && existingState.scanProtocol === RECONCILIATION_SCAN_PROTOCOL;
+    interruptedState &&
+    existingState.scanProtocol === RECONCILIATION_SCAN_PROTOCOL;
   if (canResume) {
     state = { ...existingState, status: 'running', error: undefined };
-    await database.syncState.put({ key: RECONCILIATION_SYNC_KEY, value: state });
+    await database.syncState.put({
+      key: RECONCILIATION_SYNC_KEY,
+      value: state,
+    });
   } else {
     const reason = interruptedState
       ? existingState.reason
@@ -97,7 +104,9 @@ export async function reconcileWikiMirror(
           options.force ?? false,
           now(),
           intervalMs,
-          existingState?.completedAt ?? titleState.completedAt ?? titleState.startedAt,
+          existingState?.completedAt ??
+            titleState.completedAt ??
+            titleState.startedAt,
           recentState?.through,
         );
     if (!reason) return inactiveResult('not-due', initialSequence);
@@ -111,12 +120,18 @@ export async function reconcileWikiMirror(
         siprop: 'namespaces',
       });
     } catch (error) {
-      if (isWikiLoginRequired(error)) return inactiveResult('login-required', initialSequence);
+      if (isWikiLoginRequired(error))
+        return inactiveResult('login-required', initialSequence);
       throw error;
     }
-    if (!siteInfo.curtimestamp) throw new Error('Wiki API 未返回对账服务器时间');
+    if (!siteInfo.curtimestamp)
+      throw new Error('Wiki API 未返回对账服务器时间');
     const namespaces = Object.values(siteInfo.query?.namespaces ?? {})
-      .filter(({ id }) => id >= 0 && (id !== FILE_NAMESPACE || fileState?.status === 'complete'))
+      .filter(
+        ({ id }) =>
+          id >= 0 &&
+          (id !== FILE_NAMESPACE || fileState?.status === 'complete'),
+      )
       .sort((left, right) => left.id - right.id);
     state = {
       status: 'running',
@@ -140,7 +155,10 @@ export async function reconcileWikiMirror(
       dataCodesInvalidated: false,
       startedAt: now(),
     };
-    await database.syncState.put({ key: RECONCILIATION_SYNC_KEY, value: state });
+    await database.syncState.put({
+      key: RECONCILIATION_SYNC_KEY,
+      value: state,
+    });
   }
 
   try {
@@ -179,7 +197,9 @@ export async function reconcileWikiMirror(
               : (oldPage?.localSeq ?? 0) > state.startLocalSeq;
             if (oldPage && writtenAfterFence) {
               return {
-                ...(isFileBatch ? withoutLegacyTitleGeneration(oldPage) : oldPage),
+                ...(isFileBatch
+                  ? withoutLegacyTitleGeneration(oldPage)
+                  : oldPage),
                 seenInReconciliation: state.generation,
               };
             }
@@ -189,7 +209,9 @@ export async function reconcileWikiMirror(
               oldPage.revisionId > rawPage.lastrevid;
             if (oldPage && remoteRevisionIsOlder) {
               return {
-                ...(isFileBatch ? withoutLegacyTitleGeneration(oldPage) : oldPage),
+                ...(isFileBatch
+                  ? withoutLegacyTitleGeneration(oldPage)
+                  : oldPage),
                 seenInReconciliation: state.generation,
               };
             }
@@ -254,8 +276,12 @@ export async function reconcileWikiMirror(
           };
           if (storedPages.length) await table.bulkPut(storedPages);
           if (dataChanged) {
-            const dataCodeState = await database.syncState.get(DATA_CODE_SYNC_KEY);
-            if (dataCodeState?.value && typeof dataCodeState.value === 'object') {
+            const dataCodeState =
+              await database.syncState.get(DATA_CODE_SYNC_KEY);
+            if (
+              dataCodeState?.value &&
+              typeof dataCodeState.value === 'object'
+            ) {
               await database.syncState.put({
                 key: DATA_CODE_SYNC_KEY,
                 value: { ...dataCodeState.value, syncedAt: 0 },
@@ -277,7 +303,7 @@ export async function reconcileWikiMirror(
       }
     }
 
-    let sequence = await finalizeReconciliation(database, state, now());
+    const sequence = await finalizeReconciliation(database, state, now());
     state = (await readReconciliationSyncState(database)) ?? state;
     options.onProgress?.(state);
     return {
@@ -297,7 +323,10 @@ export async function reconcileWikiMirror(
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
     };
-    await database.syncState.put({ key: RECONCILIATION_SYNC_KEY, value: state });
+    await database.syncState.put({
+      key: RECONCILIATION_SYNC_KEY,
+      value: state,
+    });
     throw error;
   }
 }
@@ -360,7 +389,9 @@ async function finalizeReconciliation(
         .where('type')
         .equals(CONTENT_JOB_TYPE)
         .toArray();
-      const existingByPage = new Map(existingJobs.map((job) => [job.pageId, job]));
+      const existingByPage = new Map(
+        existingJobs.map((job) => [job.pageId, job]),
+      );
       const eligibleIds = new Set<number>();
       const jobsToPut: JobRecord[] = [];
       await database.pages.each((page) => {
@@ -370,7 +401,12 @@ async function finalizeReconciliation(
         const projection = projectContentJob(page, false);
         if (!contentJobMatchesProjection(existing, page.id, projection)) {
           jobsToPut.push(
-            contentJobFromProjection(page.id, projection, existing, completedAt),
+            contentJobFromProjection(
+              page.id,
+              projection,
+              existing,
+              completedAt,
+            ),
           );
         }
       });
@@ -383,7 +419,8 @@ async function finalizeReconciliation(
       const pagesChanged = state.pagesChanged + stalePages.length;
       const filesChanged = state.filesChanged || staleFiles.length > 0;
       const dataCodesInvalidated =
-        state.dataCodesInvalidated || stalePages.some((page) => page.namespace === 3500);
+        state.dataCodesInvalidated ||
+        stalePages.some((page) => page.namespace === 3500);
       if (dataCodesInvalidated) {
         const dataCodeState = await database.syncState.get(DATA_CODE_SYNC_KEY);
         if (dataCodeState?.value && typeof dataCodeState.value === 'object') {
@@ -401,13 +438,17 @@ async function finalizeReconciliation(
       const recentState: RecentChangeSyncState = preserveRecent
         ? {
             ...currentRecent,
-            fileChangeSeq: filesChanged ? sequence : currentRecent.fileChangeSeq,
+            fileChangeSeq: filesChanged
+              ? sequence
+              : currentRecent.fileChangeSeq,
           }
         : {
             through: state.serverStartedAt,
             completedAt,
             recentChanges: [],
-            fileChangeSeq: filesChanged ? sequence : currentRecent?.fileChangeSeq,
+            fileChangeSeq: filesChanged
+              ? sequence
+              : currentRecent?.fileChangeSeq,
           };
       const completedState: ReconciliationSyncState = {
         ...state,
@@ -439,7 +480,8 @@ function reconciliationReason(
 ): ReconciliationReason | undefined {
   if (force) return 'manual';
   if (now - lastCompletedAt >= intervalMs) return 'scheduled';
-  if (recentThrough && now - Date.parse(recentThrough) >= intervalMs) return 'rc-gap';
+  if (recentThrough && now - Date.parse(recentThrough) >= intervalMs)
+    return 'rc-gap';
   return undefined;
 }
 
@@ -457,7 +499,9 @@ function inactiveResult(
   };
 }
 
-function loginRequiredResult(state: ReconciliationSyncState): ReconciliationSyncResult {
+function loginRequiredResult(
+  state: ReconciliationSyncState,
+): ReconciliationSyncResult {
   return {
     status: 'login-required',
     pagesFetched: state.pagesFetched,

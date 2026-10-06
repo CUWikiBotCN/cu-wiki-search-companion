@@ -34,20 +34,17 @@ interface GenerationScenario {
 }
 
 describe('search index rebuild lifecycle', () => {
-  it.each([
-    titleScenario(),
-    contentScenario(),
-    luaScenario(),
-  ])(
+  it.each([titleScenario(), contentScenario(), luaScenario()])(
     'keeps $name result signatures identical across rebuild, restore, concurrent update, and tombstone paths',
     async ({ scenario, expected, tombstonedId }) => {
       const signatures = await lifecycleSignatures(scenario);
 
-      for (const signature of signatures) expect(signature).toEqual(signatures[0]);
+      for (const signature of signatures)
+        expect(signature).toEqual(signatures[0]);
       expect(signatures[0]).toMatchObject(expected);
-      expect((signatures[0] as { removedIds: number[] }).removedIds).not.toContain(
-        tombstonedId,
-      );
+      expect(
+        (signatures[0] as { removedIds: number[] }).removedIds,
+      ).not.toContain(tombstonedId);
     },
   );
 
@@ -60,7 +57,9 @@ describe('search index rebuild lifecycle', () => {
       newer: [page(1, 'freshsigma')],
       signature: (index: LifecycleIndex) => ({
         current: (index as TitleIndex).search('freshsigma').map(({ id }) => id),
-        obsolete: (index as TitleIndex).search('ancientomega').map(({ id }) => id),
+        obsolete: (index as TitleIndex)
+          .search('ancientomega')
+          .map(({ id }) => id),
       }),
     },
     {
@@ -70,19 +69,31 @@ describe('search index rebuild lifecycle', () => {
       older: [page(1, '正文', 'ancientomega')],
       newer: [page(1, '正文', 'freshsigma')],
       signature: (index: LifecycleIndex) => ({
-        current: (index as ContentIndex).search('freshsigma').map(({ id }) => id),
-        obsolete: (index as ContentIndex).search('ancientomega').map(({ id }) => id),
+        current: (index as ContentIndex)
+          .search('freshsigma')
+          .map(({ id }) => id),
+        obsolete: (index as ContentIndex)
+          .search('ancientomega')
+          .map(({ id }) => id),
       }),
     },
     {
       name: 'lua',
       create: (scheduler: { yield(): Promise<void> }) =>
         new LuaModuleIndex(analyzer, scheduler),
-      older: [page(1, '模块:一', "return { label = 'ancientomega' }", 'Scribunto')],
-      newer: [page(1, '模块:一', "return { label = 'freshsigma' }", 'Scribunto')],
+      older: [
+        page(1, '模块:一', "return { label = 'ancientomega' }", 'Scribunto'),
+      ],
+      newer: [
+        page(1, '模块:一', "return { label = 'freshsigma' }", 'Scribunto'),
+      ],
       signature: (index: LifecycleIndex) => ({
-        current: (index as LuaModuleIndex).search('freshsigma').map(({ id }) => id),
-        obsolete: (index as LuaModuleIndex).search('ancientomega').map(({ id }) => id),
+        current: (index as LuaModuleIndex)
+          .search('freshsigma')
+          .map(({ id }) => id),
+        obsolete: (index as LuaModuleIndex)
+          .search('ancientomega')
+          .map(({ id }) => id),
       }),
     },
   ] satisfies GenerationScenario[])(
@@ -111,7 +122,9 @@ describe('search index rebuild lifecycle', () => {
   );
 });
 
-async function lifecycleSignatures(scenario: LifecycleScenario): Promise<unknown[]> {
+async function lifecycleSignatures(
+  scenario: LifecycleScenario,
+): Promise<unknown[]> {
   const finalPages = mergePages(scenario.initial, scenario.updates);
 
   const synchronous = scenario.create();
@@ -134,7 +147,9 @@ async function lifecycleSignatures(scenario: LifecycleScenario): Promise<unknown
   const updatingDuringRestore = scenario.create();
   const initialSnapshot = scenario.create();
   initialSnapshot.rebuild(scenario.initial);
-  const restoring = updatingDuringRestore.importSnapshot(initialSnapshot.exportSnapshot());
+  const restoring = updatingDuringRestore.importSnapshot(
+    initialSnapshot.exportSnapshot(),
+  );
   updatingDuringRestore.update(scenario.updates);
   await restoring;
 
@@ -160,7 +175,9 @@ function titleScenario() {
     signature: (index) => ({
       size: index.size,
       current: (index as TitleIndex).search('最终标题'),
-      removedIds: (index as TitleIndex).search('待删除标题').map(({ id }) => id),
+      removedIds: (index as TitleIndex)
+        .search('待删除标题')
+        .map(({ id }) => id),
     }),
   };
   return {
@@ -185,7 +202,9 @@ function contentScenario() {
     signature: (index) => ({
       size: index.size,
       current: (index as ContentIndex).search('最终正文'),
-      removedIds: (index as ContentIndex).search('待删除正文').map(({ id }) => id),
+      removedIds: (index as ContentIndex)
+        .search('待删除正文')
+        .map(({ id }) => id),
     }),
   };
   return {
@@ -212,7 +231,9 @@ function luaScenario() {
     signature: (index) => ({
       size: index.size,
       current: (index as LuaModuleIndex).search('最终符号'),
-      removedIds: (index as LuaModuleIndex).search('待删除符号').map(({ id }) => id),
+      removedIds: (index as LuaModuleIndex)
+        .search('待删除符号')
+        .map(({ id }) => id),
     }),
   };
   return {
@@ -223,7 +244,10 @@ function luaScenario() {
   };
 }
 
-function mergePages(initial: PageRecord[], updates: PageRecord[]): PageRecord[] {
+function mergePages(
+  initial: PageRecord[],
+  updates: PageRecord[],
+): PageRecord[] {
   const pages = new Map(initial.map((page) => [page.id, page]));
   for (const update of updates) pages.set(update.id, update);
   return [...pages.values()];

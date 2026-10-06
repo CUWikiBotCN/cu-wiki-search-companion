@@ -14,7 +14,9 @@ export async function runWithRequestTimeout<T>(
   timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const finiteTimeout =
-    Number.isFinite(timeoutMs) && timeoutMs >= 0 ? timeoutMs : DEFAULT_REQUEST_TIMEOUT_MS;
+    Number.isFinite(timeoutMs) && timeoutMs >= 0
+      ? timeoutMs
+      : DEFAULT_REQUEST_TIMEOUT_MS;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<never>((_resolve, reject) => {

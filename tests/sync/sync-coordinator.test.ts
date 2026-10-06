@@ -11,8 +11,12 @@ describe('incremental sync coordinator', () => {
     const secondDatabase = new WikiSearchDatabase(databaseName);
     await Promise.all([firstDatabase.open(), secondDatabase.open()]);
     const lockManager = new ContendedLockManager();
-    const firstCoordinator = new IncrementalSyncCoordinator(firstDatabase, { lockManager });
-    const secondCoordinator = new IncrementalSyncCoordinator(secondDatabase, { lockManager });
+    const firstCoordinator = new IncrementalSyncCoordinator(firstDatabase, {
+      lockManager,
+    });
+    const secondCoordinator = new IncrementalSyncCoordinator(secondDatabase, {
+      lockManager,
+    });
     let releaseTask!: () => void;
     let reportStarted!: () => void;
     const taskStarted = new Promise<void>((resolve) => {
@@ -144,7 +148,9 @@ describe('incremental sync coordinator', () => {
   it('does not run an exclusive writer when Web Locks are unavailable', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
-    const coordinator = new IncrementalSyncCoordinator(database, { lockManager: null });
+    const coordinator = new IncrementalSyncCoordinator(database, {
+      lockManager: null,
+    });
     const task = vi.fn(async () => undefined);
 
     expect(await coordinator.runExclusive(task)).toBe('lock-unavailable');
@@ -160,8 +166,12 @@ describe('incremental sync coordinator', () => {
     const secondDatabase = new WikiSearchDatabase(databaseName);
     await Promise.all([firstDatabase.open(), secondDatabase.open()]);
     const lockManager = new ContendedLockManager();
-    const firstCoordinator = new IncrementalSyncCoordinator(firstDatabase, { lockManager });
-    const secondCoordinator = new IncrementalSyncCoordinator(secondDatabase, { lockManager });
+    const firstCoordinator = new IncrementalSyncCoordinator(firstDatabase, {
+      lockManager,
+    });
+    const secondCoordinator = new IncrementalSyncCoordinator(secondDatabase, {
+      lockManager,
+    });
     let releaseIncremental!: () => void;
     let incrementalStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -188,7 +198,11 @@ describe('incremental sync coordinator', () => {
 
     expect(await incremental).toBe('ran');
     expect(await reconciliation).toBe('ran');
-    expect(order).toEqual(['incremental-start', 'incremental-end', 'reconciliation']);
+    expect(order).toEqual([
+      'incremental-start',
+      'incremental-end',
+      'reconciliation',
+    ]);
 
     firstDatabase.close();
     secondDatabase.close();

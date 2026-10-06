@@ -43,7 +43,8 @@ export class WikiApi {
     this.fetcher = options.fetcher ?? fetch.bind(globalThis);
     this.retries = options.retries ?? 4;
     this.baseDelayMs = options.baseDelayMs ?? 1_000;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.sleep = options.sleep ?? delay;
   }
 
@@ -62,39 +63,36 @@ export class WikiApi {
     for (let attempt = 0; attempt <= this.retries; attempt += 1) {
       let retryAfterMs: number | undefined;
       try {
-        const payload = await runWithRequestTimeout(
-          async (signal) => {
-            const response = await this.fetcher(`/api.php?${search.toString()}`, {
-              credentials: 'same-origin',
-              headers: { Accept: 'application/json' },
-              signal,
-            });
-            retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
-            if (!response.ok) {
-              const code = `http-${response.status}`;
-              throw new WikiApiError(
-                `Wiki API 请求失败（${code}）`,
-                code,
-                response.statusText || `HTTP ${response.status}`,
-                isRetryableHttpStatus(response.status),
-                response.status,
-              );
-            }
-            const payload = (await response.json()) as T & ApiErrorPayload;
-            if (payload.error) {
-              const code = payload.error.code ?? 'api-error';
-              const info = payload.error.info ?? '未提供错误详情';
-              throw new WikiApiError(
-                `Wiki API 返回错误（${code}）`,
-                code,
-                info,
-                RETRYABLE_API_ERROR_CODES.has(code),
-              );
-            }
-            return payload;
-          },
-          this.requestTimeoutMs,
-        );
+        const payload = await runWithRequestTimeout(async (signal) => {
+          const response = await this.fetcher(`/api.php?${search.toString()}`, {
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json' },
+            signal,
+          });
+          retryAfterMs = parseRetryAfter(response.headers.get('Retry-After'));
+          if (!response.ok) {
+            const code = `http-${response.status}`;
+            throw new WikiApiError(
+              `Wiki API 请求失败（${code}）`,
+              code,
+              response.statusText || `HTTP ${response.status}`,
+              isRetryableHttpStatus(response.status),
+              response.status,
+            );
+          }
+          const payload = (await response.json()) as T & ApiErrorPayload;
+          if (payload.error) {
+            const code = payload.error.code ?? 'api-error';
+            const info = payload.error.info ?? '未提供错误详情';
+            throw new WikiApiError(
+              `Wiki API 返回错误（${code}）`,
+              code,
+              info,
+              RETRYABLE_API_ERROR_CODES.has(code),
+            );
+          }
+          return payload;
+        }, this.requestTimeoutMs);
         return payload;
       } catch (error) {
         const requestError = normalizeWikiApiError(error);

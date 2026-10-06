@@ -78,7 +78,8 @@ export async function syncDataCodes(
   }
 
   const fetcher = options.fetcher ?? fetch.bind(globalThis);
-  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const syncedAt = Date.now();
   const recordsBySource = new Map<string, DataCodeRecord>();
   for (let page = 1; page <= MAX_PAGES; page += 1) {
@@ -97,19 +98,24 @@ export async function syncDataCodes(
 
   const records = [...recordsBySource.values()];
   if (!records.length) throw new Error('Mongo Data 未返回可用的简体中文名称');
-  await database.transaction('rw', database.dataCodes, database.syncState, async () => {
-    await database.dataCodes.clear();
-    await database.dataCodes.bulkPut(records);
-    await database.syncState.put({
-      key: DATA_CODE_SYNC_KEY,
-      value: {
-        syncedAt,
-        count: records.length,
-        rulesSource,
-        indexVersion: DATA_CODE_INDEX_VERSION,
-      } satisfies DataCodeSyncState,
-    });
-  });
+  await database.transaction(
+    'rw',
+    database.dataCodes,
+    database.syncState,
+    async () => {
+      await database.dataCodes.clear();
+      await database.dataCodes.bulkPut(records);
+      await database.syncState.put({
+        key: DATA_CODE_SYNC_KEY,
+        value: {
+          syncedAt,
+          count: records.length,
+          rulesSource,
+          indexVersion: DATA_CODE_INDEX_VERSION,
+        } satisfies DataCodeSyncState,
+      });
+    },
+  );
   return { records, refreshed: true };
 }
 
@@ -119,13 +125,20 @@ export function parseDataCodeResponse(
   syncedAt: number,
   rules: DataFieldRules = parseDataFieldRules(DEFAULT_DATA_CODE_RULES),
 ): DataCodeRecord[] {
-  if (!Array.isArray(response._embedded)) throw new Error('Mongo Data 响应缺少 _embedded');
+  if (!Array.isArray(response._embedded))
+    throw new Error('Mongo Data 响应缺少 _embedded');
   const records: DataCodeRecord[] = [];
   for (const value of response._embedded as MongoDataDocument[]) {
     const source = typeof value?._id === 'string' ? value._id : '';
     const code = typeof value?.id === 'string' ? value.id : '';
     const chineseName = value?.locales?.['zh-CN']?.name;
-    if (!source || !code || typeof chineseName !== 'string' || !chineseName.trim()) continue;
+    if (
+      !source ||
+      !code ||
+      typeof chineseName !== 'string' ||
+      !chineseName.trim()
+    )
+      continue;
     const match = /^Data:([^/]+)/.exec(source);
     const searchValues = extractDataFieldValues(value, source, rules);
     const searchText = searchValues.join(' ');
@@ -136,7 +149,9 @@ export function parseDataCodeResponse(
       normalizedName: analyzer.normalize(chineseName),
       searchText,
       normalizedSearchText: analyzer.normalize(searchText),
-      normalizedSearchValues: searchValues.map((fieldValue) => analyzer.normalize(fieldValue)),
+      normalizedSearchValues: searchValues.map((fieldValue) =>
+        analyzer.normalize(fieldValue),
+      ),
       dataType: match?.[1] ?? 'Data',
       syncedAt,
     });
@@ -159,18 +174,19 @@ async function fetchMongoPage(
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      return await runWithRequestTimeout(
-        async (signal) => {
-          const response = await fetcher(`/api/rest_v1/namespace/data?${parameters}`, {
+      return await runWithRequestTimeout(async (signal) => {
+        const response = await fetcher(
+          `/api/rest_v1/namespace/data?${parameters}`,
+          {
             credentials: 'same-origin',
             headers: { Accept: 'application/json' },
             signal,
-          });
-          if (!response.ok) throw new Error(`Mongo Data API 返回 HTTP ${response.status}`);
-          return (await response.json()) as MongoDataResponse;
-        },
-        requestTimeoutMs,
-      );
+          },
+        );
+        if (!response.ok)
+          throw new Error(`Mongo Data API 返回 HTTP ${response.status}`);
+        return (await response.json()) as MongoDataResponse;
+      }, requestTimeoutMs);
     } catch (error) {
       lastError = error;
       if (attempt === retries) break;

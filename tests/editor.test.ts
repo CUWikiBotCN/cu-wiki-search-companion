@@ -21,7 +21,8 @@ describe('editor integration', () => {
   });
 
   it('inserts into a native textarea selection', () => {
-    const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
+    const textarea =
+      document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
     textarea.setSelectionRange(1, 1);
 
     expect(insertAtEditorSelection('[[鹿弹]]')).toBe('textarea');
@@ -29,7 +30,8 @@ describe('editor integration', () => {
   });
 
   it('uses the active CodeMirror instance so insertion is undoable', () => {
-    const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
+    const textarea =
+      document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
     const replaceSelection = vi.fn();
     const codeMirror = document.createElement('div') as HTMLDivElement & {
       CodeMirror: unknown;

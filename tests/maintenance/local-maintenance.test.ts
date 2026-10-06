@@ -94,16 +94,30 @@ describe('LocalDataMaintenance', () => {
       luaSources: 1,
       cssSources: 0,
     });
-    expect(diagnostics.jobs).toEqual({ done: 1, pending: 1, running: 1, failed: 1 });
+    expect(diagnostics.jobs).toEqual({
+      done: 1,
+      pending: 1,
+      running: 1,
+      failed: 1,
+    });
     expect(diagnostics.recentChanges).toMatchObject({
       through: '2026-08-31T03:10:00Z',
       completedAt: 10,
     });
-    expect(diagnostics.reconciliation).toMatchObject({ status: 'complete', completedAt: 20 });
-    expect(diagnostics.snapshots.find(({ kind }) => kind === 'title')).toMatchObject({
+    expect(diagnostics.reconciliation).toMatchObject({
+      status: 'complete',
+      completedAt: 20,
+    });
+    expect(
+      diagnostics.snapshots.find(({ kind }) => kind === 'title'),
+    ).toMatchObject({
       status: 'available',
     });
-    expect(diagnostics.storage).toEqual({ usage: 2_000, quota: 10_000, persisted: true });
+    expect(diagnostics.storage).toEqual({
+      usage: 2_000,
+      quota: 10_000,
+      persisted: true,
+    });
     expect(diagnostics.warnings).toEqual([]);
 
     database.close();
@@ -169,7 +183,12 @@ describe('LocalDataMaintenance', () => {
       contentSources: 160,
       luaSources: 80,
     });
-    expect(diagnostics.jobs).toEqual({ done: 1, pending: 1, running: 0, failed: 0 });
+    expect(diagnostics.jobs).toEqual({
+      done: 1,
+      pending: 1,
+      running: 0,
+      failed: 0,
+    });
     expect(pagesToArray).not.toHaveBeenCalled();
     expect(filesToArray).not.toHaveBeenCalled();
     expect(jobsWhere).toHaveBeenCalledWith('type');
@@ -243,15 +262,23 @@ describe('LocalDataMaintenance', () => {
         estimate: async () => {
           if (!advanced) {
             advanced = true;
-            await database.transaction('rw', database.pages, database.syncState, async () => {
-              await database.pages.put({
-                ...page(1, '重建后标题', '重建后正文', 'wikitext'),
-                localSeq: 2,
-                revisionId: 20,
-                contentRevisionId: 20,
-              });
-              await database.syncState.put({ key: 'local-sequence', value: 2 });
-            });
+            await database.transaction(
+              'rw',
+              database.pages,
+              database.syncState,
+              async () => {
+                await database.pages.put({
+                  ...page(1, '重建后标题', '重建后正文', 'wikitext'),
+                  localSeq: 2,
+                  revisionId: 20,
+                  contentRevisionId: 20,
+                });
+                await database.syncState.put({
+                  key: 'local-sequence',
+                  value: 2,
+                });
+              },
+            );
           }
           return { usage: 1_000, quota: 1024 * 1024 * 1024 };
         },
@@ -279,7 +306,9 @@ describe('LocalDataMaintenance', () => {
   it('keeps rebuilt handles usable and exposes warnings when snapshots cannot be saved', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
-    await database.pages.put(page(1, '配额受限页面', '仍可搜索的正文', 'wikitext'));
+    await database.pages.put(
+      page(1, '配额受限页面', '仍可搜索的正文', 'wikitext'),
+    );
     await database.syncState.put({ key: 'local-sequence', value: 1 });
     const cache = new VersionedSearchIndexCache(database, {
       storage: { estimate: async () => ({ usage: 1_000, quota: 1_000 }) },
@@ -298,9 +327,15 @@ describe('LocalDataMaintenance', () => {
       expect.objectContaining({ kind: 'content', reason: 'quota' }),
       expect.objectContaining({ kind: 'lua', reason: 'quota' }),
     ]);
-    expect(rebuilt.warnings.every(({ message }) => message.includes('配额'))).toBe(true);
-    expect(rebuilt.title.index.search('配额受限')[0]?.title).toBe('配额受限页面');
-    expect(rebuilt.content.index.search('仍可搜索')[0]?.title).toBe('配额受限页面');
+    expect(
+      rebuilt.warnings.every(({ message }) => message.includes('配额')),
+    ).toBe(true);
+    expect(rebuilt.title.index.search('配额受限')[0]?.title).toBe(
+      '配额受限页面',
+    );
+    expect(rebuilt.content.index.search('仍可搜索')[0]?.title).toBe(
+      '配额受限页面',
+    );
     expect(await database.indexSnapshots.count()).toBe(0);
 
     database.close();
@@ -309,52 +344,68 @@ describe('LocalDataMaintenance', () => {
 
   it.each([
     ['denied', { persist: async () => false }, { status: 'denied' }],
-    ['error', { persist: async () => { throw new Error('blocked'); } }, { status: 'error', message: 'blocked' }],
+    [
+      'error',
+      {
+        persist: async () => {
+          throw new Error('blocked');
+        },
+      },
+      { status: 'error', message: 'blocked' },
+    ],
     ['unsupported', {}, { status: 'unsupported' }],
-  ])('keeps maintenance usable when persistence is %s', async (_label, storage, expected) => {
-    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
-    await database.open();
-    const maintenance = new LocalDataMaintenance(
-      database,
-      new VersionedSearchIndexCache(database),
-      { storage },
-    );
+  ])(
+    'keeps maintenance usable when persistence is %s',
+    async (_label, storage, expected) => {
+      const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+      await database.open();
+      const maintenance = new LocalDataMaintenance(
+        database,
+        new VersionedSearchIndexCache(database),
+        { storage },
+      );
 
-    await expect(maintenance.requestPersistence()).resolves.toMatchObject(expected);
-    expect(await database.pages.count()).toBe(0);
+      await expect(maintenance.requestPersistence()).resolves.toMatchObject(
+        expected,
+      );
+      expect(await database.pages.count()).toBe(0);
 
-    database.close();
-    await database.delete();
-  });
+      database.close();
+      await database.delete();
+    },
+  );
 
   it.each([
     [false, 0],
     [true, 1],
-  ])('deletes the mirror and resets rules only when requested (%s)', async (resetRules, deletes) => {
-    const name = `test-${crypto.randomUUID()}`;
-    const database = new WikiSearchDatabase(name);
-    await database.open();
-    await database.pages.put(page(1, '将删除', '正文', 'wikitext'));
-    const preference = { remove: vi.fn(async () => undefined) };
-    const broadcast = { postMessage: vi.fn() };
-    const reload = vi.fn();
-    const maintenance = new LocalDataMaintenance(
-      database,
-      new VersionedSearchIndexCache(database),
-      { preference, broadcast, reload },
-    );
+  ])(
+    'deletes the mirror and resets rules only when requested (%s)',
+    async (resetRules, deletes) => {
+      const name = `test-${crypto.randomUUID()}`;
+      const database = new WikiSearchDatabase(name);
+      await database.open();
+      await database.pages.put(page(1, '将删除', '正文', 'wikitext'));
+      const preference = { remove: vi.fn(async () => undefined) };
+      const broadcast = { postMessage: vi.fn() };
+      const reload = vi.fn();
+      const maintenance = new LocalDataMaintenance(
+        database,
+        new VersionedSearchIndexCache(database),
+        { preference, broadcast, reload },
+      );
 
-    await maintenance.resetLocalMirror({ resetDataRules: resetRules });
+      await maintenance.resetLocalMirror({ resetDataRules: resetRules });
 
-    expect(preference.remove).toHaveBeenCalledTimes(deletes);
-    expect(broadcast.postMessage).toHaveBeenCalledWith({ type: 'reset' });
-    expect(reload).toHaveBeenCalledOnce();
-    const reopened = new WikiSearchDatabase(name);
-    await reopened.open();
-    expect(await reopened.pages.count()).toBe(0);
-    reopened.close();
-    await reopened.delete();
-  });
+      expect(preference.remove).toHaveBeenCalledTimes(deletes);
+      expect(broadcast.postMessage).toHaveBeenCalledWith({ type: 'reset' });
+      expect(reload).toHaveBeenCalledOnce();
+      const reopened = new WikiSearchDatabase(name);
+      await reopened.open();
+      expect(await reopened.pages.count()).toBe(0);
+      reopened.close();
+      await reopened.delete();
+    },
+  );
 });
 
 function page(

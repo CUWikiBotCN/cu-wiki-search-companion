@@ -39,27 +39,44 @@ describe('cache version contract', () => {
       localSeq: 7,
       seenInTitleSync: 1,
     });
-    await database.jobs.put({ type: 'wikitext-content', pageId: 1, status: 'pending' });
+    await database.jobs.put({
+      type: 'wikitext-content',
+      pageId: 1,
+      status: 'pending',
+    });
     await database.syncState.bulkPut([
       { key: 'local-sequence', value: 7 },
-      { key: 'recent-changes-sync', value: { through: 'rc-cursor', completedAt: 10 } },
-      { key: 'reconciliation-sync', value: { status: 'complete', completedAt: 20 } },
+      {
+        key: 'recent-changes-sync',
+        value: { through: 'rc-cursor', completedAt: 10 },
+      },
+      {
+        key: 'reconciliation-sync',
+        value: { status: 'complete', completedAt: 20 },
+      },
     ]);
 
     const result = await initializeVersionContract(database);
 
-    expect(result).toMatchObject({ status: 'compatible', registeredLegacy: true });
+    expect(result).toMatchObject({
+      status: 'compatible',
+      registeredLegacy: true,
+    });
     expect(await database.pages.count()).toBe(1);
     expect(await database.jobs.count()).toBe(1);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: 'rc-cursor',
     });
-    expect((await database.syncState.get('reconciliation-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('reconciliation-sync'))?.value,
+    ).toMatchObject({
       completedAt: 20,
     });
-    expect((await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value).toEqual(
-      CURRENT_VERSION_CONTRACT,
-    );
+    expect(
+      (await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value,
+    ).toEqual(CURRENT_VERSION_CONTRACT);
 
     database.close();
     await database.delete();
@@ -73,7 +90,10 @@ describe('cache version contract', () => {
     };
     const wikitextChanged: CacheVersionContract = {
       ...current,
-      extractors: { ...current.extractors, wikitext: current.extractors.wikitext + 1 },
+      extractors: {
+        ...current.extractors,
+        wikitext: current.extractors.wikitext + 1,
+      },
     };
     const bsonChanged: CacheVersionContract = {
       ...current,
@@ -85,19 +105,19 @@ describe('cache version contract', () => {
     };
 
     for (const kind of ['title', 'content', 'lua'] as const) {
-      expect(createCompatibilityKey(kind, 'jieba-wasm', analyzerChanged)).not.toBe(
-        createCompatibilityKey(kind, 'jieba-wasm', current),
-      );
+      expect(
+        createCompatibilityKey(kind, 'jieba-wasm', analyzerChanged),
+      ).not.toBe(createCompatibilityKey(kind, 'jieba-wasm', current));
     }
     expect(createCompatibilityKey('title', 'jieba-wasm', wikitextChanged)).toBe(
       createCompatibilityKey('title', 'jieba-wasm', current),
     );
-    expect(createCompatibilityKey('content', 'jieba-wasm', wikitextChanged)).not.toBe(
-      createCompatibilityKey('content', 'jieba-wasm', current),
-    );
-    expect(createCompatibilityKey('content', 'jieba-wasm', bsonChanged)).not.toBe(
-      createCompatibilityKey('content', 'jieba-wasm', current),
-    );
+    expect(
+      createCompatibilityKey('content', 'jieba-wasm', wikitextChanged),
+    ).not.toBe(createCompatibilityKey('content', 'jieba-wasm', current));
+    expect(
+      createCompatibilityKey('content', 'jieba-wasm', bsonChanged),
+    ).not.toBe(createCompatibilityKey('content', 'jieba-wasm', current));
     expect(createCompatibilityKey('lua', 'jieba-wasm', wikitextChanged)).toBe(
       createCompatibilityKey('lua', 'jieba-wasm', current),
     );
@@ -131,7 +151,10 @@ describe('cache version contract', () => {
       pageFacts: current.pageFacts,
       databaseSchema: current.databaseSchema,
     };
-    await database.syncState.put({ key: CACHE_VERSION_CONTRACT_KEY, value: reordered });
+    await database.syncState.put({
+      key: CACHE_VERSION_CONTRACT_KEY,
+      value: reordered,
+    });
     const put = vi.spyOn(database.syncState, 'put');
 
     await expect(initializeVersionContract(database)).resolves.toMatchObject({
@@ -180,67 +203,93 @@ describe('cache version contract', () => {
     ['negative', -1],
     ['fraction', 1.5],
     ['unsafe', Number.MAX_SAFE_INTEGER + 1],
-  ])('rejects %s values in every numeric contract field', async (_label, invalid) => {
-    const corruptContracts: CacheVersionContract[] = [
-      { ...CURRENT_VERSION_CONTRACT, databaseSchema: invalid },
-      { ...CURRENT_VERSION_CONTRACT, pageFacts: invalid },
-      { ...CURRENT_VERSION_CONTRACT, contentJobFormat: invalid },
-      { ...CURRENT_VERSION_CONTRACT, analyzerPipeline: invalid },
-      { ...CURRENT_VERSION_CONTRACT, dataCodeFormat: invalid },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        extractors: { ...CURRENT_VERSION_CONTRACT.extractors, wikitext: invalid },
-      },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        extractors: { ...CURRENT_VERSION_CONTRACT.extractors, bson: invalid },
-      },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        extractors: { ...CURRENT_VERSION_CONTRACT.extractors, lua: invalid },
-      },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        indexes: { ...CURRENT_VERSION_CONTRACT.indexes, title: invalid },
-      },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        indexes: { ...CURRENT_VERSION_CONTRACT.indexes, content: invalid },
-      },
-      {
-        ...CURRENT_VERSION_CONTRACT,
-        indexes: { ...CURRENT_VERSION_CONTRACT.indexes, lua: invalid },
-      },
-    ];
+  ])(
+    'rejects %s values in every numeric contract field',
+    async (_label, invalid) => {
+      const corruptContracts: CacheVersionContract[] = [
+        { ...CURRENT_VERSION_CONTRACT, databaseSchema: invalid },
+        { ...CURRENT_VERSION_CONTRACT, pageFacts: invalid },
+        { ...CURRENT_VERSION_CONTRACT, contentJobFormat: invalid },
+        { ...CURRENT_VERSION_CONTRACT, analyzerPipeline: invalid },
+        { ...CURRENT_VERSION_CONTRACT, dataCodeFormat: invalid },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          extractors: {
+            ...CURRENT_VERSION_CONTRACT.extractors,
+            wikitext: invalid,
+          },
+        },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          extractors: { ...CURRENT_VERSION_CONTRACT.extractors, bson: invalid },
+        },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          extractors: { ...CURRENT_VERSION_CONTRACT.extractors, lua: invalid },
+        },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          indexes: { ...CURRENT_VERSION_CONTRACT.indexes, title: invalid },
+        },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          indexes: { ...CURRENT_VERSION_CONTRACT.indexes, content: invalid },
+        },
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          indexes: { ...CURRENT_VERSION_CONTRACT.indexes, lua: invalid },
+        },
+      ];
 
-    for (const contract of corruptContracts) {
-      const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
-      await database.open();
-      await database.syncState.put({ key: CACHE_VERSION_CONTRACT_KEY, value: contract });
+      for (const contract of corruptContracts) {
+        const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+        await database.open();
+        await database.syncState.put({
+          key: CACHE_VERSION_CONTRACT_KEY,
+          value: contract,
+        });
 
-      await expect(initializeVersionContract(database)).resolves.toMatchObject({
-        status: 'incompatible',
-      });
+        await expect(
+          initializeVersionContract(database),
+        ).resolves.toMatchObject({
+          status: 'incompatible',
+        });
 
-      database.close();
-      await database.delete();
-    }
-  });
+        database.close();
+        await database.delete();
+      }
+    },
+  );
 });
 
 it('recognizes v1 read-only and migrates under write permission without clearing cursors', async () => {
   const database = new WikiSearchDatabase(`migration-${crypto.randomUUID()}`);
   await database.open();
-  const legacy = { ...CURRENT_VERSION_CONTRACT, pageFacts: 1, indexes: { title: 1, content: 1, lua: 1 } };
+  const legacy = {
+    ...CURRENT_VERSION_CONTRACT,
+    pageFacts: 1,
+    indexes: { title: 1, content: 1, lua: 1 },
+  };
   await database.syncState.bulkPut([
     { key: CACHE_VERSION_CONTRACT_KEY, value: legacy },
     { key: 'local-sequence', value: 42 },
     { key: 'recent-changes-sync', value: { through: 'keep' } },
   ]);
-  await expect(inspectVersionContract(database)).resolves.toMatchObject({ status: 'compatible', migrated: false });
-  expect((await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value).toEqual(legacy);
-  await expect(initializeVersionContract(database)).resolves.toMatchObject({ status: 'compatible', migrated: true });
+  await expect(inspectVersionContract(database)).resolves.toMatchObject({
+    status: 'compatible',
+    migrated: false,
+  });
+  expect(
+    (await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value,
+  ).toEqual(legacy);
+  await expect(initializeVersionContract(database)).resolves.toMatchObject({
+    status: 'compatible',
+    migrated: true,
+  });
   expect((await database.syncState.get('local-sequence'))?.value).toBe(42);
-  expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual({ through: 'keep' });
-  database.close(); await database.delete();
+  expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual({
+    through: 'keep',
+  });
+  database.close();
+  await database.delete();
 });

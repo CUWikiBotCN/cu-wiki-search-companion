@@ -40,25 +40,35 @@ describe('title sync', () => {
       const api = new WikiApi({
         retries: 0,
         fetcher: async (input) => {
-          const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+          const url = new URL(
+            String(input),
+            'https://casualtiesunknown.huijiwiki.com',
+          );
           if (url.searchParams.get('meta') === 'siteinfo') {
-            return json({ query: { namespaces: { 0: { id: 0, name: '新名称' } } } });
+            return json({
+              query: { namespaces: { 0: { id: 0, name: '新名称' } } },
+            });
           }
           return json({
             query: {
-              pages: [{
-                pageid: 1,
-                ns: 0,
-                title: '标签变更页',
-                lastrevid: 12,
-                contentmodel: 'wikitext',
-              }],
+              pages: [
+                {
+                  pageid: 1,
+                  ns: 0,
+                  title: '标签变更页',
+                  lastrevid: 12,
+                  contentmodel: 'wikitext',
+                },
+              ],
             },
           });
         },
       });
 
-      await syncTitles(database, api, analyzer, { force: true, requestIntervalMs: 0 });
+      await syncTitles(database, api, analyzer, {
+        force: true,
+        requestIntervalMs: 0,
+      });
 
       expect(await reader.pages.get(1)).toMatchObject({
         namespaceName: '新名称',
@@ -72,7 +82,10 @@ describe('title sync', () => {
       expect(content.throughLocalSeq).toBe(8);
       expect(content.index.search('正文')[0]?.namespaceName).toBe('新名称');
 
-      await syncTitles(database, api, analyzer, { force: true, requestIntervalMs: 0 });
+      await syncTitles(database, api, analyzer, {
+        force: true,
+        requestIntervalMs: 0,
+      });
 
       expect((await reader.pages.get(1))?.localSeq).toBe(8);
       expect((await reader.syncState.get('local-sequence'))?.value).toBe(8);
@@ -86,7 +99,10 @@ describe('title sync', () => {
   it('retries a title batch whose transaction aborts during commit', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
@@ -136,11 +152,13 @@ describe('title sync', () => {
       namespaceIndex: 0,
       pagesFetched: 0,
     });
-    expect((await database.syncState.get('title-sync'))?.value).not.toHaveProperty(
-      'apcontinue',
-    );
+    expect(
+      (await database.syncState.get('title-sync'))?.value,
+    ).not.toHaveProperty('apcontinue');
 
-    const resumed = await syncTitles(database, api, analyzer, { requestIntervalMs: 0 });
+    const resumed = await syncTitles(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
 
     expect(resumed).toMatchObject({ status: 'complete', pagesFetched: 2 });
     expect(await database.pages.get(1)).toMatchObject({
@@ -153,7 +171,9 @@ describe('title sync', () => {
     });
     expect(
       calls.filter(
-        (url) => url.searchParams.has('gapnamespace') && !url.searchParams.has('gapcontinue'),
+        (url) =>
+          url.searchParams.has('gapnamespace') &&
+          !url.searchParams.has('gapcontinue'),
       ),
     ).toHaveLength(2);
 
@@ -163,7 +183,10 @@ describe('title sync', () => {
 
   it('retries title pruning when the completion transaction aborts', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
       }
@@ -192,20 +215,28 @@ describe('title sync', () => {
       syncTitles(database, api, analyzer, { requestIntervalMs: 0 }),
     ).rejects.toBeDefined();
 
-    expect(await database.pages.get(1)).toMatchObject({ deleted: false, localSeq: 1 });
+    expect(await database.pages.get(1)).toMatchObject({
+      deleted: false,
+      localSeq: 1,
+    });
     expect((await database.syncState.get('title-sync'))?.value).toMatchObject({
       status: 'failed',
       namespaceIndex: 1,
       pagesFetched: 0,
     });
-    expect((await database.syncState.get('title-sync'))?.value).not.toHaveProperty(
-      'completedAt',
-    );
+    expect(
+      (await database.syncState.get('title-sync'))?.value,
+    ).not.toHaveProperty('completedAt');
 
-    const resumed = await syncTitles(database, api, analyzer, { requestIntervalMs: 0 });
+    const resumed = await syncTitles(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
 
     expect(resumed).toMatchObject({ status: 'complete', namespaceIndex: 1 });
-    expect(await database.pages.get(1)).toMatchObject({ deleted: true, localSeq: 2 });
+    expect(await database.pages.get(1)).toMatchObject({
+      deleted: true,
+      localSeq: 2,
+    });
 
     database.close();
     await database.delete();
@@ -214,7 +245,10 @@ describe('title sync', () => {
   it('persists cursor progress and avoids duplicate fetches after completion', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       const parameters = url.searchParams;
       if (parameters.get('meta') === 'siteinfo') {
@@ -228,12 +262,21 @@ describe('title sync', () => {
           },
         });
       }
-      if (parameters.get('gapnamespace') === '0' && !parameters.has('gapcontinue')) {
+      if (
+        parameters.get('gapnamespace') === '0' &&
+        !parameters.has('gapcontinue')
+      ) {
         return json({
           continue: { gapcontinue: '下一页' },
           query: {
             pages: [
-              { pageid: 1, ns: 0, title: '12号鹿弹', lastrevid: 11, contentmodel: 'wikitext' },
+              {
+                pageid: 1,
+                ns: 0,
+                title: '12号鹿弹',
+                lastrevid: 11,
+                contentmodel: 'wikitext',
+              },
             ],
           },
         });
@@ -257,7 +300,13 @@ describe('title sync', () => {
       return json({
         query: {
           pages: [
-            { pageid: 3, ns: 10, title: '模板:物品', lastrevid: 13, contentmodel: 'wikitext' },
+            {
+              pageid: 3,
+              ns: 10,
+              title: '模板:物品',
+              lastrevid: 13,
+              contentmodel: 'wikitext',
+            },
           ],
         },
       });
@@ -284,8 +333,12 @@ describe('title sync', () => {
     expect((await database.pages.get(2))?.isRedirect).toBe(true);
     expect((await database.pages.get(2))?.revisionId).toBe(12);
     expect((await database.pages.get(2))?.contentModel).toBe('wikitext');
-    expect(calls.every((url) => url.searchParams.get('maxlag') === '5')).toBe(true);
-    expect(calls.some((url) => url.searchParams.get('gapnamespace') === '6')).toBe(false);
+    expect(calls.every((url) => url.searchParams.get('maxlag') === '5')).toBe(
+      true,
+    );
+    expect(
+      calls.some((url) => url.searchParams.get('gapnamespace') === '6'),
+    ).toBe(false);
 
     database.close();
     await database.delete();
@@ -293,7 +346,10 @@ describe('title sync', () => {
 
   it('does not replace a newer local revision with an older allpages row', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
       }
@@ -347,7 +403,10 @@ describe('title sync', () => {
 
   it('clears cached content when a completed title scan tombstones a page', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
       }
@@ -388,7 +447,10 @@ describe('title sync', () => {
   it('resumes a failed title scan from its saved continuation', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
@@ -398,7 +460,13 @@ describe('title sync', () => {
           continue: { gapcontinue: '第二页' },
           query: {
             pages: [
-              { pageid: 1, ns: 0, title: '已完成首页', lastrevid: 10, contentmodel: 'wikitext' },
+              {
+                pageid: 1,
+                ns: 0,
+                title: '已完成首页',
+                lastrevid: 10,
+                contentmodel: 'wikitext',
+              },
             ],
           },
         });
@@ -406,7 +474,13 @@ describe('title sync', () => {
       return json({
         query: {
           pages: [
-            { pageid: 2, ns: 0, title: '恢复后次页', lastrevid: 20, contentmodel: 'wikitext' },
+            {
+              pageid: 2,
+              ns: 0,
+              title: '恢复后次页',
+              lastrevid: 20,
+              contentmodel: 'wikitext',
+            },
           ],
         },
       });
@@ -445,7 +519,9 @@ describe('title sync', () => {
     ]);
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
-    const result = await syncTitles(database, api, analyzer, { requestIntervalMs: 0 });
+    const result = await syncTitles(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.searchParams.get('gapcontinue')).toBe('第二页');
@@ -456,9 +532,9 @@ describe('title sync', () => {
     });
     expect(await database.pages.get(1)).toMatchObject({ deleted: false });
     expect(await database.pages.get(2)).toMatchObject({ title: '恢复后次页' });
-    expect((await database.syncState.get('title-sync'))?.value).not.toHaveProperty(
-      'apcontinue',
-    );
+    expect(
+      (await database.syncState.get('title-sync'))?.value,
+    ).not.toHaveProperty('apcontinue');
 
     requests.length = 0;
     const forced = await syncTitles(database, api, analyzer, {
@@ -476,7 +552,10 @@ describe('title sync', () => {
   it('persists new title continuations only as gapcontinue', async () => {
     let failSecondPage = true;
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({ query: { namespaces: { 0: { id: 0, name: '' } } } });
       }
@@ -485,7 +564,13 @@ describe('title sync', () => {
           continue: { gapcontinue: '精确的下一页游标' },
           query: {
             pages: [
-              { pageid: 1, ns: 0, title: '首页', lastrevid: 1, contentmodel: 'wikitext' },
+              {
+                pageid: 1,
+                ns: 0,
+                title: '首页',
+                lastrevid: 1,
+                contentmodel: 'wikitext',
+              },
             ],
           },
         });
@@ -508,18 +593,19 @@ describe('title sync', () => {
       status: 'failed',
       gapcontinue: '精确的下一页游标',
     });
-    expect((await database.syncState.get('title-sync'))?.value).not.toHaveProperty(
-      'apcontinue',
-    );
+    expect(
+      (await database.syncState.get('title-sync'))?.value,
+    ).not.toHaveProperty('apcontinue');
 
     await expect(
       syncTitles(database, api, analyzer, { requestIntervalMs: 0 }),
     ).resolves.toMatchObject({ status: 'complete', pagesFetched: 1 });
     expect(
       fetcher.mock.calls.some(([input]) =>
-        new URL(String(input), 'https://casualtiesunknown.huijiwiki.com').searchParams.has(
-          'apcontinue',
-        ),
+        new URL(
+          String(input),
+          'https://casualtiesunknown.huijiwiki.com',
+        ).searchParams.has('apcontinue'),
       ),
     ).toBe(false);
 

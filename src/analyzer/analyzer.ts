@@ -35,11 +35,15 @@ export class Analyzer {
   }
 
   cjkOf(value: string): string {
-    return [...value].filter((character) => CJK_CHARACTER.test(character)).join('');
+    return [...value]
+      .filter((character) => CJK_CHARACTER.test(character))
+      .join('');
   }
 
   documentTokens(value: string): string[] {
-    const tokens = new Set(this.documentTokensFromNormalized(this.normalize(value)));
+    const tokens = new Set(
+      this.documentTokensFromNormalized(this.normalize(value)),
+    );
     addLatinTokens(tokens, value.normalize('NFKC'));
     return [...tokens];
   }

@@ -6,11 +6,7 @@ import {
   readLocalSequence,
   readValidatedTitleSyncState,
 } from '../storage/sync-state';
-import type {
-  PageRecord,
-  TitleSyncProgress,
-  TitleSyncState,
-} from '../types';
+import type { PageRecord, TitleSyncProgress, TitleSyncState } from '../types';
 import { requestAllPages } from './all-pages';
 import { delay, WikiApi } from './wiki-api';
 
@@ -107,7 +103,8 @@ export async function syncFileResources(
               isRedirect: Boolean(rawFile.redirect),
               revisionId: rawFile.lastrevid,
               contentModel: rawFile.contentmodel,
-              localSeq: oldFile?.localSeq ?? rawFile.lastrevid ?? rawFile.pageid,
+              localSeq:
+                oldFile?.localSeq ?? rawFile.lastrevid ?? rawFile.pageid,
               seenInFileSync: state.generation,
               deleted: false,
             };
@@ -121,7 +118,9 @@ export async function syncFileResources(
             ...state,
             pagesFetched: state.pagesFetched + rawFiles.length,
             namespaceIndex: nextContinue ? 0 : 1,
-            ...(nextContinue ? { gapcontinue: nextContinue } : { gapcontinue: undefined }),
+            ...(nextContinue
+              ? { gapcontinue: nextContinue }
+              : { gapcontinue: undefined }),
           };
           const recentChangeRecord =
             sequence === initialSequence
@@ -136,7 +135,10 @@ export async function syncFileResources(
                   { key: LOCAL_SEQUENCE_KEY, value: sequence },
                   {
                     key: RECENT_CHANGES_SYNC_KEY,
-                    value: withFileChangeSequence(recentChangeRecord?.value, sequence),
+                    value: withFileChangeSequence(
+                      recentChangeRecord?.value,
+                      sequence,
+                    ),
                   },
                 ]),
           ]);
@@ -147,7 +149,8 @@ export async function syncFileResources(
 
       await options.onBatch?.(storedBatch);
       report(state, options.onProgress);
-      if (state.namespaceIndex === 0) await delay(options.requestIntervalMs ?? 300);
+      if (state.namespaceIndex === 0)
+        await delay(options.requestIntervalMs ?? 300);
     }
 
     const completedState = await database.transaction(
@@ -159,7 +162,9 @@ export async function syncFileResources(
         const staleIds: number[] = [];
         const migratedFiles: PageRecord[] = [];
         await database.fileResources.each((file) => {
-          if ((file.seenInFileSync ?? file.seenInTitleSync) !== state.generation) {
+          if (
+            (file.seenInFileSync ?? file.seenInTitleSync) !== state.generation
+          ) {
             staleIds.push(file.id);
             return;
           }
@@ -174,7 +179,8 @@ export async function syncFileResources(
         const recentChangeRecord = staleIds.length
           ? await database.syncState.get(RECENT_CHANGES_SYNC_KEY)
           : undefined;
-        if (migratedFiles.length) await database.fileResources.bulkPut(migratedFiles);
+        if (migratedFiles.length)
+          await database.fileResources.bulkPut(migratedFiles);
         await database.fileResources.bulkDelete(staleIds);
         const nextState: TitleSyncState = {
           ...state,
@@ -188,7 +194,10 @@ export async function syncFileResources(
                 { key: LOCAL_SEQUENCE_KEY, value: sequence },
                 {
                   key: RECENT_CHANGES_SYNC_KEY,
-                  value: withFileChangeSequence(recentChangeRecord?.value, sequence),
+                  value: withFileChangeSequence(
+                    recentChangeRecord?.value,
+                    sequence,
+                  ),
                 },
               ]
             : []),
@@ -211,7 +220,10 @@ export async function syncFileResources(
   }
 }
 
-function fileFactChanged(oldFile: PageRecord | undefined, nextFile: PageRecord): boolean {
+function fileFactChanged(
+  oldFile: PageRecord | undefined,
+  nextFile: PageRecord,
+): boolean {
   return (
     !oldFile ||
     oldFile.title !== nextFile.title ||
@@ -228,12 +240,16 @@ function withoutLegacyTitleGeneration(file: PageRecord): PageRecord {
   return currentFile;
 }
 
-function withFileChangeSequence(value: unknown, sequence: number): Record<string, unknown> {
+function withFileChangeSequence(
+  value: unknown,
+  sequence: number,
+): Record<string, unknown> {
   const state =
     value !== null && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : {};
-  const previous = typeof state.fileChangeSeq === 'number' ? state.fileChangeSeq : 0;
+  const previous =
+    typeof state.fileChangeSeq === 'number' ? state.fileChangeSeq : 0;
   return { ...state, fileChangeSeq: Math.max(previous, sequence) };
 }
 

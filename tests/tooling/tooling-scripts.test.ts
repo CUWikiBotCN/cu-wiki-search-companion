@@ -9,47 +9,61 @@ import testMaintenanceSource from '../../scripts/test-maintenance.playwright.js?
 import testReconciliationSource from '../../scripts/test-reconciliation.playwright.js?raw';
 import { WikiSearchDatabase } from '../../src/storage/database';
 
-type RunCodeScript = (page: unknown, userscriptUrl?: string) => Promise<unknown>;
+type RunCodeScript = (
+  page: unknown,
+  userscriptUrl?: string,
+) => Promise<unknown>;
 const BrowserURL = globalThis.URL;
 
 describe('browser tooling scripts', () => {
   it.each([
     'https://example.test/?action=edit',
     'https://example.test/?action=submit',
-  ])('runs the snapshot harness on the activated edit page %s', async (editorUrl) => {
-    let wrongPageUsed = false;
-    let pages: unknown[] = [];
-    const context = { pages: () => pages };
-    const reader = {
-      url: () => 'https://example.test/wiki/首页',
-      context: () => context,
-      on: () => { wrongPageUsed = true; },
-      off: () => undefined,
-      evaluate: async () => {
-        wrongPageUsed = true;
-        throw new Error('wrong-page-probe');
-      },
-    };
-    const editor = {
-      url: () => editorUrl,
-      context: () => context,
-      on: () => undefined,
-      off: () => undefined,
-      evaluate: async () => { throw new Error('selected-page-probe'); },
-    };
-    pages = [reader, editor];
-    const run = Function(`return (${testIndexSnapshotsSource}\n)`)() as RunCodeScript;
-    vi.stubGlobal('URL', undefined);
+  ])(
+    'runs the snapshot harness on the activated edit page %s',
+    async (editorUrl) => {
+      let wrongPageUsed = false;
+      let pages: unknown[] = [];
+      const context = { pages: () => pages };
+      const reader = {
+        url: () => 'https://example.test/wiki/首页',
+        context: () => context,
+        on: () => {
+          wrongPageUsed = true;
+        },
+        off: () => undefined,
+        evaluate: async () => {
+          wrongPageUsed = true;
+          throw new Error('wrong-page-probe');
+        },
+      };
+      const editor = {
+        url: () => editorUrl,
+        context: () => context,
+        on: () => undefined,
+        off: () => undefined,
+        evaluate: async () => {
+          throw new Error('selected-page-probe');
+        },
+      };
+      pages = [reader, editor];
+      const run = Function(
+        `return (${testIndexSnapshotsSource}\n)`,
+      )() as RunCodeScript;
+      vi.stubGlobal('URL', undefined);
 
-    await expect(run(reader)).rejects.toThrow('selected-page-probe');
-    expect(wrongPageUsed).toBe(false);
+      await expect(run(reader)).rejects.toThrow('selected-page-probe');
+      expect(wrongPageUsed).toBe(false);
 
-    pages = [reader];
-    await expect(run(reader)).rejects.toThrow('找不到已激活的维基编辑页');
-  });
+      pages = [reader];
+      await expect(run(reader)).rejects.toThrow('找不到已激活的维基编辑页');
+    },
+  );
 
   it('benchmarks on its own edit page and cleans up without retrying failed readiness', async () => {
-    const context = new InstallContext(new Error('benchmark readiness timeout'));
+    const context = new InstallContext(
+      new Error('benchmark readiness timeout'),
+    );
     const reader = context.addInitial(
       'https://casualtiesunknown.huijiwiki.com/wiki/首页',
     );
@@ -57,11 +71,14 @@ describe('browser tooling scripts', () => {
       'https://casualtiesunknown.huijiwiki.com/index.php?title=首页&action=edit',
     );
     // The run-code VM has no process.env; exercise the public defaults directly.
-    const benchmark = Function('process', `return (${benchmarkContentSearchSource}\n)`)(
-      undefined,
-    ) as RunCodeScript;
+    const benchmark = Function(
+      'process',
+      `return (${benchmarkContentSearchSource}\n)`,
+    )(undefined) as RunCodeScript;
 
-    await expect(benchmark(reader)).rejects.toThrow('benchmark readiness timeout');
+    await expect(benchmark(reader)).rejects.toThrow(
+      'benchmark readiness timeout',
+    );
 
     expect(context.createdPages).toHaveLength(1);
     const dedicatedWikiPage = context.createdPages[0];
@@ -69,7 +86,9 @@ describe('browser tooling scripts', () => {
       'https://casualtiesunknown.huijiwiki.com/index.php?title=12%E5%8F%B7%E9%B9%BF%E5%BC%B9&action=edit',
     ]);
     expect(dedicatedWikiPage?.readyChecks).toHaveLength(1);
-    expect(dedicatedWikiPage?.readyChecks[0]?.predicate).toContain('__CU_WIKI_SEARCH__');
+    expect(dedicatedWikiPage?.readyChecks[0]?.predicate).toContain(
+      '__CU_WIKI_SEARCH__',
+    );
     expect(dedicatedWikiPage?.reloads).toBe(0);
     expect(dedicatedWikiPage?.bringToFrontCalls).toBe(1);
     expect(dedicatedWikiPage?.closed).toBe(true);
@@ -86,8 +105,12 @@ describe('browser tooling scripts', () => {
   });
 
   it('resets deep search state before every snapshot reload', () => {
-    expect([...testIndexSnapshotsSource.matchAll(/await reloadCold\(\)/g)]).toHaveLength(4);
-    expect([...testIndexSnapshotsSource.matchAll(/await page\.reload/g)]).toHaveLength(1);
+    expect([
+      ...testIndexSnapshotsSource.matchAll(/await reloadCold\(\)/g),
+    ]).toHaveLength(4);
+    expect([
+      ...testIndexSnapshotsSource.matchAll(/await page\.reload/g),
+    ]).toHaveLength(1);
     const reset = testIndexSnapshotsSource.slice(
       testIndexSnapshotsSource.indexOf('async function reloadCold'),
       testIndexSnapshotsSource.indexOf('async function waitForColdReady'),
@@ -100,7 +123,9 @@ describe('browser tooling scripts', () => {
 
   it('awaits asynchronous snapshot conditions outside waitForFunction', () => {
     expect(testIndexSnapshotsSource).not.toMatch(/waitForFunction\(\s*async/);
-    expect([...testIndexSnapshotsSource.matchAll(/await waitForPage\(/g)]).toHaveLength(2);
+    expect([
+      ...testIndexSnapshotsSource.matchAll(/await waitForPage\(/g),
+    ]).toHaveLength(2);
     const helper = testIndexSnapshotsSource.slice(
       testIndexSnapshotsSource.indexOf('async function waitForPage'),
       testIndexSnapshotsSource.indexOf('async function reloadCold'),
@@ -115,7 +140,9 @@ describe('browser tooling scripts', () => {
     const reader = context.addInitial(
       'https://casualtiesunknown.huijiwiki.com/wiki/首页',
     );
-    const existingAsk = context.addInitial('chrome-extension://tampermonkey/ask.html');
+    const existingAsk = context.addInitial(
+      'chrome-extension://tampermonkey/ask.html',
+    );
     const existingInstallation = context.addInitial(
       'https://www.tampermonkey.net/script_installation.php',
     );
@@ -186,8 +213,7 @@ describe('browser tooling scripts', () => {
       'https://casualtiesunknown.huijiwiki.com/wiki/首页',
     );
     const install = await loadRunCodeScript('install-userscript.playwright.js');
-    const userscriptUrl =
-      'http://127.0.0.1:8790/cu-wiki-local-search.user.js';
+    const userscriptUrl = 'http://127.0.0.1:8790/cu-wiki-local-search.user.js';
 
     await install(reader, userscriptUrl);
 
@@ -196,7 +222,9 @@ describe('browser tooling scripts', () => {
   });
 
   it('runs reconciliation after removing the probe page and completes the acceptance flow', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
     const page = await ReconciliationPage.create();
 
     await expect(reconcile(page)).resolves.toMatchObject({
@@ -208,7 +236,9 @@ describe('browser tooling scripts', () => {
   });
 
   it('does not restore the probe backup when reconciliation commits before forceSync rejects', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
     const page = await ReconciliationPage.create({ rejectAfterCommit: true });
 
     await expect(reconcile(page)).rejects.toThrow('模拟对账提交后的收尾失败');
@@ -224,7 +254,9 @@ describe('browser tooling scripts', () => {
   });
 
   it('restores the probe backup when forceSync rejects before any durable change', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
     const page = await ReconciliationPage.create({ rejectBeforeCommit: true });
 
     await expect(reconcile(page)).rejects.toThrow('模拟对账提交前失败');
@@ -239,8 +271,12 @@ describe('browser tooling scripts', () => {
   });
 
   it('does not mistake an unchanged prior complete state for this reconciliation run', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
-    const page = await ReconciliationPage.create({ resolveWithoutCommit: true });
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
+    const page = await ReconciliationPage.create({
+      resolveWithoutCommit: true,
+    });
 
     await expect(reconcile(page)).rejects.toThrow('对账没有补回本地缺页');
 
@@ -254,8 +290,12 @@ describe('browser tooling scripts', () => {
   });
 
   it('does not restore the probe backup after another writer advances local facts', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
-    const page = await ReconciliationPage.create({ advanceSequenceBeforeReject: true });
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
+    const page = await ReconciliationPage.create({
+      advanceSequenceBeforeReject: true,
+    });
 
     await expect(reconcile(page)).rejects.toThrow('模拟其他写者提交后的失败');
 
@@ -266,8 +306,12 @@ describe('browser tooling scripts', () => {
   });
 
   it('does not overwrite a probe page restored by another writer at a newer revision', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
-    const page = await ReconciliationPage.create({ replaceProbeBeforeReject: true });
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
+    const page = await ReconciliationPage.create({
+      replaceProbeBeforeReject: true,
+    });
 
     await expect(reconcile(page)).rejects.toThrow('模拟探针事实更新后的失败');
 
@@ -281,8 +325,12 @@ describe('browser tooling scripts', () => {
   });
 
   it('aborts before deleting a probe changed after the before snapshot', async () => {
-    const reconcile = await loadRunCodeScript('test-reconciliation.playwright.js');
-    const page = await ReconciliationPage.create({ replaceProbeBeforeDelete: true });
+    const reconcile = await loadRunCodeScript(
+      'test-reconciliation.playwright.js',
+    );
+    const page = await ReconciliationPage.create({
+      replaceProbeBeforeDelete: true,
+    });
 
     await expect(reconcile(page)).rejects.toThrow('探针快照已变化');
 
@@ -298,7 +346,9 @@ describe('browser tooling scripts', () => {
   });
 
   it('waits for a terminal persistence result before maintenance acceptance completes', async () => {
-    const inspectMaintenance = await loadRunCodeScript('test-maintenance.playwright.js');
+    const inspectMaintenance = await loadRunCodeScript(
+      'test-maintenance.playwright.js',
+    );
     const page = new MaintenancePage();
 
     const result = (await inspectMaintenance(page)) as {
@@ -315,7 +365,8 @@ describe('browser tooling scripts', () => {
 afterEach(() => {
   vi.unstubAllGlobals();
   document.body.replaceChildren();
-  delete (window as Window & { __CU_WIKI_SEARCH__?: unknown }).__CU_WIKI_SEARCH__;
+  delete (window as Window & { __CU_WIKI_SEARCH__?: unknown })
+    .__CU_WIKI_SEARCH__;
 });
 
 async function loadRunCodeScript(name: string): Promise<RunCodeScript> {
@@ -366,7 +417,10 @@ class InstallContext {
   }
 
   openAskPage(): void {
-    const page = new InstallPage(this, 'chrome-extension://tampermonkey/ask.html');
+    const page = new InstallPage(
+      this,
+      'chrome-extension://tampermonkey/ask.html',
+    );
     this.allPages.push(page);
     this.createdPages.push(page);
   }
@@ -402,7 +456,8 @@ class InstallPage {
     this.address = url;
     const action = new BrowserURL(url).searchParams.get('action');
     this.activated = action === 'edit' || action === 'submit';
-    if (url.includes('cu-wiki-local-search.user.js')) this.installContext.openAskPage();
+    if (url.includes('cu-wiki-local-search.user.js'))
+      this.installContext.openAskPage();
   }
 
   async close(): Promise<void> {
@@ -434,12 +489,16 @@ class InstallPage {
     argument: unknown,
   ): Promise<void> {
     this.readyChecks.push({ predicate: predicate.toString(), argument });
-    if (this.installContext.readyFailure) throw this.installContext.readyFailure;
+    if (this.installContext.readyFailure)
+      throw this.installContext.readyFailure;
   }
 
   async evaluate<T>(callback: (...args: never[]) => T): Promise<T> {
     const source = callback.toString();
-    if (source.includes('wgAction') || source.includes("searchParams.get('action')")) {
+    if (
+      source.includes('wgAction') ||
+      source.includes("searchParams.get('action')")
+    ) {
       this.activationChecks.push(source);
       return this.activated as T;
     }
@@ -469,7 +528,9 @@ class InstallControl {
     return '安装';
   }
 
-  async evaluate(callback: (control: { click(): void }) => void): Promise<void> {
+  async evaluate(
+    callback: (control: { click(): void }) => void,
+  ): Promise<void> {
     callback({ click: () => undefined });
   }
 }
@@ -555,7 +616,10 @@ class ReconciliationPage {
     }
   }
 
-  async evaluate<T>(callback: (...args: never[]) => T, argument?: unknown): Promise<T> {
+  async evaluate<T>(
+    callback: (...args: never[]) => T,
+    argument?: unknown,
+  ): Promise<T> {
     const source = callback.toString();
     if (source.includes('__CU_WIKI_SEARCH__.forceSync()')) {
       this.forceSyncCalls += 1;
@@ -600,18 +664,17 @@ class ReconciliationPage {
       await this.commitProbeAndReconciliation();
     }
 
-    const beforeCleanup = this.cleanupPending ? await this.readProbePage() : undefined;
+    const beforeCleanup = this.cleanupPending
+      ? await this.readProbePage()
+      : undefined;
     try {
-      return await (
-        callback as unknown as (value?: unknown) => T | Promise<T>
-      )(argument);
+      return await (callback as unknown as (value?: unknown) => T | Promise<T>)(
+        argument,
+      );
     } finally {
       if (this.cleanupPending) {
         const afterCleanup = await this.readProbePage();
-        if (
-          beforeCleanup?.localSeq !== 10 &&
-          afterCleanup?.localSeq === 10
-        ) {
+        if (beforeCleanup?.localSeq !== 10 && afterCleanup?.localSeq === 10) {
           this.cleanupRestores += 1;
         }
       }
@@ -636,106 +699,126 @@ class ReconciliationPage {
 
   private async commitOtherFact(): Promise<void> {
     const database = new WikiSearchDatabase();
-    await database.transaction('rw', database.pages, database.syncState, async () => {
-      await database.pages.put({
-        id: 99,
-        title: '并发事实',
-        normalizedTitle: '并发事实',
-        namespace: 0,
-        namespaceName: '',
-        revisionId: 990,
-        isRedirect: false,
-        deleted: false,
-        localSeq: 11,
-        seenInTitleSync: 100,
-      });
-      await database.syncState.put({ key: 'local-sequence', value: 11 });
-    });
+    await database.transaction(
+      'rw',
+      database.pages,
+      database.syncState,
+      async () => {
+        await database.pages.put({
+          id: 99,
+          title: '并发事实',
+          normalizedTitle: '并发事实',
+          namespace: 0,
+          namespaceName: '',
+          revisionId: 990,
+          isRedirect: false,
+          deleted: false,
+          localSeq: 11,
+          seenInTitleSync: 100,
+        });
+        await database.syncState.put({ key: 'local-sequence', value: 11 });
+      },
+    );
     database.close();
   }
 
   private async commitNewerProbeFact(): Promise<void> {
     const database = new WikiSearchDatabase();
-    await database.transaction('rw', database.pages, database.syncState, async () => {
-      await database.pages.put({
-        id: 42,
-        title: '地下水（新事实）',
-        normalizedTitle: '地下水（新事实）',
-        namespace: 0,
-        namespaceName: '',
-        revisionId: 421,
-        isRedirect: true,
-        deleted: false,
-        localSeq: 11,
-        seenInTitleSync: 100,
-      });
-      await database.syncState.put({ key: 'local-sequence', value: 11 });
-    });
+    await database.transaction(
+      'rw',
+      database.pages,
+      database.syncState,
+      async () => {
+        await database.pages.put({
+          id: 42,
+          title: '地下水（新事实）',
+          normalizedTitle: '地下水（新事实）',
+          namespace: 0,
+          namespaceName: '',
+          revisionId: 421,
+          isRedirect: true,
+          deleted: false,
+          localSeq: 11,
+          seenInTitleSync: 100,
+        });
+        await database.syncState.put({ key: 'local-sequence', value: 11 });
+      },
+    );
     database.close();
   }
 
   private async commitProbeAndReconciliation(): Promise<void> {
     const database = new WikiSearchDatabase();
-    await database.transaction('rw', database.pages, database.syncState, async () => {
-      await database.pages.put({
-        id: 42,
-        title: '地下水（删除前并发事实）',
-        normalizedTitle: '地下水（删除前并发事实）',
-        namespace: 0,
-        namespaceName: '',
-        revisionId: 421,
-        isRedirect: true,
-        deleted: false,
-        localSeq: 11,
-        seenInTitleSync: 200,
-      });
-      await database.syncState.bulkPut([
-        { key: 'local-sequence', value: 11 },
-        {
-          key: 'reconciliation-sync',
-          value: {
-            status: 'complete',
-            generation: 200,
-            completedAt: 2_000,
+    await database.transaction(
+      'rw',
+      database.pages,
+      database.syncState,
+      async () => {
+        await database.pages.put({
+          id: 42,
+          title: '地下水（删除前并发事实）',
+          normalizedTitle: '地下水（删除前并发事实）',
+          namespace: 0,
+          namespaceName: '',
+          revisionId: 421,
+          isRedirect: true,
+          deleted: false,
+          localSeq: 11,
+          seenInTitleSync: 200,
+        });
+        await database.syncState.bulkPut([
+          { key: 'local-sequence', value: 11 },
+          {
+            key: 'reconciliation-sync',
+            value: {
+              status: 'complete',
+              generation: 200,
+              completedAt: 2_000,
+            },
           },
-        },
-      ]);
-    });
+        ]);
+      },
+    );
     database.close();
   }
 
   private async commitReconciliation(): Promise<void> {
     const database = new WikiSearchDatabase();
-    await database.transaction('rw', database.pages, database.syncState, async () => {
-      await database.pages.put({
-        id: 42,
-        title: '地下水',
-        normalizedTitle: '地下水',
-        namespace: 0,
-        namespaceName: '',
-        revisionId: 420,
-        isRedirect: true,
-        deleted: false,
-        localSeq: 11,
-        seenInTitleSync: 200,
-      });
-      await database.syncState.bulkPut([
-        { key: 'local-sequence', value: 11 },
-        {
-          key: 'recent-changes-sync',
-          value: { through: 'cursor', completedAt: 2_000, recentChanges: [] },
-        },
-        {
-          key: 'reconciliation-sync',
-          value: {
-            status: 'complete',
-            generation: 200,
-            completedAt: 2_000,
-            pagesFetched: 10,
+    await database.transaction(
+      'rw',
+      database.pages,
+      database.syncState,
+      async () => {
+        await database.pages.put({
+          id: 42,
+          title: '地下水',
+          normalizedTitle: '地下水',
+          namespace: 0,
+          namespaceName: '',
+          revisionId: 420,
+          isRedirect: true,
+          deleted: false,
+          localSeq: 11,
+          seenInTitleSync: 200,
+        });
+        await database.syncState.bulkPut([
+          { key: 'local-sequence', value: 11 },
+          {
+            key: 'recent-changes-sync',
+            value: { through: 'cursor', completedAt: 2_000, recentChanges: [] },
           },
-        },
-      ]);
-    });
+          {
+            key: 'reconciliation-sync',
+            value: {
+              status: 'complete',
+              generation: 200,
+              completedAt: 2_000,
+              pagesFetched: 10,
+            },
+          },
+        ]);
+      },
+    );
     database.close();
     this.setDebugState('complete', 2_000);
   }
@@ -764,7 +847,9 @@ class MaintenancePage {
   readonly settlement: Promise<void>;
 
   constructor() {
-    (window as Window & { __CU_WIKI_SEARCH__?: { ready: boolean } }).__CU_WIKI_SEARCH__ = {
+    (
+      window as Window & { __CU_WIKI_SEARCH__?: { ready: boolean } }
+    ).__CU_WIKI_SEARCH__ = {
       ready: true,
     };
     const host = document.createElement('div');
@@ -783,12 +868,15 @@ class MaintenancePage {
     `;
     document.body.append(host);
     const toggle = root.querySelector<HTMLButtonElement>('.toggle')!;
-    toggle.addEventListener('click', () => toggle.setAttribute('aria-expanded', 'true'));
+    toggle.addEventListener('click', () =>
+      toggle.setAttribute('aria-expanded', 'true'),
+    );
     root
       .querySelector<HTMLButtonElement>('.maintenance-toggle')!
       .addEventListener('click', () => {
         root.querySelector<HTMLElement>('.maintenance')!.hidden = false;
-        root.querySelector<HTMLElement>('.maintenance-output')!.textContent = '页面 1';
+        root.querySelector<HTMLElement>('.maintenance-output')!.textContent =
+          '页面 1';
       });
     let finish!: () => void;
     this.settlement = new Promise<void>((resolve) => {
@@ -797,7 +885,9 @@ class MaintenancePage {
     root
       .querySelector<HTMLButtonElement>('.request-persistence')!
       .addEventListener('click', () => {
-        for (const button of root.querySelectorAll<HTMLButtonElement>('.maintenance-action')) {
+        for (const button of root.querySelectorAll<HTMLButtonElement>(
+          '.maintenance-action',
+        )) {
           button.disabled = true;
         }
         root.querySelector<HTMLElement>('.status')!.textContent =
@@ -816,7 +906,10 @@ class MaintenancePage {
       });
   }
 
-  async evaluate<T, A>(callback: (argument: A) => T, argument?: A): Promise<Awaited<T>> {
+  async evaluate<T, A>(
+    callback: (argument: A) => T,
+    argument?: A,
+  ): Promise<Awaited<T>> {
     return await callback(argument as A);
   }
 

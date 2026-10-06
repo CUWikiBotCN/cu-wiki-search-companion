@@ -7,11 +7,7 @@ import {
   readLocalSequence,
   readValidatedTitleSyncState,
 } from '../storage/sync-state';
-import type {
-  PageRecord,
-  TitleSyncProgress,
-  TitleSyncState,
-} from '../types';
+import type { PageRecord, TitleSyncProgress, TitleSyncState } from '../types';
 import { requestAllPages } from './all-pages';
 import { searchablePageFactChanged } from './page-fact-policy';
 import { delay, WikiApi } from './wiki-api';
@@ -20,7 +16,10 @@ const TITLE_SYNC_KEY = 'title-sync';
 
 interface SiteInfoResponse {
   query: {
-    namespaces: Record<string, { id: number; name: string; canonical?: string }>;
+    namespaces: Record<
+      string,
+      { id: number; name: string; canonical?: string }
+    >;
   };
 }
 
@@ -62,7 +61,10 @@ export async function syncTitles(
       status: 'running',
       namespaceIds: namespaces.map(({ id }) => id),
       namespaceNames: Object.fromEntries(
-        namespaces.map(({ id, name, canonical }) => [id, name || canonical || '（主）']),
+        namespaces.map(({ id, name, canonical }) => [
+          id,
+          name || canonical || '（主）',
+        ]),
       ),
       namespaceIndex: 0,
       generation: Date.now(),
@@ -88,65 +90,74 @@ export async function syncTitles(
       const nextContinue = response.continue?.gapcontinue;
       let storedBatch: PageRecord[] = [];
 
-      const committedState = await database.transaction('rw', database.pages, database.fileResources, database.syncState, async () => {
-        const ids = rawPages.map(({ pageid }) => pageid);
-        const existingPages = new Map(
-          (await database.pages.bulkGet(ids))
-            .filter((page): page is PageRecord => page !== undefined)
-            .map((page) => [page.id, page]),
-        );
-        let sequence = await readLocalSequence(database);
+      const committedState = await database.transaction(
+        'rw',
+        database.pages,
+        database.fileResources,
+        database.syncState,
+        async () => {
+          const ids = rawPages.map(({ pageid }) => pageid);
+          const existingPages = new Map(
+            (await database.pages.bulkGet(ids))
+              .filter((page): page is PageRecord => page !== undefined)
+              .map((page) => [page.id, page]),
+          );
+          let sequence = await readLocalSequence(database);
 
-        storedBatch = rawPages.map((rawPage) => {
-          const oldPage = existingPages.get(rawPage.pageid);
-          if (
-            oldPage &&
-            typeof oldPage.revisionId === 'number' &&
-            typeof rawPage.lastrevid === 'number' &&
-            oldPage.revisionId > rawPage.lastrevid
-          ) {
-            return {
+          storedBatch = rawPages.map((rawPage) => {
+            const oldPage = existingPages.get(rawPage.pageid);
+            if (
+              oldPage &&
+              typeof oldPage.revisionId === 'number' &&
+              typeof rawPage.lastrevid === 'number' &&
+              oldPage.revisionId > rawPage.lastrevid
+            ) {
+              return {
+                ...oldPage,
+                seenInTitleSync: state.generation,
+              };
+            }
+            const nextPage: PageRecord = {
               ...oldPage,
+              id: rawPage.pageid,
+              title: rawPage.title,
+              normalizedTitle: analyzer.normalize(rawPage.title),
+              namespace: rawPage.ns,
+              namespaceName:
+                state.namespaceNames[rawPage.ns] ?? String(rawPage.ns),
+              isRedirect: Boolean(rawPage.redirect),
+              revisionId: rawPage.lastrevid,
+              contentModel: rawPage.contentmodel,
+              localSeq: oldPage?.localSeq ?? sequence,
               seenInTitleSync: state.generation,
+              deleted: false,
             };
-          }
-          const nextPage: PageRecord = {
-            ...oldPage,
-            id: rawPage.pageid,
-            title: rawPage.title,
-            normalizedTitle: analyzer.normalize(rawPage.title),
-            namespace: rawPage.ns,
-            namespaceName: state.namespaceNames[rawPage.ns] ?? String(rawPage.ns),
-            isRedirect: Boolean(rawPage.redirect),
-            revisionId: rawPage.lastrevid,
-            contentModel: rawPage.contentmodel,
-            localSeq: oldPage?.localSeq ?? sequence,
-            seenInTitleSync: state.generation,
-            deleted: false,
-          };
-          nextPage.redirectResolution = currentRedirectResolution(nextPage);
-          if (searchablePageFactChanged(oldPage, nextPage)) {
-            sequence += 1;
-            nextPage.localSeq = sequence;
-          }
-          return nextPage;
-        });
+            nextPage.redirectResolution = currentRedirectResolution(nextPage);
+            if (searchablePageFactChanged(oldPage, nextPage)) {
+              sequence += 1;
+              nextPage.localSeq = sequence;
+            }
+            return nextPage;
+          });
 
-        const nextState: TitleSyncState = {
-          ...state,
-          pagesFetched: state.pagesFetched + rawPages.length,
-          namespaceIndex: nextContinue
-            ? state.namespaceIndex
-            : state.namespaceIndex + 1,
-          ...(nextContinue ? { gapcontinue: nextContinue } : { gapcontinue: undefined }),
-        };
-        await database.pages.bulkPut(storedBatch);
-        await database.syncState.bulkPut([
-          { key: LOCAL_SEQUENCE_KEY, value: sequence },
-          { key: TITLE_SYNC_KEY, value: nextState },
-        ]);
-        return nextState;
-      });
+          const nextState: TitleSyncState = {
+            ...state,
+            pagesFetched: state.pagesFetched + rawPages.length,
+            namespaceIndex: nextContinue
+              ? state.namespaceIndex
+              : state.namespaceIndex + 1,
+            ...(nextContinue
+              ? { gapcontinue: nextContinue }
+              : { gapcontinue: undefined }),
+          };
+          await database.pages.bulkPut(storedBatch);
+          await database.syncState.bulkPut([
+            { key: LOCAL_SEQUENCE_KEY, value: sequence },
+            { key: TITLE_SYNC_KEY, value: nextState },
+          ]);
+          return nextState;
+        },
+      );
       state = committedState;
 
       await options.onBatch?.(storedBatch);
@@ -163,7 +174,10 @@ export async function syncTitles(
       database.syncState,
       async () => {
         const stalePages = await database.pages
-          .filter((page) => !page.deleted && page.seenInTitleSync !== state.generation)
+          .filter(
+            (page) =>
+              !page.deleted && page.seenInTitleSync !== state.generation,
+          )
           .toArray();
         let sequence = await readLocalSequence(database);
         for (const page of stalePages) {
@@ -211,7 +225,8 @@ function report(
     pagesFetched: state.pagesFetched,
     namespaceIndex: state.namespaceIndex,
     namespaceCount: state.namespaceIds.length,
-    namespaceName: state.namespaceNames[state.namespaceIds[state.namespaceIndex] ?? -1],
+    namespaceName:
+      state.namespaceNames[state.namespaceIds[state.namespaceIndex] ?? -1],
     error: state.error,
   });
 }

@@ -5,11 +5,21 @@ import {
   parseDataFieldRules,
   upgradeDefaultDataCodeRules,
 } from '../data/data-field-rules';
-import { DataCodeIndex, type DataCodeSearchResult } from '../search/data-code-index';
+import {
+  DataCodeIndex,
+  type DataCodeSearchResult,
+} from '../search/data-code-index';
 import type { WikiSearchDatabase } from '../storage/database';
 import type { DataRulesPreferenceStore } from '../storage/data-rules-preference';
-import { readDataCodeSyncState, syncDataCodes, type DataCodeSyncResult } from '../sync/data-code-sync';
-import { DataCodeSyncSession, type DataCodeSessionResult } from './data-code-sync-session';
+import {
+  readDataCodeSyncState,
+  syncDataCodes,
+  type DataCodeSyncResult,
+} from '../sync/data-code-sync';
+import {
+  DataCodeSyncSession,
+  type DataCodeSessionResult,
+} from './data-code-sync-session';
 
 export interface DataCodeCommit {
   origin: 'refresh' | 'save';
@@ -43,7 +53,10 @@ export class DataCodeRuntime {
   constructor(private readonly options: DataCodeRuntimeOptions) {}
 
   get state(): DataCodeRuntimeState {
-    return { indexedDataCodes: this.index?.size ?? 0, rulesSource: this.rulesSource };
+    return {
+      indexedDataCodes: this.index?.size ?? 0,
+      rulesSource: this.rulesSource,
+    };
   }
 
   search(query: string): DataCodeSearchResult[] {
@@ -53,7 +66,8 @@ export class DataCodeRuntime {
   async initialize(): Promise<void> {
     const { database, preference } = this.options;
     const [records, stored] = await Promise.all([
-      database.dataCodes.toArray(), readDataCodeSyncState(database),
+      database.dataCodes.toArray(),
+      readDataCodeSyncState(database),
     ]);
     const preferred = await preference.get();
     for (const [source, origin] of [
@@ -67,7 +81,8 @@ export class DataCodeRuntime {
         if (
           (origin === 'GM preference' && source !== preferred) ||
           (origin === 'data-code-sync' && preferred === undefined)
-        ) await preference.set(source);
+        )
+          await preference.set(source);
         break;
       } catch (error) {
         this.options.onInvalidRules(origin, error);
@@ -78,7 +93,10 @@ export class DataCodeRuntime {
       refresh: (force) => this.performRefresh(force),
       save: (source) => this.performSave(source),
       apply: (commit) => {
-        this.index = new DataCodeIndex(this.options.analyzer, commit.result.records);
+        this.index = new DataCodeIndex(
+          this.options.analyzer,
+          commit.result.records,
+        );
         this.rulesSource = commit.rulesSource;
         this.options.onRulesChange(this.rulesSource);
         this.options.onStateChange(this.state);
@@ -92,9 +110,13 @@ export class DataCodeRuntime {
   }
 
   refresh(force: boolean): Promise<DataCodeSessionResult<DataCodeCommit>> {
-    return this.session?.refresh(force) ?? Promise.resolve({
-      status: 'error', error: new Error('Data 代码同步尚未就绪'),
-    });
+    return (
+      this.session?.refresh(force) ??
+      Promise.resolve({
+        status: 'error',
+        error: new Error('Data 代码同步尚未就绪'),
+      })
+    );
   }
 
   async save(source: string): Promise<void> {
@@ -111,7 +133,8 @@ export class DataCodeRuntime {
     this.index = new DataCodeIndex(this.options.analyzer, records);
     if (typeof stored?.rulesSource === 'string') {
       try {
-        const source = upgradeDefaultDataCodeRules(stored.rulesSource) ?? stored.rulesSource;
+        const source =
+          upgradeDefaultDataCodeRules(stored.rulesSource) ?? stored.rulesSource;
         parseDataFieldRules(source);
         this.rulesSource = source;
         this.options.onRulesChange(source);
@@ -128,9 +151,14 @@ export class DataCodeRuntime {
     let rulesSource = this.rulesSource;
     await this.options.runWriter('data-refresh', async () => {
       rulesSource = await this.readCanonicalRules();
-      result = await syncDataCodes(this.options.database, this.options.analyzer, {
-        force, rulesSource,
-      });
+      result = await syncDataCodes(
+        this.options.database,
+        this.options.analyzer,
+        {
+          force,
+          rulesSource,
+        },
+      );
     });
     if (!result) throw new Error('Data 代码同步未返回结果');
     return { origin: 'refresh', rulesSource, result };
@@ -139,9 +167,14 @@ export class DataCodeRuntime {
   private async performSave(source: string): Promise<DataCodeCommit> {
     let result: DataCodeSyncResult | undefined;
     await this.options.runWriter('data-save', async () => {
-      result = await syncDataCodes(this.options.database, this.options.analyzer, {
-        force: true, rulesSource: source,
-      });
+      result = await syncDataCodes(
+        this.options.database,
+        this.options.analyzer,
+        {
+          force: true,
+          rulesSource: source,
+        },
+      );
       // The preference and matching cache commit share the same writer lock.
       await this.options.preference.set(source);
     });

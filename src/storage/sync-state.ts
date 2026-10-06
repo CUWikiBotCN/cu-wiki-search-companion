@@ -34,12 +34,17 @@ export function isTitleSyncState(
   if (!isNamespaceNames(value.namespaceNames)) return false;
   if (!isNonNegativeSafeInteger(value.namespaceIndex)) return false;
   if (value.namespaceIndex > value.namespaceIds.length) return false;
-  if (value.gapcontinue !== undefined && typeof value.gapcontinue !== 'string') return false;
-  if (value.apcontinue !== undefined && typeof value.apcontinue !== 'string') return false;
+  if (value.gapcontinue !== undefined && typeof value.gapcontinue !== 'string')
+    return false;
+  if (value.apcontinue !== undefined && typeof value.apcontinue !== 'string')
+    return false;
   if (!isNonNegativeSafeInteger(value.generation)) return false;
   if (!isNonNegativeSafeInteger(value.pagesFetched)) return false;
   if (!isNonNegativeSafeInteger(value.startedAt)) return false;
-  if (value.completedAt !== undefined && !isNonNegativeSafeInteger(value.completedAt)) {
+  if (
+    value.completedAt !== undefined &&
+    !isNonNegativeSafeInteger(value.completedAt)
+  ) {
     return false;
   }
   return value.error === undefined || typeof value.error === 'string';
@@ -57,7 +62,9 @@ export async function readValidatedTitleSyncState(
     : normalized;
 }
 
-export function isRecentChangeSyncState(value: unknown): value is RecentChangeSyncState {
+export function isRecentChangeSyncState(
+  value: unknown,
+): value is RecentChangeSyncState {
   if (!isObjectRecord(value)) return false;
   const hasCursorState =
     value.through !== undefined ||
@@ -70,7 +77,8 @@ export function isRecentChangeSyncState(value: unknown): value is RecentChangeSy
     value.recentChanges.every(isRecentChangeMarker);
   if (hasCursorState && !hasValidCursorState) return false;
   const hasFileSequence = value.fileChangeSeq !== undefined;
-  if (hasFileSequence && !isNonNegativeSafeInteger(value.fileChangeSeq)) return false;
+  if (hasFileSequence && !isNonNegativeSafeInteger(value.fileChangeSeq))
+    return false;
   return hasValidCursorState || hasFileSequence;
 }
 
@@ -84,8 +92,12 @@ export function isReconciliationSyncState(
   if (!isNamespaceNames(value.namespaceNames)) return false;
   if (!isNonNegativeSafeInteger(value.namespaceIndex)) return false;
   if (value.namespaceIndex > value.namespaceIds.length) return false;
-  if (value.gapcontinue !== undefined && typeof value.gapcontinue !== 'string') return false;
-  if (value.scanProtocol !== undefined && !isNonNegativeSafeInteger(value.scanProtocol)) {
+  if (value.gapcontinue !== undefined && typeof value.gapcontinue !== 'string')
+    return false;
+  if (
+    value.scanProtocol !== undefined &&
+    !isNonNegativeSafeInteger(value.scanProtocol)
+  ) {
     return false;
   }
   if (!isNonNegativeSafeInteger(value.generation)) return false;
@@ -96,25 +108,35 @@ export function isReconciliationSyncState(
   ) {
     return false;
   }
-  if (value.scanProtocol !== undefined && value.throughLocalSeq === undefined) return false;
+  if (value.scanProtocol !== undefined && value.throughLocalSeq === undefined)
+    return false;
   if (!isTimestamp(value.serverStartedAt)) return false;
   if (!isNonNegativeSafeInteger(value.pagesFetched)) return false;
   if (!isNonNegativeSafeInteger(value.pagesChanged)) return false;
   if (typeof value.filesChanged !== 'boolean') return false;
   if (typeof value.dataCodesInvalidated !== 'boolean') return false;
   if (!isNonNegativeSafeInteger(value.startedAt)) return false;
-  if (value.completedAt !== undefined && !isNonNegativeSafeInteger(value.completedAt)) {
+  if (
+    value.completedAt !== undefined &&
+    !isNonNegativeSafeInteger(value.completedAt)
+  ) {
     return false;
   }
   return value.error === undefined || typeof value.error === 'string';
 }
 
-export function isDataCodeSyncState(value: unknown): value is DataCodeSyncState {
+export function isDataCodeSyncState(
+  value: unknown,
+): value is DataCodeSyncState {
   if (!isObjectRecord(value)) return false;
   if (!isNonNegativeSafeInteger(value.syncedAt)) return false;
   if (!isNonNegativeSafeInteger(value.count)) return false;
-  if (value.rulesSource !== undefined && typeof value.rulesSource !== 'string') return false;
-  return value.indexVersion === undefined || isNonNegativeSafeInteger(value.indexVersion);
+  if (value.rulesSource !== undefined && typeof value.rulesSource !== 'string')
+    return false;
+  return (
+    value.indexVersion === undefined ||
+    isNonNegativeSafeInteger(value.indexVersion)
+  );
 }
 
 export function isIncrementalSyncScheduleState(
@@ -133,7 +155,9 @@ export function isIncrementalSyncScheduleState(
  * sequences. A file row's legacy localSeq is a revision marker, not a writer
  * sequence, and must never participate in this fallback.
  */
-export async function readLocalSequence(database: WikiSearchDatabase): Promise<number> {
+export async function readLocalSequence(
+  database: WikiSearchDatabase,
+): Promise<number> {
   const record = await database.syncState.get(LOCAL_SEQUENCE_KEY);
   if (record !== undefined) {
     if (isNonNegativeSafeInteger(record.value)) return record.value;
@@ -144,7 +168,8 @@ export async function readLocalSequence(database: WikiSearchDatabase): Promise<n
 
   let maximum = 0;
   await database.pages.each((page) => {
-    if (isNonNegativeSafeInteger(page.localSeq)) maximum = Math.max(maximum, page.localSeq);
+    if (isNonNegativeSafeInteger(page.localSeq))
+      maximum = Math.max(maximum, page.localSeq);
   });
   await database.fileResources.each((file) => {
     if (isNonNegativeSafeInteger(file.writerSeq)) {
@@ -158,7 +183,10 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isOneOf<T extends string>(value: unknown, choices: readonly T[]): value is T {
+function isOneOf<T extends string>(
+  value: unknown,
+  choices: readonly T[],
+): value is T {
   return typeof value === 'string' && choices.includes(value as T);
 }
 
@@ -167,7 +195,10 @@ function isNonNegativeIntegerArray(value: unknown): value is number[] {
 }
 
 function isNamespaceNames(value: unknown): value is Record<number, string> {
-  return isObjectRecord(value) && Object.values(value).every((name) => typeof name === 'string');
+  return (
+    isObjectRecord(value) &&
+    Object.values(value).every((name) => typeof name === 'string')
+  );
 }
 
 function isTimestamp(value: unknown): value is string {

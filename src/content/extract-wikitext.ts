@@ -11,10 +11,14 @@ export function extractWikitext(source: string): string {
 
   text = extractLanguageVariants(text);
   text = text
-    .replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_match, target, label) =>
-      label ? `${target} ${label}` : target,
+    .replace(
+      /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g,
+      (_match, target, label) => (label ? `${target} ${label}` : target),
     )
-    .replace(/\[(?:https?:)?\/\/\S+(?:\s+([^\]]+))?\]/g, (_match, label) => label ?? ' ')
+    .replace(
+      /\[(?:https?:)?\/\/\S+(?:\s+([^\]]+))?\]/g,
+      (_match, label) => label ?? ' ',
+    )
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(HTML_ENTITIES, decodeHtmlEntity)
@@ -40,7 +44,10 @@ function decodeHtmlEntity(entity: string): string {
   if (named !== undefined) return named;
 
   const hexadecimal = body.startsWith('#x');
-  const codePoint = Number.parseInt(body.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+  const codePoint = Number.parseInt(
+    body.slice(hexadecimal ? 2 : 1),
+    hexadecimal ? 16 : 10,
+  );
   if (
     !Number.isSafeInteger(codePoint) ||
     codePoint <= 0 ||

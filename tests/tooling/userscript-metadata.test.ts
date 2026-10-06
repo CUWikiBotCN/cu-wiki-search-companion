@@ -6,17 +6,23 @@ import packageManifestSource from '../../package.json?raw';
 describe('userscript activation metadata', () => {
   it('builds edit/submit-only match patterns into both metadata headers', async () => {
     const result = await build({ build: { write: false } });
-    const outputs = (Array.isArray(result) ? result : [result]).flatMap((entry) =>
-      'output' in entry ? entry.output : [],
+    const outputs = (Array.isArray(result) ? result : [result]).flatMap(
+      (entry) => ('output' in entry ? entry.output : []),
     );
     const userScript = outputs.find(
-      (entry) => entry.type === 'chunk' && entry.fileName === 'cu-wiki-local-search.user.js',
+      (entry) =>
+        entry.type === 'chunk' &&
+        entry.fileName === 'cu-wiki-local-search.user.js',
     );
     const metaFile = outputs.find(
-      (entry) => entry.type === 'asset' && entry.fileName === 'cu-wiki-local-search.meta.js',
+      (entry) =>
+        entry.type === 'asset' &&
+        entry.fileName === 'cu-wiki-local-search.meta.js',
     );
     if (userScript?.type !== 'chunk' || metaFile?.type !== 'asset') {
-      throw new Error('Vite build did not return both userscript metadata artifacts');
+      throw new Error(
+        'Vite build did not return both userscript metadata artifacts',
+      );
     }
     const metaSource =
       typeof metaFile.source === 'string'
@@ -24,13 +30,17 @@ describe('userscript activation metadata', () => {
         : new TextDecoder().decode(metaFile.source);
     const userMatches = metadataMatches(userScript.code);
     const metaMatches = metadataMatches(metaSource);
-    const packageVersion = (JSON.parse(packageManifestSource) as { version?: string }).version;
+    const packageVersion = (
+      JSON.parse(packageManifestSource) as { version?: string }
+    ).version;
 
     expect(packageVersion).toBe('0.3.10');
     expect(metadataValue(userScript.code, 'version')).toBe(packageVersion);
     expect(metadataValue(metaSource, 'version')).toBe(packageVersion);
     expect(metaMatches).toEqual(userMatches);
-    expect(userMatches).not.toContain('https://casualtiesunknown.huijiwiki.com/*');
+    expect(userMatches).not.toContain(
+      'https://casualtiesunknown.huijiwiki.com/*',
+    );
     for (const url of [
       'https://casualtiesunknown.huijiwiki.com/wiki/首页',
       'https://casualtiesunknown.huijiwiki.com/wiki/首页?oldid=10',
@@ -65,8 +75,17 @@ describe('userscript activation metadata', () => {
   });
 
   it('advances the rolling nightly tag only after the existing release edit succeeds', async () => {
-    const { chmod, execFile, join, mkdir, mkdtemp, readFile, rm, tmpdir, writeFile } =
-      await loadNodeTestTools();
+    const {
+      chmod,
+      execFile,
+      join,
+      mkdir,
+      mkdtemp,
+      readFile,
+      rm,
+      tmpdir,
+      writeFile,
+    } = await loadNodeTestTools();
     const temporary = await mkdtemp(join(tmpdir(), 'cu-wiki-nightly-'));
     const repository = join(temporary, 'repository');
     const fakeBin = join(temporary, 'bin');
@@ -76,22 +95,35 @@ describe('userscript activation metadata', () => {
       await mkdir(repository);
       await mkdir(fakeBin);
       await mkdir(join(repository, 'nightly'));
-      await writeFile(join(repository, 'nightly', 'asset.txt'), 'verified asset\n');
-      await execFile('git', ['init', '--initial-branch=main'], { cwd: repository });
-      await execFile('git', ['config', 'user.email', 'nightly-test@example.invalid'], {
+      await writeFile(
+        join(repository, 'nightly', 'asset.txt'),
+        'verified asset\n',
+      );
+      await execFile('git', ['init', '--initial-branch=main'], {
         cwd: repository,
       });
+      await execFile(
+        'git',
+        ['config', 'user.email', 'nightly-test@example.invalid'],
+        {
+          cwd: repository,
+        },
+      );
       await execFile('git', ['config', 'user.name', 'Nightly Test'], {
         cwd: repository,
       });
       await writeFile(join(repository, 'history.txt'), 'first\n');
       await execFile('git', ['add', 'history.txt'], { cwd: repository });
-      await execFile('git', ['commit', '-m', 'first nightly'], { cwd: repository });
+      await execFile('git', ['commit', '-m', 'first nightly'], {
+        cwd: repository,
+      });
       const previousSha = (
         await execFile('git', ['rev-parse', 'HEAD'], { cwd: repository })
       ).stdout.trim();
       await writeFile(join(repository, 'history.txt'), 'second\n');
-      await execFile('git', ['commit', '-am', 'second nightly'], { cwd: repository });
+      await execFile('git', ['commit', '-am', 'second nightly'], {
+        cwd: repository,
+      });
       const currentSha = (
         await execFile('git', ['rev-parse', 'HEAD'], { cwd: repository })
       ).stdout.trim();
@@ -158,10 +190,12 @@ fi
       expect(notes).toContain(`/compare/${previousSha}...${currentSha}`);
       expect((await readFile(tagState, 'utf8')).trim()).toBe(currentSha);
       const calls = (await readFile(ghLog, 'utf8')).trim().split('\n');
-      const upload = calls.findIndex((call) => call.startsWith('release upload '));
+      const upload = calls.findIndex((call) =>
+        call.startsWith('release upload '),
+      );
       const edit = calls.findIndex((call) => call.startsWith('release edit '));
-      const patch = calls.findIndex(
-        (call) => call.startsWith('api --method PATCH '),
+      const patch = calls.findIndex((call) =>
+        call.startsWith('api --method PATCH '),
       );
       expect(upload).toBeGreaterThanOrEqual(0);
       expect(edit).toBeGreaterThan(upload);
@@ -178,9 +212,12 @@ function workflowRunScript(workflow: string, stepName: string): string {
   if (stepStart < 0) throw new Error(`Workflow step not found: ${stepName}`);
   const runMarker = '        run: |\n';
   const scriptStart = workflow.indexOf(runMarker, stepStart);
-  if (scriptStart < 0) throw new Error(`Workflow run block not found: ${stepName}`);
+  if (scriptStart < 0)
+    throw new Error(`Workflow run block not found: ${stepName}`);
   const lines: string[] = [];
-  for (const line of workflow.slice(scriptStart + runMarker.length).split('\n')) {
+  for (const line of workflow
+    .slice(scriptStart + runMarker.length)
+    .split('\n')) {
     if (line && !line.startsWith('          ')) break;
     lines.push(line.startsWith('          ') ? line.slice(10) : '');
   }
@@ -233,10 +270,15 @@ async function loadNodeTestTools(): Promise<NodeTestTools> {
     tmpdir: operatingSystem.tmpdir as NodeTestTools['tmpdir'],
     execFile: (command, args, options) =>
       new Promise((resolve, reject) => {
-        run(command, args, { ...options, encoding: 'utf8' }, (error, stdout, stderr) => {
-          if (error) reject(error);
-          else resolve({ stdout, stderr });
-        });
+        run(
+          command,
+          args,
+          { ...options, encoding: 'utf8' },
+          (error, stdout, stderr) => {
+            if (error) reject(error);
+            else resolve({ stdout, stderr });
+          },
+        );
       }),
   };
 }
@@ -268,5 +310,7 @@ function matchesPattern(url: string, pattern: string): boolean {
     .split('*')
     .map((part) => part.replace(/[|\\{}()[\]^$+?.-]/g, '\\$&'))
     .join('.*');
-  return new RegExp(`^${expression}$`).test(`${target.pathname}${target.search}`);
+  return new RegExp(`^${expression}$`).test(
+    `${target.pathname}${target.search}`,
+  );
 }

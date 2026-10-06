@@ -5,7 +5,10 @@ import { cut, cut_for_search } from 'jieba-wasm/node';
 
 import { Analyzer } from '../../src/analyzer/analyzer';
 import { WikiSearchDatabase } from '../../src/storage/database';
-import { readDataCodeSyncState, syncDataCodes } from '../../src/sync/data-code-sync';
+import {
+  readDataCodeSyncState,
+  syncDataCodes,
+} from '../../src/sync/data-code-sync';
 import { readFileResourceSyncState } from '../../src/sync/file-resource-sync';
 import { IncrementalSyncCoordinator } from '../../src/sync/incremental-sync-coordinator';
 import { readRecentChangeSyncState } from '../../src/sync/recent-change-sync';
@@ -16,7 +19,11 @@ const analyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
 
 describe('sync-state validation', () => {
   it.each([
-    ['title-sync', readTitleSyncState, { status: 'running', namespaceIndex: '0' }],
+    [
+      'title-sync',
+      readTitleSyncState,
+      { status: 'running', namespaceIndex: '0' },
+    ],
     [
       'file-resource-sync',
       readFileResourceSyncState,
@@ -32,16 +39,19 @@ describe('sync-state validation', () => {
       readReconciliationSyncState,
       { status: 'running', namespaceIds: [0], namespaceIndex: -1 },
     ],
-  ])('rejects a malformed critical %s object with its storage key', async (key, read, value) => {
-    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
-    await database.open();
-    await database.syncState.put({ key, value });
+  ])(
+    'rejects a malformed critical %s object with its storage key',
+    async (key, read, value) => {
+      const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+      await database.open();
+      await database.syncState.put({ key, value });
 
-    await expect(read(database)).rejects.toThrow(`同步状态 "${key}" 已损坏`);
+      await expect(read(database)).rejects.toThrow(`同步状态 "${key}" 已损坏`);
 
-    database.close();
-    await database.delete();
-  });
+      database.close();
+      await database.delete();
+    },
+  );
 
   it('normalizes a legacy title continuation and ignores additional fields', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
@@ -129,7 +139,9 @@ describe('sync-state validation', () => {
     await expect(coordinator.runIfDue(task)).resolves.toBe('ran');
 
     expect(task).toHaveBeenCalledOnce();
-    expect((await database.syncState.get('incremental-sync-schedule'))?.value).toEqual({
+    expect(
+      (await database.syncState.get('incremental-sync-schedule'))?.value,
+    ).toEqual({
       lastSuccessAt: 2_000,
       nextDueAt: 3_000,
     });

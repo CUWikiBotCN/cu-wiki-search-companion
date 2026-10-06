@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-import { isWikiLoginRequired, WikiApi, WikiApiError } from '../../src/sync/wiki-api';
+import {
+  isWikiLoginRequired,
+  WikiApi,
+  WikiApiError,
+} from '../../src/sync/wiki-api';
 
 describe('WikiApi retry behavior', () => {
   it('times out and aborts a fetcher that never settles', async () => {
@@ -7,7 +11,10 @@ describe('WikiApi retry behavior', () => {
     try {
       let requestSignal: AbortSignal | null | undefined;
       const fetcher = vi.fn(
-        async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        async (
+          _input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
           requestSignal = init?.signal;
           return new Promise<Response>(() => undefined);
         },
@@ -45,7 +52,10 @@ describe('WikiApi retry behavior', () => {
     try {
       let requestSignal: AbortSignal | null | undefined;
       const fetcher = vi.fn(
-        async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        async (
+          _input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
           requestSignal = init?.signal;
           return new Response(new ReadableStream<Uint8Array>({ start() {} }), {
             status: 200,
@@ -85,7 +95,10 @@ describe('WikiApi retry behavior', () => {
     const calls: URL[] = [];
     const waits: number[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (calls.length === 1) {
         return new Response(JSON.stringify({ error: 'rate limited' }), {
@@ -112,7 +125,9 @@ describe('WikiApi retry behavior', () => {
     });
 
     expect(calls).toHaveLength(2);
-    expect(calls.every((url) => url.searchParams.get('maxlag') === '5')).toBe(true);
+    expect(calls.every((url) => url.searchParams.get('maxlag') === '5')).toBe(
+      true,
+    );
     expect(waits).toEqual([2_000]);
   });
 
@@ -123,7 +138,12 @@ describe('WikiApi retry behavior', () => {
       attempt += 1;
       if (attempt === 1) {
         return json(
-          { error: { code: 'maxlag', info: 'Waiting for replica lag to decrease' } },
+          {
+            error: {
+              code: 'maxlag',
+              info: 'Waiting for replica lag to decrease',
+            },
+          },
           { headers: { 'Retry-After': '0.5' } },
         );
       }
@@ -169,43 +189,56 @@ describe('WikiApi retry behavior', () => {
     expect(waits).toEqual([25]);
   });
 
-  it.each([400, 404])('fails permanent HTTP %i responses without retrying', async (status) => {
-    const fetcher = vi.fn(async () =>
-      json({ error: 'permanent request failure' }, { status, statusText: 'Bad Request' }),
-    );
-    const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 4 });
+  it.each([400, 404])(
+    'fails permanent HTTP %i responses without retrying',
+    async (status) => {
+      const fetcher = vi.fn(async () =>
+        json(
+          { error: 'permanent request failure' },
+          { status, statusText: 'Bad Request' },
+        ),
+      );
+      const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 4 });
 
-    const error = await api.query({ list: 'allpages' }).catch((value) => value);
+      const error = await api
+        .query({ list: 'allpages' })
+        .catch((value) => value);
 
-    expect(error).toBeInstanceOf(WikiApiError);
-    expect(error).toMatchObject({
-      code: `http-${status}`,
-      retryable: false,
-      status,
-      message: `Wiki API 请求失败（http-${status}）`,
-    });
-    expect(fetcher).toHaveBeenCalledOnce();
-  });
+      expect(error).toBeInstanceOf(WikiApiError);
+      expect(error).toMatchObject({
+        code: `http-${status}`,
+        retryable: false,
+        status,
+        message: `Wiki API 请求失败（http-${status}）`,
+      });
+      expect(fetcher).toHaveBeenCalledOnce();
+    },
+  );
 
-  it.each([408, 429, 500])('retries transient HTTP %i responses', async (status) => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(json({ error: 'transient' }, { status }))
-      .mockResolvedValueOnce(json({ query: { pages: [] } }));
-    const waits: number[] = [];
-    const api = new WikiApi({
-      fetcher: fetcher as typeof fetch,
-      retries: 1,
-      baseDelayMs: 20,
-      sleep: async (milliseconds) => {
-        waits.push(milliseconds);
-      },
-    });
+  it.each([408, 429, 500])(
+    'retries transient HTTP %i responses',
+    async (status) => {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(json({ error: 'transient' }, { status }))
+        .mockResolvedValueOnce(json({ query: { pages: [] } }));
+      const waits: number[] = [];
+      const api = new WikiApi({
+        fetcher: fetcher as typeof fetch,
+        retries: 1,
+        baseDelayMs: 20,
+        sleep: async (milliseconds) => {
+          waits.push(milliseconds);
+        },
+      });
 
-    await expect(api.query({ prop: 'info' })).resolves.toEqual({ query: { pages: [] } });
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(waits).toEqual([20]);
-  });
+      await expect(api.query({ prop: 'info' })).resolves.toEqual({
+        query: { pages: [] },
+      });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(waits).toEqual([20]);
+    },
+  );
 
   it.each(['not-a-delay', '', '-1'])(
     'falls back to exponential delay for the invalid Retry-After header %j',
@@ -264,7 +297,9 @@ describe('WikiApi retry behavior', () => {
         },
       });
 
-      await expect(api.query({ prop: 'info' })).resolves.toEqual({ query: { pages: [] } });
+      await expect(api.query({ prop: 'info' })).resolves.toEqual({
+        query: { pages: [] },
+      });
       expect(waits).toEqual([3_000]);
     } finally {
       vi.useRealTimers();
@@ -286,18 +321,21 @@ describe('WikiApi retry behavior', () => {
       query: { pages: [] },
     });
 
-    const malformedFetcher = vi.fn(async () =>
-      new Response('{invalid', {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
+    const malformedFetcher = vi.fn(
+      async () =>
+        new Response('{invalid', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
     );
     const malformedApi = new WikiApi({
       fetcher: malformedFetcher as typeof fetch,
       retries: 3,
     });
 
-    const error = await malformedApi.query({ prop: 'info' }).catch((value) => value);
+    const error = await malformedApi
+      .query({ prop: 'info' })
+      .catch((value) => value);
     expect(error).toMatchObject({
       code: 'malformed-response',
       retryable: false,
@@ -308,11 +346,18 @@ describe('WikiApi retry behavior', () => {
 
   it('exposes login assertion failures without retrying them', async () => {
     const fetcher = vi.fn(async () =>
-      json({ error: { code: 'assertuserfailed', info: 'Assertion that the user is logged in failed' } }),
+      json({
+        error: {
+          code: 'assertuserfailed',
+          info: 'Assertion that the user is logged in failed',
+        },
+      }),
     );
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 4 });
 
-    const error = await api.query({ list: 'recentchanges', assert: 'user' }).catch((value) => value);
+    const error = await api
+      .query({ list: 'recentchanges', assert: 'user' })
+      .catch((value) => value);
 
     expect(error).toBeInstanceOf(WikiApiError);
     expect(error).toMatchObject({ code: 'assertuserfailed' });
@@ -327,7 +372,9 @@ describe('WikiApi retry behavior', () => {
       );
       const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 4 });
 
-      const error = await api.query({ list: 'recentchanges' }).catch((value) => value);
+      const error = await api
+        .query({ list: 'recentchanges' })
+        .catch((value) => value);
 
       expect(error).toBeInstanceOf(WikiApiError);
       expect(error).toMatchObject({ status, retryable: false });
@@ -339,7 +386,9 @@ describe('WikiApi retry behavior', () => {
   it.each(['assertuserfailed', 'readapidenied', 'permissiondenied'])(
     'recognizes the MediaWiki %s response as a login requirement',
     (code) => {
-      expect(isWikiLoginRequired(new WikiApiError(code, code, code, false))).toBe(true);
+      expect(
+        isWikiLoginRequired(new WikiApiError(code, code, code, false)),
+      ).toBe(true);
     },
   );
 });

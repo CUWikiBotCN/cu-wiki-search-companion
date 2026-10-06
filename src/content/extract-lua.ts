@@ -29,7 +29,8 @@ export function extractLua(source: string): LuaExtraction {
   const dependencies = new Set<string>();
 
   for (const token of tokens) {
-    if (token.type === 'string' && token.value.trim()) strings.add(token.value.trim());
+    if (token.type === 'string' && token.value.trim())
+      strings.add(token.value.trim());
   }
 
   for (let index = 0; index < tokens.length; index += 1) {
@@ -53,7 +54,9 @@ export function extractLua(source: string): LuaExtraction {
     const dependencyCall = assignment;
     if (
       dependencyCall &&
-      ['require', 'mw.loadData', 'mw.loadJsonData'].includes(dependencyCall.name)
+      ['require', 'mw.loadData', 'mw.loadJsonData'].includes(
+        dependencyCall.name,
+      )
     ) {
       let argumentIndex = dependencyCall.next;
       if (tokens[argumentIndex]?.value === '(') argumentIndex += 1;
@@ -166,7 +169,8 @@ function tokenizeLua(source: string): LuaToken[] {
 
 function readLuaNumberEnd(source: string, start: number): number {
   let index = start;
-  const hexadecimal = source[start] === '0' && /[xX]/.test(source[start + 1] ?? '');
+  const hexadecimal =
+    source[start] === '0' && /[xX]/.test(source[start + 1] ?? '');
   if (hexadecimal) {
     index += 2;
     while (/[0-9A-Fa-f]/.test(source[index] ?? '')) index += 1;
@@ -185,7 +189,11 @@ function readLuaNumberEnd(source: string, start: number): number {
   return readExponentEnd(source, index, /[eE]/);
 }
 
-function readExponentEnd(source: string, start: number, marker: RegExp): number {
+function readExponentEnd(
+  source: string,
+  start: number,
+  marker: RegExp,
+): number {
   if (!marker.test(source[start] ?? '')) return start;
   let index = start + 1;
   if (source[index] === '+' || source[index] === '-') index += 1;
@@ -244,7 +252,10 @@ function readLongBracket(
   };
 }
 
-function readMemberPath(tokens: LuaToken[], start: number): TokenPath | undefined {
+function readMemberPath(
+  tokens: LuaToken[],
+  start: number,
+): TokenPath | undefined {
   if (tokens[start]?.type !== 'identifier') return undefined;
   const parts = [tokens[start]!.value];
   let segments = 1;
@@ -252,7 +263,10 @@ function readMemberPath(tokens: LuaToken[], start: number): TokenPath | undefine
   while (index < tokens.length) {
     const separator = tokens[index]?.value;
     const member = tokens[index + 1];
-    if ((separator === '.' || separator === ':') && member?.type === 'identifier') {
+    if (
+      (separator === '.' || separator === ':') &&
+      member?.type === 'identifier'
+    ) {
       if (segments >= MAX_MEMBER_PATH_SEGMENTS) return undefined;
       parts.push(separator, member.value);
       segments += 1;
@@ -281,19 +295,33 @@ function isMemberPathStart(tokens: LuaToken[], index: number): boolean {
   return previous !== '.' && previous !== ':';
 }
 
-function collectTableKeys(tokens: LuaToken[], openIndex: number, keys: Set<string>): void {
+function collectTableKeys(
+  tokens: LuaToken[],
+  openIndex: number,
+  keys: Set<string>,
+): void {
   let curlyDepth = 1;
   let parenthesisDepth = 0;
   let squareDepth = 0;
   let fieldStart = true;
-  for (let index = openIndex + 1; index < tokens.length && curlyDepth > 0; index += 1) {
+  for (
+    let index = openIndex + 1;
+    index < tokens.length && curlyDepth > 0;
+    index += 1
+  ) {
     const token = tokens[index]!;
-    if (curlyDepth === 1 && parenthesisDepth === 0 && squareDepth === 0 && fieldStart) {
+    if (
+      curlyDepth === 1 &&
+      parenthesisDepth === 0 &&
+      squareDepth === 0 &&
+      fieldStart
+    ) {
       if (token.type === 'identifier' && tokens[index + 1]?.value === '=') {
         keys.add(token.value);
       } else if (
         token.value === '[' &&
-        (tokens[index + 1]?.type === 'string' || tokens[index + 1]?.type === 'number') &&
+        (tokens[index + 1]?.type === 'string' ||
+          tokens[index + 1]?.type === 'number') &&
         tokens[index + 2]?.value === ']' &&
         tokens[index + 3]?.value === '='
       ) {
@@ -305,7 +333,8 @@ function collectTableKeys(tokens: LuaToken[], openIndex: number, keys: Set<strin
     if (token.value === '{') curlyDepth += 1;
     else if (token.value === '}') curlyDepth -= 1;
     else if (token.value === '(') parenthesisDepth += 1;
-    else if (token.value === ')') parenthesisDepth = Math.max(0, parenthesisDepth - 1);
+    else if (token.value === ')')
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1);
     else if (token.value === '[') squareDepth += 1;
     else if (token.value === ']') squareDepth = Math.max(0, squareDepth - 1);
     else if (
@@ -324,7 +353,8 @@ function finalReturnedRoot(tokens: LuaToken[]): string | undefined {
     if (tokens[index]?.value !== 'return') continue;
     const path = readMemberPath(tokens, index + 1);
     if (!path) continue;
-    if (tokens.slice(path.next).every((token) => token.value === ';')) return path.name;
+    if (tokens.slice(path.next).every((token) => token.value === ';'))
+      return path.name;
   }
   return undefined;
 }
@@ -348,6 +378,7 @@ function collectReturnedRootKeys(
 
 function memberKey(name: string, root: string): string | undefined {
   if (name === root) return undefined;
-  if (!name.startsWith(`${root}.`) && !name.startsWith(`${root}:`)) return undefined;
+  if (!name.startsWith(`${root}.`) && !name.startsWith(`${root}:`))
+    return undefined;
   return name.slice(root.length + 1).split(/[.:]/)[0] || undefined;
 }

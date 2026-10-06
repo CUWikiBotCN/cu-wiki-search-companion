@@ -6,17 +6,11 @@ import { PanelGeometry } from './panel-geometry';
 import { focusEditorElement } from '../editor';
 import type { CssSearchResult } from '../search/css-source-index';
 import type { NamespaceInfo, RedirectTarget } from '../types';
-import type {
-  ContentSearchResult,
-} from '../search/content-index';
+import type { ContentSearchResult } from '../search/content-index';
 import type { DataCodeSearchResult } from '../search/data-code-index';
-import type {
-  LuaModuleSearchResult,
-} from '../search/lua-module-index';
+import type { LuaModuleSearchResult } from '../search/lua-module-index';
 import type { TitleSearchResult } from '../search/title-index';
-import type {
-  HighlightPreferences,
-} from '../storage/highlight-preference';
+import type { HighlightPreferences } from '../storage/highlight-preference';
 import { DEFAULT_HIGHLIGHT_PREFERENCES } from '../storage/highlight-preference';
 import type {
   LocalDataDiagnostics,
@@ -32,7 +26,11 @@ import {
   type SearchPreparationKind,
   type WikiPageSearchResult,
 } from './search-panel-model';
-export type { SearchMode, SearchPanelResult, SearchPreparationKind } from './search-panel-model';
+export type {
+  SearchMode,
+  SearchPanelResult,
+  SearchPreparationKind,
+} from './search-panel-model';
 
 export interface MaintenanceActionFeedback {
   message: string;
@@ -71,7 +69,9 @@ export interface SearchPanelCallbacks {
 export class SearchPanel {
   private static shortcutOwner?: WeakRef<SearchPanel>;
   private static shortcutWindow?: Window;
-  private static readonly globalShortcutKeydown = (event: KeyboardEvent): void => {
+  private static readonly globalShortcutKeydown = (
+    event: KeyboardEvent,
+  ): void => {
     const owner = SearchPanel.shortcutOwner?.deref();
     if (!owner?.host.isConnected) {
       SearchPanel.shortcutOwner = undefined;
@@ -116,7 +116,9 @@ export class SearchPanel {
   private startupFailed = false;
   private destroyed = false;
   private searchTimer?: number;
-  private readonly dirtyModes = new Set<SearchMode>(Object.keys(SEARCH_MODES) as SearchMode[]);
+  private readonly dirtyModes = new Set<SearchMode>(
+    Object.keys(SEARCH_MODES) as SearchMode[],
+  );
   private lastSearch?: { query: string; mode: SearchMode; namespace: string };
   private returnFocus?: HTMLElement;
   private disconnectObserver?: MutationObserver;
@@ -126,7 +128,10 @@ export class SearchPanel {
     this.host.id = 'cu-wiki-search-host';
     this.root = this.host.attachShadow({ mode: 'open' });
     document.documentElement.append(this.host);
-    this.app = createApp(SearchPanelView, { state: this.state, actions: this.actions });
+    this.app = createApp(SearchPanelView, {
+      state: this.state,
+      actions: this.actions,
+    });
     this.app.mount(this.root);
     const style = document.createElement('style');
     style.textContent = styles;
@@ -137,19 +142,28 @@ export class SearchPanel {
     this.toggle = this.requireElement('.toggle');
     SearchPanel.claimGlobalShortcut(this);
     this.geometry = new PanelGeometry(
-      this.host, this.panel, this.toggle, this.requireElement('.panel-body'),
-      this.requireElement('.drag-handle'), () => this.syncStatusPresentation(),
+      this.host,
+      this.panel,
+      this.toggle,
+      this.requireElement('.panel-body'),
+      this.requireElement('.drag-handle'),
+      () => this.syncStatusPresentation(),
     );
     if (typeof MutationObserver === 'function') {
       this.disconnectObserver = new MutationObserver(() => {
         if (!this.host.isConnected) this.destroy();
       });
-      this.disconnectObserver.observe(document.documentElement, { childList: true });
+      this.disconnectObserver.observe(document.documentElement, {
+        childList: true,
+      });
     }
     this.applyHighlightColors();
   }
 
-  setStatus(message: string, tone: 'normal' | 'error' | 'success' = 'normal'): void {
+  setStatus(
+    message: string,
+    tone: 'normal' | 'error' | 'success' = 'normal',
+  ): void {
     if (this.destroyed) return;
     this.state.status = message;
     this.state.tone = tone;
@@ -159,17 +173,30 @@ export class SearchPanel {
   setNamespaces(namespaces: NamespaceInfo[]): void {
     if (this.destroyed) return;
     const sorted = [...namespaces].sort((left, right) => left.id - right.id);
-    if (!sorted.every((namespace, index) =>
-      namespace.id === this.state.namespaces[index]?.id && namespace.name === this.state.namespaces[index]?.name,
-    ) || sorted.length !== this.state.namespaces.length) this.state.namespaces = sorted;
-    if (this.state.namespace && !namespaces.some((namespace) => String(namespace.id) === this.state.namespace)) {
+    if (
+      !sorted.every(
+        (namespace, index) =>
+          namespace.id === this.state.namespaces[index]?.id &&
+          namespace.name === this.state.namespaces[index]?.name,
+      ) ||
+      sorted.length !== this.state.namespaces.length
+    )
+      this.state.namespaces = sorted;
+    if (
+      this.state.namespace &&
+      !namespaces.some(
+        (namespace) => String(namespace.id) === this.state.namespace,
+      )
+    ) {
       this.state.namespace = '';
-      if (this.state.mode === 'title' || this.state.mode === 'content') this.invalidateResults([this.state.mode]);
+      if (this.state.mode === 'title' || this.state.mode === 'content')
+        this.invalidateResults([this.state.mode]);
     }
   }
 
   setInsertMode(enabled: boolean): void {
-    if (!enabled && this.root.activeElement?.matches('.insert-result')) this.input.focus();
+    if (!enabled && this.root.activeElement?.matches('.insert-result'))
+      this.input.focus();
     this.state.insertMode = enabled;
   }
 
@@ -185,16 +212,21 @@ export class SearchPanel {
 
   setStartupFailure(message: string, reload: () => void): void {
     this.startupFailed = true;
-    this.setStatus(`本地搜索启动失败：${message}。可重新加载页面重试。`, 'error');
+    this.setStatus(
+      `本地搜索启动失败：${message}。可重新加载页面重试。`,
+      'error',
+    );
     this.state.reload = reload;
   }
 
   open(returnFocus?: HTMLElement): void {
     if (this.destroyed) return;
-    if (!this.state.visible) this.returnFocus = returnFocus ?? this.currentReturnFocus();
+    if (!this.state.visible)
+      this.returnFocus = returnFocus ?? this.currentReturnFocus();
     this.state.visible = true;
     if (!this.startupFailed) this.prepareCurrentMode();
-    if (this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions()) this.performSearch();
+    if (this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions())
+      this.performSearch();
     this.geometry.scheduleLayoutUpdate();
     // Vue batches visibility updates; focus only after the dialog is actually shown.
     void nextTick(() => {
@@ -229,7 +261,12 @@ export class SearchPanel {
   invalidateResults(modes: readonly SearchMode[]): void {
     if (this.destroyed) return;
     for (const mode of modes) this.dirtyModes.add(mode);
-    if (this.dirtyModes.has(this.state.mode) && this.state.visible && !this.composing && this.searchTimer === undefined) {
+    if (
+      this.dirtyModes.has(this.state.mode) &&
+      this.state.visible &&
+      !this.composing &&
+      this.searchTimer === undefined
+    ) {
       this.scheduleSearch(0);
     }
   }
@@ -242,7 +279,10 @@ export class SearchPanel {
     this.disconnectObserver?.disconnect();
     this.geometry.destroy();
     if (SearchPanel.shortcutOwner?.deref() === this) {
-      SearchPanel.shortcutWindow?.removeEventListener('keydown', SearchPanel.globalShortcutKeydown);
+      SearchPanel.shortcutWindow?.removeEventListener(
+        'keydown',
+        SearchPanel.globalShortcutKeydown,
+      );
       SearchPanel.shortcutOwner = undefined;
       SearchPanel.shortcutWindow = undefined;
     }
@@ -251,7 +291,7 @@ export class SearchPanel {
   }
 
   readonly actions = {
-    toggle: () => this.state.visible ? this.close() : this.open(this.toggle),
+    toggle: () => (this.state.visible ? this.close() : this.open(this.toggle)),
     close: () => this.close(),
     refresh: () => {
       if (!this.startupFailed) {
@@ -271,13 +311,20 @@ export class SearchPanel {
       this.state.maintenanceOpen = !this.state.maintenanceOpen;
       this.state.settingsOpen = false;
       if (this.state.maintenanceOpen) {
-        this.geometry.scheduleBodyScroll(this.requireElement('.maintenance'), 'start');
+        this.geometry.scheduleBodyScroll(
+          this.requireElement('.maintenance'),
+          'start',
+        );
         void this.loadMaintenance();
       }
     },
     details: () => {
       this.state.detailsOpen = !this.state.detailsOpen;
-      if (this.state.detailsOpen) this.geometry.scheduleBodyScroll(this.requireElement('.status-details'), 'nearest');
+      if (this.state.detailsOpen)
+        this.geometry.scheduleBodyScroll(
+          this.requireElement('.status-details'),
+          'nearest',
+        );
     },
     resetPosition: () => this.geometry.resetPosition(),
     saveRules: () => this.saveDataRules(this.state.dataRules),
@@ -287,20 +334,48 @@ export class SearchPanel {
     },
     highlights: () => this.persistHighlightPreferences(),
     colors: () => this.applyHighlightColors(),
-    rebuildIndexes: () => this.runMaintenanceAction('正在从本地页面重建搜索索引…', () => this.callbacks.rebuildSearchIndexes?.()),
-    rebuildQueue: () => this.runMaintenanceAction('正在修复正文队列…', () => this.callbacks.rebuildContentQueue?.()),
-    reconcile: () => this.runMaintenanceAction('正在进行联网全量对账…', () => this.callbacks.reconcileNow?.()),
-    clearSnapshots: () => this.runMaintenanceAction('正在清除索引快照…', () => this.callbacks.clearSnapshots?.()),
-    persistence: () => this.runMaintenanceAction('正在申请浏览器持久保存…', async () => {
-      const request = this.callbacks.requestPersistence?.();
-      if (!request) throw new Error('持久保存操作当前不可用');
-      await this.finishPersistenceRequest(request);
-    }, false),
-    resetLocal: () => this.runMaintenanceAction('正在清空本地镜像…', () => this.callbacks.resetLocalMirror?.(this.state.resetDataRules)),
-    compositionStart: () => { this.composing = true; this.cancelSearch(); },
+    rebuildIndexes: () =>
+      this.runMaintenanceAction('正在从本地页面重建搜索索引…', () =>
+        this.callbacks.rebuildSearchIndexes?.(),
+      ),
+    rebuildQueue: () =>
+      this.runMaintenanceAction('正在修复正文队列…', () =>
+        this.callbacks.rebuildContentQueue?.(),
+      ),
+    reconcile: () =>
+      this.runMaintenanceAction('正在进行联网全量对账…', () =>
+        this.callbacks.reconcileNow?.(),
+      ),
+    clearSnapshots: () =>
+      this.runMaintenanceAction('正在清除索引快照…', () =>
+        this.callbacks.clearSnapshots?.(),
+      ),
+    persistence: () =>
+      this.runMaintenanceAction(
+        '正在申请浏览器持久保存…',
+        async () => {
+          const request = this.callbacks.requestPersistence?.();
+          if (!request) throw new Error('持久保存操作当前不可用');
+          await this.finishPersistenceRequest(request);
+        },
+        false,
+      ),
+    resetLocal: () =>
+      this.runMaintenanceAction('正在清空本地镜像…', () =>
+        this.callbacks.resetLocalMirror?.(this.state.resetDataRules),
+      ),
+    compositionStart: () => {
+      this.composing = true;
+      this.cancelSearch();
+    },
     compositionEnd: (event: CompositionEvent) => {
       this.composing = false;
-      if (event.target === this.input || this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions()) this.scheduleSearch(0);
+      if (
+        event.target === this.input ||
+        this.dirtyModes.has(this.state.mode) ||
+        !this.sameSearchConditions()
+      )
+        this.scheduleSearch(0);
     },
     input: () => {
       this.dirtyModes.add(this.state.mode);
@@ -313,12 +388,17 @@ export class SearchPanel {
       this.refreshResults();
     },
     keydown: (event: KeyboardEvent) => this.handleKeydown(event),
-    select: (index: number) => { this.state.selectedIndex = index; this.updateSelection(); },
+    select: (index: number) => {
+      this.state.selectedIndex = index;
+      this.updateSelection();
+    },
     copy: (result: SearchPanelResult) => this.copyResult(result),
-    redirectUrl: (target: RedirectTarget) => this.callbacks.redirectUrl?.(target),
+    redirectUrl: (target: RedirectTarget) =>
+      this.callbacks.redirectUrl?.(target),
     open: (result: SearchPanelResult) => this.openResult(result),
     copyLink: (result: SearchPanelResult) => {
-      if (canInsertResult(result)) this.callbacks.copy(result, this.input.value);
+      if (canInsertResult(result))
+        this.callbacks.copy(result, this.input.value);
     },
     insert: (result: SearchPanelResult) => this.insert(result),
   };
@@ -351,58 +431,105 @@ export class SearchPanel {
   }
 
   private sameSearchConditions(): boolean {
-    return this.lastSearch?.query === this.input.value && this.lastSearch.mode === this.state.mode &&
-      this.lastSearch.namespace === this.searchNamespace();
+    return (
+      this.lastSearch?.query === this.input.value &&
+      this.lastSearch.mode === this.state.mode &&
+      this.lastSearch.namespace === this.searchNamespace()
+    );
   }
 
   private searchNamespace(): string {
-    return this.state.mode === 'title' || this.state.mode === 'content' ? this.state.namespace : '';
+    return this.state.mode === 'title' || this.state.mode === 'content'
+      ? this.state.namespace
+      : '';
   }
 
   private prepareCurrentMode(): void {
     const mode = this.state.mode;
     switch (mode) {
-      case 'files': this.callbacks.prepareFiles(); return;
-      case 'data-code': return;
+      case 'files':
+        this.callbacks.prepareFiles();
+        return;
+      case 'data-code':
+        return;
       case 'title':
       case 'content':
       case 'lua':
-      case 'css': this.callbacks.prepareSearch(mode); return;
-      default: return unreachableMode(mode);
+      case 'css':
+        this.callbacks.prepareSearch(mode);
+        return;
+      default:
+        return unreachableMode(mode);
     }
   }
 
   private performSearch(): void {
     this.cancelSearch();
     if (this.destroyed || !this.state.visible || this.composing) return;
-    const selected = this.sameSearchConditions() ? this.state.results[this.state.selectedIndex] : undefined;
-    const identity = selected ? resultIdentity(this.state.mode, selected) : undefined;
+    const selected = this.sameSearchConditions()
+      ? this.state.results[this.state.selectedIndex]
+      : undefined;
+    const identity = selected
+      ? resultIdentity(this.state.mode, selected)
+      : undefined;
     const focused = this.root.activeElement;
     const query = this.input.value;
     this.state.query = query;
-    const namespace = this.state.namespace ? Number(this.state.namespace) : undefined;
+    const namespace = this.state.namespace
+      ? Number(this.state.namespace)
+      : undefined;
     const mode = this.state.mode;
     switch (mode) {
-      case 'title': this.state.results = this.callbacks.search(query, namespace); break;
-      case 'content': this.state.results = this.callbacks.searchContent(query, namespace); break;
-      case 'data-code': this.state.results = this.callbacks.searchCodes(query); break;
-      case 'lua': this.state.results = this.callbacks.searchLua(query); break;
-      case 'css': this.state.results = this.callbacks.searchCss(query); break;
-      case 'files': this.state.results = this.callbacks.searchFiles(query); break;
-      default: return unreachableMode(mode);
+      case 'title':
+        this.state.results = this.callbacks.search(query, namespace);
+        break;
+      case 'content':
+        this.state.results = this.callbacks.searchContent(query, namespace);
+        break;
+      case 'data-code':
+        this.state.results = this.callbacks.searchCodes(query);
+        break;
+      case 'lua':
+        this.state.results = this.callbacks.searchLua(query);
+        break;
+      case 'css':
+        this.state.results = this.callbacks.searchCss(query);
+        break;
+      case 'files':
+        this.state.results = this.callbacks.searchFiles(query);
+        break;
+      default:
+        return unreachableMode(mode);
     }
-    const retained = identity === undefined ? -1 : this.state.results.findIndex((result) => resultIdentity(mode, result) === identity);
-    this.state.selectedIndex = retained >= 0 ? retained : this.state.results.length ? 0 : -1;
+    const retained =
+      identity === undefined
+        ? -1
+        : this.state.results.findIndex(
+            (result) => resultIdentity(mode, result) === identity,
+          );
+    this.state.selectedIndex =
+      retained >= 0 ? retained : this.state.results.length ? 0 : -1;
     this.lastSearch = { query, mode, namespace: this.searchNamespace() };
     this.dirtyModes.delete(mode);
     if (focused && this.resultList.contains(focused)) {
       let focusMoved = false;
-      const observeFocus = (): void => { if (this.root.activeElement !== focused) focusMoved = true; };
+      const observeFocus = (): void => {
+        if (this.root.activeElement !== focused) focusMoved = true;
+      };
       document.addEventListener('focusin', observeFocus, true);
       void nextTick(() => {
         document.removeEventListener('focusin', observeFocus, true);
-        if (!this.destroyed && this.state.visible && !focused.isConnected && !focusMoved &&
-          !this.root.activeElement && (!document.activeElement || [document.body, document.documentElement, this.host].includes(document.activeElement as HTMLElement))) {
+        if (
+          !this.destroyed &&
+          this.state.visible &&
+          !focused.isConnected &&
+          !focusMoved &&
+          !this.root.activeElement &&
+          (!document.activeElement ||
+            [document.body, document.documentElement, this.host].includes(
+              document.activeElement as HTMLElement,
+            ))
+        ) {
           this.input.focus();
         }
       });
@@ -411,7 +538,12 @@ export class SearchPanel {
 
   private handleKeydown(event: KeyboardEvent): void {
     if (!this.state.visible || this.composing || event.isComposing) return;
-    if (event.key === 'Tab' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+    if (
+      event.key === 'Tab' &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey
+    ) {
       this.cycleFocus(event);
       return;
     }
@@ -422,18 +554,24 @@ export class SearchPanel {
       this.close();
       return;
     }
-    const primary = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>('.result-primary')
-      : null;
+    const primary =
+      event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>('.result-primary')
+        : null;
     if (event.key === 'Enter' && (event.target === this.input || primary)) {
       event.preventDefault();
       event.stopPropagation();
       if (
-        event.altKey || event.getModifierState('AltGraph') ||
+        event.altKey ||
+        event.getModifierState('AltGraph') ||
         (event.ctrlKey && event.metaKey) ||
         (event.shiftKey && (event.ctrlKey || event.metaKey))
-      ) return;
-      const result = this.state.results[primary ? Number(primary.dataset.index) : this.state.selectedIndex];
+      )
+        return;
+      const result =
+        this.state.results[
+          primary ? Number(primary.dataset.index) : this.state.selectedIndex
+        ];
       if (!result) return;
       if (event.ctrlKey || event.metaKey) this.openResult(result);
       else if (event.shiftKey) this.insert(result);
@@ -441,36 +579,51 @@ export class SearchPanel {
       return;
     }
     if (
-      event.target !== this.input || event.altKey || event.ctrlKey ||
-      event.metaKey || event.shiftKey
-    ) return;
+      event.target !== this.input ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    )
+      return;
     if (!this.state.results.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       event.stopPropagation();
-      this.state.selectedIndex = (this.state.selectedIndex + 1) % this.state.results.length;
+      this.state.selectedIndex =
+        (this.state.selectedIndex + 1) % this.state.results.length;
       this.updateSelection();
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
-      this.state.selectedIndex = (this.state.selectedIndex - 1 + this.state.results.length) % this.state.results.length;
+      this.state.selectedIndex =
+        (this.state.selectedIndex - 1 + this.state.results.length) %
+        this.state.results.length;
       this.updateSelection();
     }
   }
 
   private cycleFocus(event: KeyboardEvent): void {
     event.stopPropagation();
-    const controls = [...this.panel.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]',
-    )].filter((element) =>
-      element.tabIndex >= 0 && !element.matches(':disabled') &&
-      !element.closest('[hidden], [inert]') && element.getClientRects().length > 0 &&
-      getComputedStyle(element).visibility === 'visible',
+    const controls = [
+      ...this.panel.querySelectorAll<HTMLElement>(
+        'button, input, select, textarea, a[href], [tabindex]',
+      ),
+    ].filter(
+      (element) =>
+        element.tabIndex >= 0 &&
+        !element.matches(':disabled') &&
+        !element.closest('[hidden], [inert]') &&
+        element.getClientRects().length > 0 &&
+        getComputedStyle(element).visibility === 'visible',
     );
     const first = controls[0];
     const last = controls[controls.length - 1];
     const active = this.root.activeElement;
-    if (active === (event.shiftKey ? first : last) || !controls.some((element) => element === active)) {
+    if (
+      active === (event.shiftKey ? first : last) ||
+      !controls.some((element) => element === active)
+    ) {
       event.preventDefault();
       (event.shiftKey ? last : first)?.focus();
     }
@@ -517,7 +670,9 @@ export class SearchPanel {
   private updateSelection(): void {
     void nextTick(() => {
       if (!this.host.isConnected || !this.state.visible) return;
-      const selected = this.resultList.querySelector<HTMLElement>('[data-selected="true"]');
+      const selected = this.resultList.querySelector<HTMLElement>(
+        '[data-selected="true"]',
+      );
       if (selected) this.geometry.scrollBodyTo(selected, 'nearest');
     });
   }
@@ -525,8 +680,15 @@ export class SearchPanel {
   private syncStatusPresentation(): void {
     const status = this.requireElement<HTMLElement>('.status');
     const details = this.requireElement<HTMLElement>('.status-details');
-    const clipped = status.scrollHeight > status.clientHeight + 1 || status.scrollWidth > status.clientWidth + 1;
-    if (!clipped && (this.root.activeElement?.matches('.status-details-toggle') || details.contains(this.root.activeElement))) this.input.focus();
+    const clipped =
+      status.scrollHeight > status.clientHeight + 1 ||
+      status.scrollWidth > status.clientWidth + 1;
+    if (
+      !clipped &&
+      (this.root.activeElement?.matches('.status-details-toggle') ||
+        details.contains(this.root.activeElement))
+    )
+      this.input.focus();
     this.state.statusClipped = clipped;
     if (!clipped) this.state.detailsOpen = false;
   }
@@ -560,7 +722,10 @@ export class SearchPanel {
   }
 
   private applyHighlightColors(): void {
-    this.host.style.setProperty('--cu-title-highlight', this.state.highlights.titleColor);
+    this.host.style.setProperty(
+      '--cu-title-highlight',
+      this.state.highlights.titleColor,
+    );
     this.host.style.setProperty(
       '--cu-title-highlight-color',
       contrastTextColor(this.state.highlights.titleColor),
@@ -651,7 +816,9 @@ export class SearchPanel {
 }
 
 function resultIdentity(mode: SearchMode, result: SearchPanelResult): string {
-  return isDataCodeResult(result) ? JSON.stringify([result.source, result.code]) : `${mode}:${result.id}`;
+  return isDataCodeResult(result)
+    ? JSON.stringify([result.source, result.code])
+    : `${mode}:${result.id}`;
 }
 
 function unreachableMode(mode: never): never {
@@ -666,7 +833,9 @@ function formatDiagnostics(diagnostics: LocalDataDiagnostics): string {
         (snapshot.payloadBytes === undefined
           ? ''
           : ` / ${formatBytes(snapshot.payloadBytes)} / seq ${snapshot.throughLocalSeq ?? 0}`) +
-        (snapshot.restoreMs === undefined ? '' : ` / 恢复 ${Math.round(snapshot.restoreMs)}ms`),
+        (snapshot.restoreMs === undefined
+          ? ''
+          : ` / 恢复 ${Math.round(snapshot.restoreMs)}ms`),
     )
     .join('\n');
   const storage = diagnostics.storage;
@@ -690,12 +859,17 @@ function formatBytes(value: number | undefined): string {
 }
 
 function contrastTextColor(hex: string): '#000' | '#fff' {
-  const rgb = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  const rgb = [1, 3, 5].map((offset) =>
+    Number.parseInt(hex.slice(offset, offset + 2), 16),
+  );
   const luminance = rgb
     .map((value) => value / 255)
-    .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4))
+    .map((value) =>
+      value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+    )
     .reduce(
-      (sum, value, index) => sum + value * ([0.2126, 0.7152, 0.0722][index] ?? 0),
+      (sum, value, index) =>
+        sum + value * ([0.2126, 0.7152, 0.0722][index] ?? 0),
       0,
     );
   return luminance > 0.179 ? '#000' : '#fff';

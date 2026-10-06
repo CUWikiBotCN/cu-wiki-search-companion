@@ -92,7 +92,10 @@ interface ContentResponse {
 }
 
 interface FetchedContent {
-  revisions: Map<number, { revid: number; contentModel?: string; content: string }>;
+  revisions: Map<
+    number,
+    { revid: number; contentModel?: string; content: string }
+  >;
   missingPageIds: Set<number>;
 }
 
@@ -112,16 +115,19 @@ export async function syncRecentChanges(
   analyzer: Analyzer,
   options: RecentChangeSyncOptions = {},
 ): Promise<RecentChangeSyncResult> {
-  const [titleState, fileState, incrementalState, initialSequence] = await Promise.all([
-    readTitleSyncState(database),
-    readFileResourceSyncState(database),
-    readRecentChangeSyncState(database),
-    readLocalSequence(database),
-  ]);
-  if (titleState?.status !== 'complete') return inactiveResult('no-baseline', initialSequence);
+  const [titleState, fileState, incrementalState, initialSequence] =
+    await Promise.all([
+      readTitleSyncState(database),
+      readFileResourceSyncState(database),
+      readRecentChangeSyncState(database),
+      readLocalSequence(database),
+    ]);
+  if (titleState?.status !== 'complete')
+    return inactiveResult('no-baseline', initialSequence);
 
   const overlapMs = options.overlapMs ?? DEFAULT_OVERLAP_MS;
-  const baseline = incrementalState?.through ?? new Date(titleState.startedAt).toISOString();
+  const baseline =
+    incrementalState?.through ?? new Date(titleState.startedAt).toISOString();
   const startedAt = new Date(Date.parse(baseline) - overlapMs).toISOString();
   let clock: ServerClockResponse;
   try {
@@ -132,7 +138,8 @@ export async function syncRecentChanges(
       siprop: 'general',
     });
   } catch (error) {
-    if (isWikiLoginRequired(error)) return inactiveResult('login-required', initialSequence);
+    if (isWikiLoginRequired(error))
+      return inactiveResult('login-required', initialSequence);
     throw error;
   }
   if (!clock.curtimestamp) throw new Error('Wiki API 未返回服务器时间');
@@ -147,7 +154,8 @@ export async function syncRecentChanges(
       options.requestIntervalMs ?? 300,
     );
   } catch (error) {
-    if (isWikiLoginRequired(error)) return inactiveResult('login-required', initialSequence);
+    if (isWikiLoginRequired(error))
+      return inactiveResult('login-required', initialSequence);
     throw error;
   }
   const events = deduplicateRecentChanges(
@@ -166,7 +174,8 @@ export async function syncRecentChanges(
       ),
     );
   } catch (error) {
-    if (isWikiLoginRequired(error)) return inactiveResult('login-required', initialSequence);
+    if (isWikiLoginRequired(error))
+      return inactiveResult('login-required', initialSequence);
     throw error;
   }
   const regularInfoPages = infoPages.filter(
@@ -191,7 +200,8 @@ export async function syncRecentChanges(
         typeof page.lastrevid === 'number' &&
         !page.missing &&
         !page.redirect &&
-        isSearchableContentModel(page.contentmodel) && !isCssContentModel(page.contentmodel) &&
+        isSearchableContentModel(page.contentmodel) &&
+        !isCssContentModel(page.contentmodel) &&
         (storedPages.get(page.pageid)?.revisionId ?? 0) <= page.lastrevid &&
         storedPages.get(page.pageid)?.contentRevisionId !== page.lastrevid,
     )
@@ -204,7 +214,8 @@ export async function syncRecentChanges(
       options.requestIntervalMs ?? 300,
     );
   } catch (error) {
-    if (isWikiLoginRequired(error)) return inactiveResult('login-required', initialSequence);
+    if (isWikiLoginRequired(error))
+      return inactiveResult('login-required', initialSequence);
     throw error;
   }
   const { revisions, missingPageIds: contentMissingPageIds } = fetchedContent;
@@ -216,10 +227,14 @@ export async function syncRecentChanges(
         : [],
     ),
   );
-  const deferredContentPageIds: number[] = activeInfoPages.filter((page) =>
-    !page.redirect && isCssContentModel(page.contentmodel) &&
-    storedPages.get(page.pageid)?.contentRevisionId !== page.lastrevid,
-  ).map((page) => page.pageid);
+  const deferredContentPageIds: number[] = activeInfoPages
+    .filter(
+      (page) =>
+        !page.redirect &&
+        isCssContentModel(page.contentmodel) &&
+        storedPages.get(page.pageid)?.contentRevisionId !== page.lastrevid,
+    )
+    .map((page) => page.pageid);
   for (const [pageId, expectedRevision] of expectedRevisionByPageId) {
     if (contentMissingPageIds.has(pageId)) continue;
     const received = revisions.get(pageId);
@@ -244,7 +259,7 @@ export async function syncRecentChanges(
     through,
     overlapMs,
   );
-  let changedPages: PageRecord[] = [];
+  const changedPages: PageRecord[] = [];
   let sequence = initialSequence;
   let filesChanged = false;
   let dataCodesInvalidated = false;
@@ -256,261 +271,296 @@ export async function syncRecentChanges(
     database.jobs,
     database.syncState,
     async () => {
-    sequence = await readLocalSequence(database);
-    const missingTitles = regularInfoPages
-      .filter((page) => page.missing && typeof page.title === 'string')
-      .map((page) => page.title as string);
-    const pagesByMissingTitle = missingTitles.length
-      ? await database.pages.where('title').anyOf(missingTitles).toArray()
-      : [];
-    const pageIds = new Set([
-      ...activeInfoPagesToCommit.map(({ pageid }) => pageid),
-      ...regularInfoPages.flatMap((page) =>
-        page.missing && typeof page.pageid === 'number' ? [page.pageid] : [],
-      ),
-      ...pagesByMissingTitle.map(({ id }) => id),
-    ]);
-    const currentPages = new Map(
-      (await database.pages.bulkGet([...pageIds]))
-        .filter((page): page is PageRecord => page !== undefined)
-        .map((page) => [page.id, page]),
-    );
-    const existingJobs = await database.jobs
-      .where('type')
-      .equals(CONTENT_JOB_TYPE)
-      .filter((job) => pageIds.has(job.pageId))
-      .toArray();
-    const jobsByPageId = new Map(existingJobs.map((job) => [job.pageId, job]));
-    const nextPages = new Map<number, PageRecord>();
-    const activePageIds = new Set(activeInfoPagesToCommit.map(({ pageid }) => pageid));
-    for (const raw of activeInfoPagesToCommit) {
-      const oldPage = currentPages.get(raw.pageid);
-      if (
-        oldPage &&
-        typeof oldPage.revisionId === 'number' &&
-        typeof raw.lastrevid === 'number' &&
-        oldPage.revisionId > raw.lastrevid
-      ) {
-        nextPages.set(oldPage.id, {
-          ...oldPage,
-          seenInTitleSync: titleState.generation,
-        });
-        continue;
-      }
-      const revision = revisions.get(raw.pageid);
-      const candidate = candidates.byPageId.get(raw.pageid);
-      const contentEligible = !raw.redirect && isSearchableContentModel(raw.contentmodel);
-      const nextPage: PageRecord = {
-        ...oldPage,
-        id: raw.pageid,
-        title: raw.title ?? oldPage?.title ?? candidate?.title ?? String(raw.pageid),
-        normalizedTitle: analyzer.normalize(
-          raw.title ?? oldPage?.title ?? candidate?.title ?? String(raw.pageid),
-        ),
-        namespace: raw.ns ?? oldPage?.namespace ?? candidate?.ns ?? 0,
-        namespaceName:
-          titleState.namespaceNames[raw.ns ?? oldPage?.namespace ?? 0] ??
-          String(raw.ns ?? oldPage?.namespace ?? 0),
-        isRedirect: Boolean(raw.redirect),
-        localSeq: oldPage?.localSeq ?? sequence,
-        seenInTitleSync: titleState.generation,
-        deleted: false,
-        revisionId: raw.lastrevid,
-        contentModel: revision?.contentModel ?? raw.contentmodel ?? oldPage?.contentModel,
-        ...(contentEligible
-          ? revision
-            ? { content: revision.content, contentRevisionId: revision.revid }
-            : oldPage?.revisionId !== raw.lastrevid && isCssContentModel(raw.contentmodel)
-              ? { content: undefined, contentRevisionId: undefined } : {}
-          : { content: undefined, contentRevisionId: undefined }),
-      };
-      nextPage.redirectResolution = currentRedirectResolution(nextPage);
-      if (searchablePageFactChanged(oldPage, nextPage)) {
-        sequence += 1;
-        nextPage.localSeq = sequence;
-        changedPages.push(nextPage);
-        if (oldPage?.namespace === 3500 || nextPage.namespace === 3500) {
-          dataCodesInvalidated = true;
-        }
-      }
-      nextPages.set(nextPage.id, nextPage);
-    }
-
-    for (const raw of regularInfoPages) {
-      if (!raw.missing || typeof raw.pageid !== 'number' || activePageIds.has(raw.pageid)) {
-        continue;
-      }
-      const oldPage = currentPages.get(raw.pageid);
-      if (!oldPage) continue;
-      const deletedPage = tombstone(oldPage, titleState.generation);
-      if (searchablePageFactChanged(oldPage, deletedPage)) {
-        sequence += 1;
-        deletedPage.localSeq = sequence;
-        changedPages.push(deletedPage);
-        if (deletedPage.namespace === 3500) dataCodesInvalidated = true;
-      }
-      nextPages.set(deletedPage.id, deletedPage);
-    }
-    for (const oldPage of pagesByMissingTitle) {
-      if (activePageIds.has(oldPage.id) || nextPages.has(oldPage.id)) continue;
-      const deletedPage = tombstone(oldPage, titleState.generation);
-      if (searchablePageFactChanged(oldPage, deletedPage)) {
-        sequence += 1;
-        deletedPage.localSeq = sequence;
-        changedPages.push(deletedPage);
-        if (deletedPage.namespace === 3500) dataCodesInvalidated = true;
-      }
-      nextPages.set(deletedPage.id, deletedPage);
-    }
-    if (nextPages.size) await database.pages.bulkPut([...nextPages.values()]);
-    const jobsToPut = [];
-    const retainedJobPageIds = new Set<number>();
-    const jobsUpdatedAt = Date.now();
-    for (const page of nextPages.values()) {
-      if (!isContentJobEligible(page)) continue;
-      retainedJobPageIds.add(page.id);
-      const existingJob = jobsByPageId.get(page.id);
-      const projection = projectContentJob(page, false);
-      if (!contentJobMatchesProjection(existingJob, page.id, projection)) {
-        jobsToPut.push(
-          contentJobFromProjection(page.id, projection, existingJob, jobsUpdatedAt),
-        );
-      }
-    }
-    const staleJobIds = existingJobs.flatMap((job) =>
-      !retainedJobPageIds.has(job.pageId) && job.id !== undefined ? [job.id] : [],
-    );
-    if (staleJobIds.length) await database.jobs.bulkDelete(staleJobIds);
-    if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);
-
-    if (dataCodesInvalidated) {
-      const dataCodeState = await database.syncState.get('data-code-sync');
-      if (dataCodeState?.value && typeof dataCodeState.value === 'object') {
-        await database.syncState.put({
-          key: 'data-code-sync',
-          value: { ...dataCodeState.value, syncedAt: 0 },
-        });
-      }
-    }
-
-    if (fileState?.status === 'complete') {
-      const activeFiles = fileInfoPages.filter(
-        (page): page is RawPageInfo & { pageid: number } =>
-          !page.missing && typeof page.pageid === 'number',
-      );
-      const missingFileTitles = fileInfoPages
+      sequence = await readLocalSequence(database);
+      const missingTitles = regularInfoPages
         .filter((page) => page.missing && typeof page.title === 'string')
         .map((page) => page.title as string);
-      const filesByMissingTitle = missingFileTitles.length
-        ? await database.fileResources.where('title').anyOf(missingFileTitles).toArray()
+      const pagesByMissingTitle = missingTitles.length
+        ? await database.pages.where('title').anyOf(missingTitles).toArray()
         : [];
-      const fileIds = new Set([
-        ...activeFiles.map(({ pageid }) => pageid),
-        ...fileInfoPages.flatMap((page) =>
+      const pageIds = new Set([
+        ...activeInfoPagesToCommit.map(({ pageid }) => pageid),
+        ...regularInfoPages.flatMap((page) =>
           page.missing && typeof page.pageid === 'number' ? [page.pageid] : [],
         ),
+        ...pagesByMissingTitle.map(({ id }) => id),
       ]);
-      const storedFiles = new Map(
-        (await database.fileResources.bulkGet([...fileIds]))
-          .filter((file): file is PageRecord => file !== undefined)
-          .map((file) => [file.id, file]),
+      const currentPages = new Map(
+        (await database.pages.bulkGet([...pageIds]))
+          .filter((page): page is PageRecord => page !== undefined)
+          .map((page) => [page.id, page]),
       );
-      const filesToPut: PageRecord[] = [];
-      const activeFileIds = new Set(activeFiles.map(({ pageid }) => pageid));
-      for (const raw of activeFiles) {
-        const oldFile = storedFiles.get(raw.pageid);
+      const existingJobs = await database.jobs
+        .where('type')
+        .equals(CONTENT_JOB_TYPE)
+        .filter((job) => pageIds.has(job.pageId))
+        .toArray();
+      const jobsByPageId = new Map(
+        existingJobs.map((job) => [job.pageId, job]),
+      );
+      const nextPages = new Map<number, PageRecord>();
+      const activePageIds = new Set(
+        activeInfoPagesToCommit.map(({ pageid }) => pageid),
+      );
+      for (const raw of activeInfoPagesToCommit) {
+        const oldPage = currentPages.get(raw.pageid);
         if (
-          oldFile &&
-          typeof oldFile.revisionId === 'number' &&
+          oldPage &&
+          typeof oldPage.revisionId === 'number' &&
           typeof raw.lastrevid === 'number' &&
-          oldFile.revisionId > raw.lastrevid
+          oldPage.revisionId > raw.lastrevid
         ) {
-          filesToPut.push({
-            ...withoutLegacyTitleGeneration(oldFile),
-            seenInFileSync: fileState.generation,
+          nextPages.set(oldPage.id, {
+            ...oldPage,
+            seenInTitleSync: titleState.generation,
           });
           continue;
         }
-        const title = raw.title ?? oldFile?.title ?? candidates.byPageId.get(raw.pageid)?.title;
-        if (!title) continue;
-        const nextFile: PageRecord = {
-          ...(oldFile ? withoutLegacyTitleGeneration(oldFile) : {}),
+        const revision = revisions.get(raw.pageid);
+        const candidate = candidates.byPageId.get(raw.pageid);
+        const contentEligible =
+          !raw.redirect && isSearchableContentModel(raw.contentmodel);
+        const nextPage: PageRecord = {
+          ...oldPage,
           id: raw.pageid,
-          title,
-          normalizedTitle: analyzer.normalize(title),
-          namespace: 6,
-          namespaceName: '文件',
+          title:
+            raw.title ??
+            oldPage?.title ??
+            candidate?.title ??
+            String(raw.pageid),
+          normalizedTitle: analyzer.normalize(
+            raw.title ??
+              oldPage?.title ??
+              candidate?.title ??
+              String(raw.pageid),
+          ),
+          namespace: raw.ns ?? oldPage?.namespace ?? candidate?.ns ?? 0,
+          namespaceName:
+            titleState.namespaceNames[raw.ns ?? oldPage?.namespace ?? 0] ??
+            String(raw.ns ?? oldPage?.namespace ?? 0),
           isRedirect: Boolean(raw.redirect),
-          localSeq: oldFile?.localSeq ?? sequence,
-          seenInFileSync: fileState.generation,
+          localSeq: oldPage?.localSeq ?? sequence,
+          seenInTitleSync: titleState.generation,
           deleted: false,
           revisionId: raw.lastrevid,
-          contentModel: raw.contentmodel ?? oldFile?.contentModel,
+          contentModel:
+            revision?.contentModel ?? raw.contentmodel ?? oldPage?.contentModel,
+          ...(contentEligible
+            ? revision
+              ? { content: revision.content, contentRevisionId: revision.revid }
+              : oldPage?.revisionId !== raw.lastrevid &&
+                  isCssContentModel(raw.contentmodel)
+                ? { content: undefined, contentRevisionId: undefined }
+                : {}
+            : { content: undefined, contentRevisionId: undefined }),
         };
-        if (searchablePageFactChanged(oldFile, nextFile)) {
+        nextPage.redirectResolution = currentRedirectResolution(nextPage);
+        if (searchablePageFactChanged(oldPage, nextPage)) {
           sequence += 1;
-          nextFile.localSeq = sequence;
-          nextFile.writerSeq = sequence;
-          filesChanged = true;
+          nextPage.localSeq = sequence;
+          changedPages.push(nextPage);
+          if (oldPage?.namespace === 3500 || nextPage.namespace === 3500) {
+            dataCodesInvalidated = true;
+          }
         }
-        filesToPut.push(nextFile);
+        nextPages.set(nextPage.id, nextPage);
       }
-      const filesToDelete = new Set<number>();
-      for (const raw of fileInfoPages) {
+
+      for (const raw of regularInfoPages) {
         if (
           !raw.missing ||
           typeof raw.pageid !== 'number' ||
-          activeFileIds.has(raw.pageid) ||
-          !storedFiles.has(raw.pageid)
+          activePageIds.has(raw.pageid)
         ) {
           continue;
         }
-        filesToDelete.add(raw.pageid);
-      }
-      for (const file of filesByMissingTitle) {
-        if (!activeFileIds.has(file.id)) filesToDelete.add(file.id);
-      }
-      if (filesToDelete.size) {
-        const filesById = new Map([
-          ...storedFiles,
-          ...filesByMissingTitle.map((file) => [file.id, file] as const),
-        ]);
-        const tombstones: PageRecord[] = [];
-        for (const fileId of filesToDelete) {
-          const file = filesById.get(fileId);
-          if (!file || file.deleted) continue;
+        const oldPage = currentPages.get(raw.pageid);
+        if (!oldPage) continue;
+        const deletedPage = tombstone(oldPage, titleState.generation);
+        if (searchablePageFactChanged(oldPage, deletedPage)) {
           sequence += 1;
-          tombstones.push({
-            ...withoutLegacyTitleGeneration(file),
-            deleted: true,
-            redirectResolution: undefined,
-            localSeq: sequence,
-            writerSeq: sequence,
+          deletedPage.localSeq = sequence;
+          changedPages.push(deletedPage);
+          if (deletedPage.namespace === 3500) dataCodesInvalidated = true;
+        }
+        nextPages.set(deletedPage.id, deletedPage);
+      }
+      for (const oldPage of pagesByMissingTitle) {
+        if (activePageIds.has(oldPage.id) || nextPages.has(oldPage.id))
+          continue;
+        const deletedPage = tombstone(oldPage, titleState.generation);
+        if (searchablePageFactChanged(oldPage, deletedPage)) {
+          sequence += 1;
+          deletedPage.localSeq = sequence;
+          changedPages.push(deletedPage);
+          if (deletedPage.namespace === 3500) dataCodesInvalidated = true;
+        }
+        nextPages.set(deletedPage.id, deletedPage);
+      }
+      if (nextPages.size) await database.pages.bulkPut([...nextPages.values()]);
+      const jobsToPut = [];
+      const retainedJobPageIds = new Set<number>();
+      const jobsUpdatedAt = Date.now();
+      for (const page of nextPages.values()) {
+        if (!isContentJobEligible(page)) continue;
+        retainedJobPageIds.add(page.id);
+        const existingJob = jobsByPageId.get(page.id);
+        const projection = projectContentJob(page, false);
+        if (!contentJobMatchesProjection(existingJob, page.id, projection)) {
+          jobsToPut.push(
+            contentJobFromProjection(
+              page.id,
+              projection,
+              existingJob,
+              jobsUpdatedAt,
+            ),
+          );
+        }
+      }
+      const staleJobIds = existingJobs.flatMap((job) =>
+        !retainedJobPageIds.has(job.pageId) && job.id !== undefined
+          ? [job.id]
+          : [],
+      );
+      if (staleJobIds.length) await database.jobs.bulkDelete(staleJobIds);
+      if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);
+
+      if (dataCodesInvalidated) {
+        const dataCodeState = await database.syncState.get('data-code-sync');
+        if (dataCodeState?.value && typeof dataCodeState.value === 'object') {
+          await database.syncState.put({
+            key: 'data-code-sync',
+            value: { ...dataCodeState.value, syncedAt: 0 },
           });
         }
-        if (tombstones.length) {
-          filesChanged = true;
-          await database.fileResources.bulkPut(tombstones);
-        }
       }
-      if (filesToPut.length) await database.fileResources.bulkPut(filesToPut);
-    }
-    const currentRecentState = await readRecentChangeSyncState(database);
-    const state: RecentChangeSyncState = {
-      through,
-      completedAt: Date.now(),
-      recentChanges,
-      fileChangeSeq: filesChanged
-        ? sequence
-        : maximumSequence(
-            incrementalState?.fileChangeSeq,
-            currentRecentState?.fileChangeSeq,
+
+      if (fileState?.status === 'complete') {
+        const activeFiles = fileInfoPages.filter(
+          (page): page is RawPageInfo & { pageid: number } =>
+            !page.missing && typeof page.pageid === 'number',
+        );
+        const missingFileTitles = fileInfoPages
+          .filter((page) => page.missing && typeof page.title === 'string')
+          .map((page) => page.title as string);
+        const filesByMissingTitle = missingFileTitles.length
+          ? await database.fileResources
+              .where('title')
+              .anyOf(missingFileTitles)
+              .toArray()
+          : [];
+        const fileIds = new Set([
+          ...activeFiles.map(({ pageid }) => pageid),
+          ...fileInfoPages.flatMap((page) =>
+            page.missing && typeof page.pageid === 'number'
+              ? [page.pageid]
+              : [],
           ),
-    };
-    await database.syncState.bulkPut([
-      { key: LOCAL_SEQUENCE_KEY, value: sequence },
-      { key: RECENT_CHANGES_SYNC_KEY, value: state },
-    ]);
+        ]);
+        const storedFiles = new Map(
+          (await database.fileResources.bulkGet([...fileIds]))
+            .filter((file): file is PageRecord => file !== undefined)
+            .map((file) => [file.id, file]),
+        );
+        const filesToPut: PageRecord[] = [];
+        const activeFileIds = new Set(activeFiles.map(({ pageid }) => pageid));
+        for (const raw of activeFiles) {
+          const oldFile = storedFiles.get(raw.pageid);
+          if (
+            oldFile &&
+            typeof oldFile.revisionId === 'number' &&
+            typeof raw.lastrevid === 'number' &&
+            oldFile.revisionId > raw.lastrevid
+          ) {
+            filesToPut.push({
+              ...withoutLegacyTitleGeneration(oldFile),
+              seenInFileSync: fileState.generation,
+            });
+            continue;
+          }
+          const title =
+            raw.title ??
+            oldFile?.title ??
+            candidates.byPageId.get(raw.pageid)?.title;
+          if (!title) continue;
+          const nextFile: PageRecord = {
+            ...(oldFile ? withoutLegacyTitleGeneration(oldFile) : {}),
+            id: raw.pageid,
+            title,
+            normalizedTitle: analyzer.normalize(title),
+            namespace: 6,
+            namespaceName: '文件',
+            isRedirect: Boolean(raw.redirect),
+            localSeq: oldFile?.localSeq ?? sequence,
+            seenInFileSync: fileState.generation,
+            deleted: false,
+            revisionId: raw.lastrevid,
+            contentModel: raw.contentmodel ?? oldFile?.contentModel,
+          };
+          if (searchablePageFactChanged(oldFile, nextFile)) {
+            sequence += 1;
+            nextFile.localSeq = sequence;
+            nextFile.writerSeq = sequence;
+            filesChanged = true;
+          }
+          filesToPut.push(nextFile);
+        }
+        const filesToDelete = new Set<number>();
+        for (const raw of fileInfoPages) {
+          if (
+            !raw.missing ||
+            typeof raw.pageid !== 'number' ||
+            activeFileIds.has(raw.pageid) ||
+            !storedFiles.has(raw.pageid)
+          ) {
+            continue;
+          }
+          filesToDelete.add(raw.pageid);
+        }
+        for (const file of filesByMissingTitle) {
+          if (!activeFileIds.has(file.id)) filesToDelete.add(file.id);
+        }
+        if (filesToDelete.size) {
+          const filesById = new Map([
+            ...storedFiles,
+            ...filesByMissingTitle.map((file) => [file.id, file] as const),
+          ]);
+          const tombstones: PageRecord[] = [];
+          for (const fileId of filesToDelete) {
+            const file = filesById.get(fileId);
+            if (!file || file.deleted) continue;
+            sequence += 1;
+            tombstones.push({
+              ...withoutLegacyTitleGeneration(file),
+              deleted: true,
+              redirectResolution: undefined,
+              localSeq: sequence,
+              writerSeq: sequence,
+            });
+          }
+          if (tombstones.length) {
+            filesChanged = true;
+            await database.fileResources.bulkPut(tombstones);
+          }
+        }
+        if (filesToPut.length) await database.fileResources.bulkPut(filesToPut);
+      }
+      const currentRecentState = await readRecentChangeSyncState(database);
+      const state: RecentChangeSyncState = {
+        through,
+        completedAt: Date.now(),
+        recentChanges,
+        fileChangeSeq: filesChanged
+          ? sequence
+          : maximumSequence(
+              incrementalState?.fileChangeSeq,
+              currentRecentState?.fileChangeSeq,
+            ),
+      };
+      await database.syncState.bulkPut([
+        { key: LOCAL_SEQUENCE_KEY, value: sequence },
+        { key: RECENT_CHANGES_SYNC_KEY, value: state },
+      ]);
     },
   );
 
@@ -572,14 +622,17 @@ function collectPageCandidates(events: RawRecentChange[]): PageCandidates {
     if (event.type === 'edit' || event.type === 'new') {
       if (event.pageid <= 0) continue;
       const previous = byPageId.get(event.pageid);
-      if (!previous || event.revid >= previous.revid) byPageId.set(event.pageid, event);
+      if (!previous || event.revid >= previous.revid)
+        byPageId.set(event.pageid, event);
       continue;
     }
-    if (!event.logtype || !PAGE_AFFECTING_LOG_TYPES.has(event.logtype)) continue;
+    if (!event.logtype || !PAGE_AFFECTING_LOG_TYPES.has(event.logtype))
+      continue;
     if (event.logtype === 'move') {
       if (event.title) titles.add(event.title);
       const targetTitle = event.logparams?.target_title;
-      if (typeof targetTitle === 'string' && targetTitle) titles.add(targetTitle);
+      if (typeof targetTitle === 'string' && targetTitle)
+        titles.add(targetTitle);
       continue;
     }
     if (event.pageid > 0) byPageId.set(event.pageid, event);
@@ -588,9 +641,13 @@ function collectPageCandidates(events: RawRecentChange[]): PageCandidates {
   return { byPageId, titles };
 }
 
-function pageNamespace(page: RawPageInfo, candidates: PageCandidates): number | undefined {
+function pageNamespace(
+  page: RawPageInfo,
+  candidates: PageCandidates,
+): number | undefined {
   if (typeof page.ns === 'number') return page.ns;
-  if (typeof page.pageid === 'number') return candidates.byPageId.get(page.pageid)?.ns;
+  if (typeof page.pageid === 'number')
+    return candidates.byPageId.get(page.pageid)?.ns;
   return undefined;
 }
 
@@ -608,7 +665,8 @@ async function fetchPageInfo(
       prop: 'info',
     });
     result.push(...(response.query?.pages ?? []));
-    if (index + 1 < pageIdBatches.length || titles.length) await delay(requestIntervalMs);
+    if (index + 1 < pageIdBatches.length || titles.length)
+      await delay(requestIntervalMs);
   }
   const titleBatches = chunks(titles, BATCH_SIZE);
   for (const [index, batch] of titleBatches.entries()) {
@@ -693,8 +751,12 @@ function retainedMarkers(
   return [...unique.values()];
 }
 
-function maximumSequence(...values: Array<number | undefined>): number | undefined {
-  const sequences = values.filter((value): value is number => typeof value === 'number');
+function maximumSequence(
+  ...values: Array<number | undefined>
+): number | undefined {
+  const sequences = values.filter(
+    (value): value is number => typeof value === 'number',
+  );
   return sequences.length ? Math.max(...sequences) : undefined;
 }
 

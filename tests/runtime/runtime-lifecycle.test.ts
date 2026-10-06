@@ -115,7 +115,11 @@ describe('runtime lifecycle coordinator', () => {
     });
     await secondRun;
 
-    expect(order).toEqual(['facts-committed', 'refresh-start', 'second-writer']);
+    expect(order).toEqual([
+      'facts-committed',
+      'refresh-start',
+      'second-writer',
+    ]);
     releaseRefresh();
     await firstRun;
     expect(order).toEqual([
@@ -155,7 +159,8 @@ describe('runtime lifecycle coordinator', () => {
     const firstHeld = new Promise<void>((resolve) => {
       finishFirst = resolve;
     });
-    const applied: Array<{ pages: boolean; files: boolean; data: boolean }> = [];
+    const applied: Array<{ pages: boolean; files: boolean; data: boolean }> =
+      [];
     const coordinator = new RuntimeLifecycleCoordinator({
       applyStorageInvalidation: vi.fn(async (invalidation) => {
         applied.push(invalidation);
@@ -191,12 +196,22 @@ describe('runtime lifecycle coordinator', () => {
     await coordinator.resumeStorageRefresh();
 
     expect(apply).toHaveBeenCalledOnce();
-    expect(apply).toHaveBeenCalledWith({ pages: true, files: true, data: true });
+    expect(apply).toHaveBeenCalledWith({
+      pages: true,
+      files: true,
+      data: true,
+    });
   });
 
   it('retains a failed refresh batch so a later visibility resume can retry it', async () => {
     const apply = vi
-      .fn<(invalidation: { pages: boolean; files: boolean; data: boolean }) => Promise<void>>()
+      .fn<
+        (invalidation: {
+          pages: boolean;
+          files: boolean;
+          data: boolean;
+        }) => Promise<void>
+      >()
       .mockRejectedValueOnce(new Error('IndexedDB 暂时不可读'))
       .mockResolvedValue(undefined);
     const coordinator = new RuntimeLifecycleCoordinator({
@@ -209,7 +224,11 @@ describe('runtime lifecycle coordinator', () => {
     await coordinator.resumeStorageRefresh();
 
     expect(apply).toHaveBeenCalledTimes(2);
-    expect(apply).toHaveBeenLastCalledWith({ pages: true, files: true, data: false });
+    expect(apply).toHaveBeenLastCalledWith({
+      pages: true,
+      files: true,
+      data: false,
+    });
   });
 
   it('retries the title baseline before reconciliation and dependent refreshes', async () => {
@@ -264,8 +283,11 @@ class QueuedWriter implements ExclusiveWriter {
   private active = false;
   private waiters: Array<() => void> = [];
 
-  async runExclusive(task: () => Promise<void>): Promise<'ran' | 'lock-unavailable'> {
-    if (this.active) await new Promise<void>((resolve) => this.waiters.push(resolve));
+  async runExclusive(
+    task: () => Promise<void>,
+  ): Promise<'ran' | 'lock-unavailable'> {
+    if (this.active)
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
     this.active = true;
     try {
       await task();

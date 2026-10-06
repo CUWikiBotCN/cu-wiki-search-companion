@@ -119,10 +119,12 @@ describe('CooperativeTaskScheduler', () => {
     const controller = new AbortController();
     let rejection: unknown;
 
-    const pending = scheduler.yield(controller.signal).catch((error: unknown) => {
-      rejection = error;
-      throw error;
-    });
+    const pending = scheduler
+      .yield(controller.signal)
+      .catch((error: unknown) => {
+        rejection = error;
+        throw error;
+      });
     await yieldStarted;
     controller.abort(new Error('取消正在让步的任务'));
     await Promise.resolve();

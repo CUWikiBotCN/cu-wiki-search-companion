@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 import 'fake-indexeddb/auto';
 
-import { Analyzer, createBootstrapSegmenter } from '../../src/analyzer/analyzer';
+import {
+  Analyzer,
+  createBootstrapSegmenter,
+} from '../../src/analyzer/analyzer';
 import { WikiSearchDatabase } from '../../src/storage/database';
 import { syncRecentChanges } from '../../src/sync/recent-change-sync';
 import { WikiApi } from '../../src/sync/wiki-api';
@@ -40,11 +43,17 @@ describe('RecentChanges incremental sync', () => {
   it('commits a changed page body and the frozen server cursor together', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -90,7 +99,9 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 12,
-                  slots: { main: { contentmodel: 'wikitext', content: '最新鹿弹正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '最新鹿弹正文' },
+                  },
                 },
               ],
             },
@@ -119,7 +130,9 @@ describe('RecentChanges incremental sync', () => {
       content: '最新鹿弹正文',
       deleted: false,
     });
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
     expect((await database.syncState.get('local-sequence'))?.value).toBe(2);
@@ -137,7 +150,9 @@ describe('RecentChanges incremental sync', () => {
     expect(recentChangesRequest?.searchParams.get('rcstart')).toBe(
       '2026-08-31T02:55:00.000Z',
     );
-    expect(recentChangesRequest?.searchParams.get('rcend')).toBe('2026-08-31T03:10:00Z');
+    expect(recentChangesRequest?.searchParams.get('rcend')).toBe(
+      '2026-08-31T03:10:00Z',
+    );
     expect(recentChangesRequest?.searchParams.get('assert')).toBe('user');
     expect(recentChangesRequest?.searchParams.has('rcshow')).toBe(false);
 
@@ -147,11 +162,17 @@ describe('RecentChanges incremental sync', () => {
   it('retries a mixed batch whose transaction aborts after its callback', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -208,7 +229,9 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 12,
-                  slots: { main: { contentmodel: 'wikitext', content: '更新后正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '更新后正文' },
+                  },
                 },
               ],
             },
@@ -237,7 +260,10 @@ describe('RecentChanges incremental sync', () => {
       completedAt: Date.parse('2026-08-31T03:05:01Z'),
       recentChanges: [{ rcid: 100, timestamp: '2026-08-31T03:04:00Z' }],
     };
-    const database = await databaseWithBaseline([oldUpdatedPage, oldDeletedPage]);
+    const database = await databaseWithBaseline([
+      oldUpdatedPage,
+      oldDeletedPage,
+    ]);
     await database.syncState.bulkPut([
       { key: 'local-sequence', value: 2 },
       { key: 'recent-changes-sync', value: oldCursor },
@@ -268,9 +294,9 @@ describe('RecentChanges incremental sync', () => {
     expect(await database.pages.get(2)).toEqual(oldDeletedPage);
     expect(await database.jobs.toArray()).toEqual(oldJobs);
     expect((await database.syncState.get('local-sequence'))?.value).toBe(2);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual(
-      oldCursor,
-    );
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toEqual(oldCursor);
 
     const resumed = await syncRecentChanges(database, api, analyzer, {
       requestIntervalMs: 0,
@@ -295,11 +321,15 @@ describe('RecentChanges incremental sync', () => {
     });
     expect(await database.jobs.get(deletedJobId)).toBeUndefined();
     expect((await database.syncState.get('local-sequence'))?.value).toBe(4);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
     expect(
-      requests.filter((request) => request.searchParams.get('list') === 'recentchanges'),
+      requests.filter(
+        (request) => request.searchParams.get('list') === 'recentchanges',
+      ),
     ).toHaveLength(2);
 
     await destroy(database);
@@ -311,10 +341,16 @@ describe('RecentChanges incremental sync', () => {
     ]);
     let concurrentFactWritten = false;
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -351,13 +387,20 @@ describe('RecentChanges incremental sync', () => {
       }
       if (!concurrentFactWritten) {
         concurrentFactWritten = true;
-        await database.transaction('rw', database.pages, database.syncState, async () => {
-          await database.pages.put(page({ id: 2, title: '并发事实', localSeq: 2 }));
-          await database.syncState.bulkPut([
-            { key: 'local-sequence', value: 2 },
-            { key: 'recent-changes-sync', value: { fileChangeSeq: 2 } },
-          ]);
-        });
+        await database.transaction(
+          'rw',
+          database.pages,
+          database.syncState,
+          async () => {
+            await database.pages.put(
+              page({ id: 2, title: '并发事实', localSeq: 2 }),
+            );
+            await database.syncState.bulkPut([
+              { key: 'local-sequence', value: 2 },
+              { key: 'recent-changes-sync', value: { fileChangeSeq: 2 } },
+            ]);
+          },
+        );
       }
       return json({
         query: {
@@ -367,7 +410,9 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 12,
-                  slots: { main: { contentmodel: 'wikitext', content: '最新正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '最新正文' },
+                  },
                 },
               ],
             },
@@ -385,7 +430,9 @@ describe('RecentChanges incremental sync', () => {
     expect((await database.pages.get(1))?.localSeq).toBe(3);
     expect((await database.pages.get(2))?.localSeq).toBe(2);
     expect((await database.syncState.get('local-sequence'))?.value).toBe(3);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       fileChangeSeq: 2,
     });
 
@@ -417,11 +464,17 @@ describe('RecentChanges incremental sync', () => {
       timestamp: '2026-08-31T03:07:00Z',
     };
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         const cursor = parameters.get('rccontinue');
@@ -495,13 +548,15 @@ describe('RecentChanges incremental sync', () => {
       (request) => request.searchParams.get('list') === 'recentchanges',
     );
     expect(recentRequests).toHaveLength(3);
-    expect(recentRequests.map((request) => request.searchParams.get('rccontinue'))).toEqual([
-      null,
-      'page-2',
-      'page-3',
-    ]);
-    expect(recentRequests.every((request) => !request.searchParams.has('rcshow'))).toBe(true);
-    const infoRequests = requests.filter((request) => request.searchParams.get('prop') === 'info');
+    expect(
+      recentRequests.map((request) => request.searchParams.get('rccontinue')),
+    ).toEqual([null, 'page-2', 'page-3']);
+    expect(
+      recentRequests.every((request) => !request.searchParams.has('rcshow')),
+    ).toBe(true);
+    const infoRequests = requests.filter(
+      (request) => request.searchParams.get('prop') === 'info',
+    );
     expect(infoRequests).toHaveLength(1);
     expect(infoRequests[0]?.searchParams.get('pageids')).toBe('1|2');
 
@@ -511,11 +566,17 @@ describe('RecentChanges incremental sync', () => {
   it('reconciles move and delete logs without treating zero revision ids as content revisions', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -532,7 +593,11 @@ describe('RecentChanges incremental sync', () => {
                 timestamp: '2026-08-31T03:06:00Z',
                 logtype: 'move',
                 logaction: 'move',
-                logparams: { target_ns: 0, target_title: '新页面', suppressredirect: true },
+                logparams: {
+                  target_ns: 0,
+                  target_title: '新页面',
+                  suppressredirect: true,
+                },
               },
               {
                 type: 'log',
@@ -654,14 +719,20 @@ describe('RecentChanges incremental sync', () => {
       content: undefined,
       contentRevisionId: undefined,
     });
-    expect(
-      await database.jobs.filter((job) => job.pageId === 4).count(),
-    ).toBe(0);
-    const titleRequest = requests.find((request) => request.searchParams.has('titles'));
+    expect(await database.jobs.filter((job) => job.pageId === 4).count()).toBe(
+      0,
+    );
+    const titleRequest = requests.find((request) =>
+      request.searchParams.has('titles'),
+    );
     expect(titleRequest?.searchParams.get('titles')).toBe('旧页面|新页面');
-    expect(titleRequest?.searchParams.get('titles')).not.toContain('只注册未建页');
+    expect(titleRequest?.searchParams.get('titles')).not.toContain(
+      '只注册未建页',
+    );
     expect(
-      requests.filter((request) => request.searchParams.get('prop') === 'revisions'),
+      requests.filter(
+        (request) => request.searchParams.get('prop') === 'revisions',
+      ),
     ).toHaveLength(0);
 
     await destroy(database);
@@ -669,10 +740,16 @@ describe('RecentChanges incremental sync', () => {
 
   it('never overwrites a newer local revision with an older remote response', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -715,7 +792,9 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 12,
-                  slots: { main: { contentmodel: 'wikitext', content: '过期正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '过期正文' },
+                  },
                 },
               ],
             },
@@ -744,7 +823,9 @@ describe('RecentChanges incremental sync', () => {
       contentRevisionId: 20,
       content: '更新的本地正文',
     });
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
 
@@ -761,7 +842,11 @@ describe('RecentChanges incremental sync', () => {
       }),
     );
     const database = await databaseWithBaseline([
-      page({ revisionId: 11, contentRevisionId: 11, content: '仍可搜索的缓存' }),
+      page({
+        revisionId: 11,
+        contentRevisionId: 11,
+        content: '仍可搜索的缓存',
+      }),
     ]);
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 4 });
 
@@ -789,10 +874,16 @@ describe('RecentChanges incremental sync', () => {
     'pauses without advancing the cursor when %s requires login',
     async (loginStage) => {
       const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+        const url = new URL(
+          String(input),
+          'https://casualtiesunknown.huijiwiki.com',
+        );
         const parameters = url.searchParams;
         if (parameters.get('curtimestamp') === '1') {
-          return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+          return json({
+            curtimestamp: '2026-08-31T03:10:00Z',
+            query: { general: {} },
+          });
         }
         if (parameters.get('list') === 'recentchanges') {
           return json({
@@ -844,7 +935,10 @@ describe('RecentChanges incremental sync', () => {
         completedAt: Date.parse('2026-08-31T03:05:01Z'),
         recentChanges: [{ rcid: 300, timestamp: '2026-08-31T03:04:00Z' }],
       };
-      await database.syncState.put({ key: 'recent-changes-sync', value: priorState });
+      await database.syncState.put({
+        key: 'recent-changes-sync',
+        value: priorState,
+      });
       const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
       const result = await syncRecentChanges(database, api, analyzer, {
@@ -855,9 +949,9 @@ describe('RecentChanges incremental sync', () => {
         status: 'login-required',
         deferredContentPageIds: [],
       });
-      expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual(
-        priorState,
-      );
+      expect(
+        (await database.syncState.get('recent-changes-sync'))?.value,
+      ).toEqual(priorState);
       expect(await database.pages.get(1)).toMatchObject({
         revisionId: 11,
         contentRevisionId: 11,
@@ -871,11 +965,17 @@ describe('RecentChanges incremental sync', () => {
   it('updates an initialized file cache without leaking files into ordinary pages', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -970,7 +1070,9 @@ describe('RecentChanges incremental sync', () => {
     expect(await database.pages.get(6)).toBeUndefined();
     expect(await database.pages.get(7)).toBeUndefined();
     expect(
-      requests.filter((request) => request.searchParams.get('prop') === 'revisions'),
+      requests.filter(
+        (request) => request.searchParams.get('prop') === 'revisions',
+      ),
     ).toHaveLength(0);
 
     await destroy(database);
@@ -988,9 +1090,15 @@ describe('RecentChanges incremental sync', () => {
       },
     });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (url.searchParams.get('list') === 'recentchanges') {
         await database.syncState.put({
@@ -1007,7 +1115,9 @@ describe('RecentChanges incremental sync', () => {
       syncRecentChanges(database, api, analyzer, { requestIntervalMs: 0 }),
     ).rejects.toThrow('同步状态 "recent-changes-sync" 已损坏');
 
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: 123,
     });
     expect((await database.syncState.get('local-sequence'))?.value).toBe(1);
@@ -1017,10 +1127,16 @@ describe('RecentChanges incremental sync', () => {
 
   it('invalidates the derived Data code cache when a Data page changes', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       const parameters = url.searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -1066,7 +1182,8 @@ describe('RecentChanges incremental sync', () => {
                   slots: {
                     main: {
                       contentmodel: 'BSON',
-                      content: '{"id":"pistol","locales":{"zh-CN":{"name":"手枪"}}}',
+                      content:
+                        '{"id":"pistol","locales":{"zh-CN":{"name":"手枪"}}}',
                     },
                   },
                 },
@@ -1104,8 +1221,13 @@ describe('RecentChanges incremental sync', () => {
       requestIntervalMs: 0,
     });
 
-    expect(result).toMatchObject({ status: 'complete', dataCodesInvalidated: true });
-    expect((await database.syncState.get('data-code-sync'))?.value).toMatchObject({
+    expect(result).toMatchObject({
+      status: 'complete',
+      dataCodesInvalidated: true,
+    });
+    expect(
+      (await database.syncState.get('data-code-sync'))?.value,
+    ).toMatchObject({
       syncedAt: 0,
       count: 655,
       rulesSource: 'Item = .locales["zh-CN"].name',
@@ -1122,7 +1244,10 @@ describe('RecentChanges incremental sync', () => {
         'https://casualtiesunknown.huijiwiki.com',
       ).searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -1183,13 +1308,18 @@ describe('RecentChanges incremental sync', () => {
       requestIntervalMs: 0,
     });
 
-    expect(result).toMatchObject({ status: 'complete', dataCodesInvalidated: true });
+    expect(result).toMatchObject({
+      status: 'complete',
+      dataCodesInvalidated: true,
+    });
     expect(await database.pages.get(8)).toMatchObject({
       namespace: 0,
       title: '移出后页面',
       deleted: false,
     });
-    expect((await database.syncState.get('data-code-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('data-code-sync'))?.value,
+    ).toMatchObject({
       syncedAt: 0,
       count: 1,
     });
@@ -1204,7 +1334,10 @@ describe('RecentChanges incremental sync', () => {
         'https://casualtiesunknown.huijiwiki.com',
       ).searchParams;
       if (parameters.get('curtimestamp') === '1') {
-        return json({ curtimestamp: '2026-08-31T03:10:00Z', query: { general: {} } });
+        return json({
+          curtimestamp: '2026-08-31T03:10:00Z',
+          query: { general: {} },
+        });
       }
       if (parameters.get('list') === 'recentchanges') {
         return json({
@@ -1264,7 +1397,12 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 13,
-                  slots: { main: { contentmodel: 'wikitext', content: '不可采用的正文' } },
+                  slots: {
+                    main: {
+                      contentmodel: 'wikitext',
+                      content: '不可采用的正文',
+                    },
+                  },
                 },
               ],
             },
@@ -1273,7 +1411,9 @@ describe('RecentChanges incremental sync', () => {
               revisions: [
                 {
                   revid: 22,
-                  slots: { main: { contentmodel: 'wikitext', content: '正常新正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '正常新正文' },
+                  },
                 },
               ],
             },
@@ -1328,7 +1468,9 @@ describe('RecentChanges incremental sync', () => {
       status: 'pending',
       targetRevisionId: 12,
     });
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
 
@@ -1473,7 +1615,9 @@ describe('RecentChanges incremental sync', () => {
         .filter((job) => job.pageId === 3 || job.pageId === 4)
         .count(),
     ).toBe(0);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
 
@@ -1488,7 +1632,9 @@ describe('RecentChanges incremental sync', () => {
     });
     expect(await database.pages.get(3)).toBeUndefined();
     expect(await database.pages.get(4)).toEqual(tombstone);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:20:00Z',
     });
 
@@ -1608,7 +1754,9 @@ describe('RecentChanges incremental sync', () => {
       targetRevisionId: 50,
       updatedAt: 123,
     });
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:10:00Z',
     });
 
@@ -1629,7 +1777,9 @@ describe('RecentChanges incremental sync', () => {
       localSeq: 2,
     });
     expect(await database.jobs.get(jobId)).toBeUndefined();
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T03:20:00Z',
     });
 
@@ -1663,7 +1813,10 @@ describe('RecentChanges incremental sync', () => {
     'does not commit pages or cursor when a required body response is %s',
     async (_case, bodyPage) => {
       const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+        const url = new URL(
+          String(input),
+          'https://casualtiesunknown.huijiwiki.com',
+        );
         const parameters = url.searchParams;
         if (parameters.get('curtimestamp') === '1') {
           return json({
@@ -1726,7 +1879,9 @@ describe('RecentChanges incremental sync', () => {
         contentRevisionId: 11,
         content: '旧正文仍应保留',
       });
-      expect(await database.syncState.get('recent-changes-sync')).toBeUndefined();
+      expect(
+        await database.syncState.get('recent-changes-sync'),
+      ).toBeUndefined();
       expect((await database.syncState.get('local-sequence'))?.value).toBe(1);
 
       await destroy(database);
@@ -1734,7 +1889,9 @@ describe('RecentChanges incremental sync', () => {
   );
 });
 
-async function databaseWithBaseline(pages: PageRecord[]): Promise<WikiSearchDatabase> {
+async function databaseWithBaseline(
+  pages: PageRecord[],
+): Promise<WikiSearchDatabase> {
   const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
   await database.open();
   await database.pages.bulkPut(pages);
@@ -1812,29 +1969,98 @@ function loginRequired(): Response {
 
 it('invalidates redirect addresses and defers changed CSS source to the CSS queue', async () => {
   const database = await databaseWithBaseline([
-    page({ id: 1, title: '别名', revisionId: 10, isRedirect: true,
-      redirectResolution: { sourceTitle: '别名', sourceRevisionId: 10, checkedAt: 1, target: { title: '旧目标' } } }),
-    page({ id: 2, title: 'MediaWiki:Common.css', namespace: 8, revisionId: 20,
-      contentModel: 'css', contentRevisionId: 20, content: '.old {}' }),
+    page({
+      id: 1,
+      title: '别名',
+      revisionId: 10,
+      isRedirect: true,
+      redirectResolution: {
+        sourceTitle: '别名',
+        sourceRevisionId: 10,
+        checkedAt: 1,
+        target: { title: '旧目标' },
+      },
+    }),
+    page({
+      id: 2,
+      title: 'MediaWiki:Common.css',
+      namespace: 8,
+      revisionId: 20,
+      contentModel: 'css',
+      contentRevisionId: 20,
+      content: '.old {}',
+    }),
   ]);
-  const api = new WikiApi({ retries: 0, fetcher: async (input) => {
-    const params = new URL(String(input), 'https://example.org').searchParams;
-    if (params.has('curtimestamp')) return json({ curtimestamp: '2026-08-31T03:10:00Z' });
-    if (params.get('list') === 'recentchanges') return json({ query: { recentchanges: [
-      { type: 'edit', rcid: 501, pageid: 1, ns: 0, title: '别名', revid: 11, timestamp: '2026-08-31T03:09:00Z' },
-      { type: 'edit', rcid: 502, pageid: 2, ns: 8, title: 'MediaWiki:Common.css', revid: 21, timestamp: '2026-08-31T03:09:01Z' },
-    ] } });
-    if (params.get('prop') === 'info') return json({ query: { pages: [
-      { pageid: 1, ns: 0, title: '别名', redirect: true, lastrevid: 11, contentmodel: 'wikitext' },
-      { pageid: 2, ns: 8, title: 'MediaWiki:Common.css', lastrevid: 21, contentmodel: 'css' },
-    ] } });
-    throw new Error('RC must not download redirects or CSS revisions');
-  } });
+  const api = new WikiApi({
+    retries: 0,
+    fetcher: async (input) => {
+      const params = new URL(String(input), 'https://example.org').searchParams;
+      if (params.has('curtimestamp'))
+        return json({ curtimestamp: '2026-08-31T03:10:00Z' });
+      if (params.get('list') === 'recentchanges')
+        return json({
+          query: {
+            recentchanges: [
+              {
+                type: 'edit',
+                rcid: 501,
+                pageid: 1,
+                ns: 0,
+                title: '别名',
+                revid: 11,
+                timestamp: '2026-08-31T03:09:00Z',
+              },
+              {
+                type: 'edit',
+                rcid: 502,
+                pageid: 2,
+                ns: 8,
+                title: 'MediaWiki:Common.css',
+                revid: 21,
+                timestamp: '2026-08-31T03:09:01Z',
+              },
+            ],
+          },
+        });
+      if (params.get('prop') === 'info')
+        return json({
+          query: {
+            pages: [
+              {
+                pageid: 1,
+                ns: 0,
+                title: '别名',
+                redirect: true,
+                lastrevid: 11,
+                contentmodel: 'wikitext',
+              },
+              {
+                pageid: 2,
+                ns: 8,
+                title: 'MediaWiki:Common.css',
+                lastrevid: 21,
+                contentmodel: 'css',
+              },
+            ],
+          },
+        });
+      throw new Error('RC must not download redirects or CSS revisions');
+    },
+  });
   try {
-    const result = await syncRecentChanges(database, api, analyzer, { requestIntervalMs: 0 });
-    expect(result).toMatchObject({ status: 'complete', deferredContentPageIds: [2] });
+    const result = await syncRecentChanges(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
+    expect(result).toMatchObject({
+      status: 'complete',
+      deferredContentPageIds: [2],
+    });
     expect((await database.pages.get(1))?.redirectResolution).toBeUndefined();
     expect((await database.pages.get(2))?.content).toBeUndefined();
-    expect(await database.jobs.where('pageId').equals(2).first()).toMatchObject({ status: 'pending', targetRevisionId: 21 });
-  } finally { await destroy(database); }
+    expect(await database.jobs.where('pageId').equals(2).first()).toMatchObject(
+      { status: 'pending', targetRevisionId: 21 },
+    );
+  } finally {
+    await destroy(database);
+  }
 });

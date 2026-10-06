@@ -1,45 +1,62 @@
 // SPDX-License-Identifier: MPL-2.0
 import { MirrorSyncOrchestrator } from '../../src/runtime/mirror-sync-orchestrator';
 import { CommittedRecentChangeRefresh } from '../../src/runtime/recent-change-commit-refresh';
-import type { RecentChangeSyncResult, ReconciliationSyncResult } from '../../src/types';
+import type {
+  RecentChangeSyncResult,
+  ReconciliationSyncResult,
+} from '../../src/types';
 
 describe('MirrorSyncOrchestrator', () => {
-  it.each(['reported', 'thrown'])('refreshes committed RC Data after a %s local refresh failure outside the lock', async (failure) => {
-    const options = baseOptions();
-    const originalError = new Error('local index refresh failed');
-    let lockHeld = false;
-    options.coordinator.runIfDue = async (task) => {
-      lockHeld = true;
-      await task();
-      lockHeld = false;
-      return 'ran';
-    };
-    const committed = { ...completeRecentChanges(), dataCodesInvalidated: true };
-    options.facts.reconcile = async () => reconciliationResult('not-due');
-    options.facts.catchUp = async () => committed;
-    options.committed.refreshReconciliation = async () => undefined;
-    const broadcast = vi.fn(() => { expect(lockHeld).toBe(false); });
-    const refresh = new CommittedRecentChangeRefresh({
-      refresh: async () => { throw originalError; },
-      broadcast,
-    });
-    options.committed.refreshRecentChanges = failure === 'reported'
-      ? (result) => refresh.apply(result)
-      : async () => { throw originalError; };
-    const refreshData = vi.fn(async () => {
-      expect(lockHeld).toBe(false);
-      return { status: 'complete' as const };
-    });
-    options.derived.refreshData = refreshData;
-    const outcome = await new MirrorSyncOrchestrator(options).runScheduled();
-    expect(outcome).toMatchObject({
-      status: 'error', recentChanges: committed,
-      errors: { committedRefresh: originalError },
-      dataRefresh: { status: 'complete' },
-    });
-    expect(refreshData).toHaveBeenCalledOnce();
-    if (failure === 'reported') expect(broadcast).toHaveBeenCalledOnce();
-  });
+  it.each(['reported', 'thrown'])(
+    'refreshes committed RC Data after a %s local refresh failure outside the lock',
+    async (failure) => {
+      const options = baseOptions();
+      const originalError = new Error('local index refresh failed');
+      let lockHeld = false;
+      options.coordinator.runIfDue = async (task) => {
+        lockHeld = true;
+        await task();
+        lockHeld = false;
+        return 'ran';
+      };
+      const committed = {
+        ...completeRecentChanges(),
+        dataCodesInvalidated: true,
+      };
+      options.facts.reconcile = async () => reconciliationResult('not-due');
+      options.facts.catchUp = async () => committed;
+      options.committed.refreshReconciliation = async () => undefined;
+      const broadcast = vi.fn(() => {
+        expect(lockHeld).toBe(false);
+      });
+      const refresh = new CommittedRecentChangeRefresh({
+        refresh: async () => {
+          throw originalError;
+        },
+        broadcast,
+      });
+      options.committed.refreshRecentChanges =
+        failure === 'reported'
+          ? (result) => refresh.apply(result)
+          : async () => {
+              throw originalError;
+            };
+      const refreshData = vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return { status: 'complete' as const };
+      });
+      options.derived.refreshData = refreshData;
+      const outcome = await new MirrorSyncOrchestrator(options).runScheduled();
+      expect(outcome).toMatchObject({
+        status: 'error',
+        recentChanges: committed,
+        errors: { committedRefresh: originalError },
+        dataRefresh: { status: 'complete' },
+      });
+      expect(refreshData).toHaveBeenCalledOnce();
+      if (failure === 'reported') expect(broadcast).toHaveBeenCalledOnce();
+    },
+  );
 
   it('returns an exact lock-unavailable outcome without starting synchronization', async () => {
     const reconcile = vi.fn();
@@ -93,7 +110,9 @@ describe('MirrorSyncOrchestrator', () => {
       throw refreshError;
     });
 
-    await expect(new MirrorSyncOrchestrator(options).runScheduled()).resolves.toEqual({
+    await expect(
+      new MirrorSyncOrchestrator(options).runScheduled(),
+    ).resolves.toEqual({
       request: 'scheduled',
       status: 'error',
       coordination: 'not-due',
@@ -103,9 +122,13 @@ describe('MirrorSyncOrchestrator', () => {
 
   it('returns an exact manual lock-unavailable outcome', async () => {
     const options = baseOptions();
-    options.coordinator.runExclusive = vi.fn(async () => 'lock-unavailable' as const);
+    options.coordinator.runExclusive = vi.fn(
+      async () => 'lock-unavailable' as const,
+    );
 
-    await expect(new MirrorSyncOrchestrator(options).reconcileNow()).resolves.toEqual({
+    await expect(
+      new MirrorSyncOrchestrator(options).reconcileNow(),
+    ).resolves.toEqual({
       request: 'manual',
       status: 'lock-unavailable',
       coordination: 'lock-unavailable',
@@ -219,7 +242,9 @@ describe('MirrorSyncOrchestrator', () => {
       return { dataCodesInvalidated: false };
     });
 
-    await expect(new MirrorSyncOrchestrator(options).reconcileNow()).resolves.toMatchObject({
+    await expect(
+      new MirrorSyncOrchestrator(options).reconcileNow(),
+    ).resolves.toMatchObject({
       status: 'error',
       errors: { synchronization: failure },
     });
@@ -240,7 +265,9 @@ describe('MirrorSyncOrchestrator', () => {
       throw refreshError;
     });
 
-    await expect(new MirrorSyncOrchestrator(options).reconcileNow()).resolves.toMatchObject({
+    await expect(
+      new MirrorSyncOrchestrator(options).reconcileNow(),
+    ).resolves.toMatchObject({
       request: 'manual',
       status: 'error',
       errors: { committedRefresh: refreshError },
@@ -254,7 +281,9 @@ describe('MirrorSyncOrchestrator', () => {
     '%s runtime consumes deferred RC content without preparing a cold index',
     async (_label, loaded, expectedContentRefresh) => {
       const options = baseOptions();
-      options.facts.reconcile = vi.fn(async () => reconciliationResult('not-due'));
+      options.facts.reconcile = vi.fn(async () =>
+        reconciliationResult('not-due'),
+      );
       options.facts.catchUp = vi.fn(async () => completeRecentChanges([42]));
       options.committed.refreshReconciliation = vi.fn(async () => undefined);
       options.committed.refreshRecentChanges = vi.fn(async () => ({
@@ -267,7 +296,9 @@ describe('MirrorSyncOrchestrator', () => {
         status: 'complete',
         contentRefresh: expectedContentRefresh,
       });
-      expect(options.derived.refreshContent).toHaveBeenCalledTimes(loaded ? 1 : 0);
+      expect(options.derived.refreshContent).toHaveBeenCalledTimes(
+        loaded ? 1 : 0,
+      );
     },
   );
 
@@ -317,7 +348,9 @@ describe('MirrorSyncOrchestrator', () => {
   it('returns Data failure independently after a successful catch-up', async () => {
     const dataError = new Error('Mongo unavailable');
     const options = baseOptions();
-    options.facts.reconcile = vi.fn(async () => reconciliationResult('not-due'));
+    options.facts.reconcile = vi.fn(async () =>
+      reconciliationResult('not-due'),
+    );
     options.facts.catchUp = vi.fn(async () => completeRecentChanges());
     options.committed.refreshReconciliation = vi.fn(async () => undefined);
     options.committed.refreshRecentChanges = vi.fn(async () => ({
@@ -328,7 +361,9 @@ describe('MirrorSyncOrchestrator', () => {
       error: dataError,
     }));
 
-    await expect(new MirrorSyncOrchestrator(options).runScheduled()).resolves.toMatchObject({
+    await expect(
+      new MirrorSyncOrchestrator(options).runScheduled(),
+    ).resolves.toMatchObject({
       status: 'data-error',
       dataRefresh: { status: 'error', error: dataError },
       errors: { data: dataError },
@@ -337,7 +372,9 @@ describe('MirrorSyncOrchestrator', () => {
 
   it('propagates a no-baseline catch-up outcome after reconciliation is not due', async () => {
     const options = baseOptions();
-    options.facts.reconcile = vi.fn(async () => reconciliationResult('not-due'));
+    options.facts.reconcile = vi.fn(async () =>
+      reconciliationResult('not-due'),
+    );
     options.facts.catchUp = vi.fn(async () => ({
       status: 'no-baseline' as const,
       eventsSeen: 0 as const,
@@ -350,7 +387,9 @@ describe('MirrorSyncOrchestrator', () => {
     }));
     options.committed.refreshReconciliation = vi.fn(async () => undefined);
 
-    await expect(new MirrorSyncOrchestrator(options).runScheduled()).resolves.toMatchObject({
+    await expect(
+      new MirrorSyncOrchestrator(options).runScheduled(),
+    ).resolves.toMatchObject({
       status: 'no-baseline',
       recentChanges: { status: 'no-baseline' },
     });
@@ -474,7 +513,9 @@ function reconciliationResult(
   };
 }
 
-function baseOptions(): ConstructorParameters<typeof MirrorSyncOrchestrator>[0] {
+function baseOptions(): ConstructorParameters<
+  typeof MirrorSyncOrchestrator
+>[0] {
   return {
     coordinator: {
       runIfDue: vi.fn(async (task) => {
@@ -518,8 +559,12 @@ it('refreshes committed redirects after a later batch fails and after releasing 
     expect(locked).toBe(true);
     throw new Error('second redirect batch failed');
   };
-  options.committed.refreshRecentChanges = async () => ({ dataCodesInvalidated: false });
-  options.committed.refreshRedirects = vi.fn(async () => { expect(locked).toBe(false); });
+  options.committed.refreshRecentChanges = async () => ({
+    dataCodesInvalidated: false,
+  });
+  options.committed.refreshRedirects = vi.fn(async () => {
+    expect(locked).toBe(false);
+  });
   const result = await new MirrorSyncOrchestrator(options).runScheduled();
   expect(result.status).toBe('error');
   expect(result.recentChanges?.status).toBe('complete');

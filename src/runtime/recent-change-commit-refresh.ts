@@ -30,7 +30,10 @@ export class CommittedRecentChangeRefresh {
   ): Promise<CommittedRefreshResult> {
     let refreshError: unknown;
     try {
-      await this.options.refresh({ pages: true, files: committed.filesChanged });
+      await this.options.refresh({
+        pages: true,
+        files: committed.filesChanged,
+      });
     } catch (error) {
       refreshError = error;
     }

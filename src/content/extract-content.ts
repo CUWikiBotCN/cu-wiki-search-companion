@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 import { extractWikitext } from './extract-wikitext';
 
-export function extractContent(contentModel: string | undefined, source: string): string {
+export function extractContent(
+  contentModel: string | undefined,
+  source: string,
+): string {
   switch (contentModel?.toLocaleLowerCase()) {
     case 'wikitext':
       return extractWikitext(source);
@@ -27,8 +30,7 @@ function extractJson(source: string): string {
 
 function collectJsonTokens(value: unknown, tokens: Set<string>): void {
   const pending: Array<
-    | { kind: 'value'; value: unknown }
-    | { kind: 'token'; value: string }
+    { kind: 'value'; value: unknown } | { kind: 'token'; value: string }
   > = [{ kind: 'value', value }];
 
   while (pending.length) {

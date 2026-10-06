@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import 'fake-indexeddb/auto';
-import { Analyzer, createBootstrapSegmenter } from '../../src/analyzer/analyzer';
+import {
+  Analyzer,
+  createBootstrapSegmenter,
+} from '../../src/analyzer/analyzer';
 import { DEFAULT_DATA_CODE_RULES } from '../../src/data/data-field-rules';
 import { DataCodeRuntime } from '../../src/runtime/data-code-runtime';
 import { WikiSearchDatabase } from '../../src/storage/database';
@@ -25,23 +28,32 @@ it('rejects startup-time writes and invalid rules before contacting storage or t
 });
 
 it('restores cached records and falls back from invalid preference to durable rules', async () => {
-  const { runtime, onInvalidRules, fetcher } = await harness({ preference: 'invalid' });
+  const { runtime, onInvalidRules, fetcher } = await harness({
+    preference: 'invalid',
+  });
   await runtime.initialize();
   expect(runtime.state.rulesSource).toBe(DEFAULT_DATA_CODE_RULES);
   expect(runtime.search('旧绷带')).toHaveLength(1);
-  expect(onInvalidRules).toHaveBeenCalledWith('GM preference', expect.any(Error));
+  expect(onInvalidRules).toHaveBeenCalledWith(
+    'GM preference',
+    expect.any(Error),
+  );
   expect(fetcher).not.toHaveBeenCalled();
 });
 
 it('serializes a queued save after a blocked refresh, coalesces refreshes and keeps preference with its cache under the lock', async () => {
   let release!: () => void;
-  const held = new Promise<void>((resolve) => { release = resolve; });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let calls = 0;
   const fetcher = vi.fn<typeof fetch>(async () => {
     if (++calls === 1) await held;
     return response(calls === 1 ? '新绷带' : '纱布');
   });
-  const { runtime, preference, onCommitted, database, writes } = await harness({ fetcher });
+  const { runtime, preference, onCommitted, database, writes } = await harness({
+    fetcher,
+  });
   await runtime.initialize();
   const refresh = runtime.refresh(true);
   expect(runtime.refresh(false)).toBe(refresh);
@@ -58,12 +70,17 @@ it('serializes a queued save after a blocked refresh, coalesces refreshes and ke
   expect((await readDataCodeSyncState(database))?.rulesSource).toBe(source);
   expect(preference.set).toHaveBeenCalledWith(source);
   expect(writes).toEqual(['data-refresh', 'data-save']);
-  expect(onCommitted.mock.calls.map(([commit]) => commit.origin)).toEqual(['refresh', 'save']);
+  expect(onCommitted.mock.calls.map(([commit]) => commit.origin)).toEqual([
+    'refresh',
+    'save',
+  ]);
 });
 
 it('preserves cache and rules after a failed refresh and accepts a later retry', async () => {
   // A valid HTTP response with invalid Data shape fails without network backoff.
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('{}'))
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response('{}'))
     .mockImplementation(async () => response('新绷带'));
   const { runtime, onCommitted } = await harness({ fetcher });
   await runtime.initialize();
@@ -85,28 +102,51 @@ it('does not write preference or fetch without a Web Lock', async () => {
 });
 
 it('reloads broadcast cache and valid rules without fetching or saving preference', async () => {
-  const { runtime, database, fetcher, preference, onInvalidRules, onRulesChange } = await harness();
+  const {
+    runtime,
+    database,
+    fetcher,
+    preference,
+    onInvalidRules,
+    onRulesChange,
+  } = await harness();
   await runtime.initialize();
-  await database.dataCodes.update('Data:Item/bandage', { chineseName: '纱布', normalizedName: '纱布' });
+  await database.dataCodes.update('Data:Item/bandage', {
+    chineseName: '纱布',
+    normalizedName: '纱布',
+  });
   const state = (await readDataCodeSyncState(database))!;
-  await database.syncState.put({ key: 'data-code-sync', value: { ...state, rulesSource: '* = .id' } });
+  await database.syncState.put({
+    key: 'data-code-sync',
+    value: { ...state, rulesSource: '* = .id' },
+  });
   await runtime.reloadFromStorage();
   expect(runtime.search('纱布')).toHaveLength(1);
   expect(runtime.state.rulesSource).toBe('* = .id');
-  await database.syncState.put({ key: 'data-code-sync', value: { ...state, rulesSource: 'invalid' } });
+  await database.syncState.put({
+    key: 'data-code-sync',
+    value: { ...state, rulesSource: 'invalid' },
+  });
   await runtime.reloadFromStorage();
   expect(runtime.state.rulesSource).toBe('* = .id');
   expect(onInvalidRules).toHaveBeenCalledWith('broadcast', expect.any(Error));
-  await database.syncState.put({ key: 'data-code-sync', value: { ...state, rulesSource: undefined } });
+  await database.syncState.put({
+    key: 'data-code-sync',
+    value: { ...state, rulesSource: undefined },
+  });
   await runtime.reloadFromStorage();
   expect(runtime.state.rulesSource).toBe('* = .id');
-  expect(onRulesChange.mock.calls).toEqual([[DEFAULT_DATA_CODE_RULES], ['* = .id']]);
+  expect(onRulesChange.mock.calls).toEqual([
+    [DEFAULT_DATA_CODE_RULES],
+    ['* = .id'],
+  ]);
   expect(preference.set).not.toHaveBeenCalled();
   expect(fetcher).not.toHaveBeenCalled();
 });
 
 it('notifies initial and same-count Data replacements without querying on state-only or rejected operations', async () => {
-  const { runtime, database, onResultsChanged, onStateChange, fetcher } = await harness();
+  const { runtime, database, onResultsChanged, onStateChange, fetcher } =
+    await harness();
   const query = vi.spyOn(runtime, 'search');
   await runtime.reloadFromStorage();
   expect(onResultsChanged).not.toHaveBeenCalled();
@@ -118,7 +158,10 @@ it('notifies initial and same-count Data replacements without querying on state-
 
   await expect(runtime.save('invalid')).rejects.toThrow('配置');
   expect(onResultsChanged).not.toHaveBeenCalled();
-  await database.dataCodes.update('Data:Item/bandage', { chineseName: '纱布', normalizedName: '纱布' });
+  await database.dataCodes.update('Data:Item/bandage', {
+    chineseName: '纱布',
+    normalizedName: '纱布',
+  });
   await runtime.reloadFromStorage();
   expect(onResultsChanged).toHaveBeenCalledOnce();
   expect(runtime.state.indexedDataCodes).toBe(1);
@@ -129,7 +172,9 @@ it('notifies initial and same-count Data replacements without querying on state-
 });
 
 it('reports one Data result invalidation per applied refresh/save and none for failed synchronization', async () => {
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('{}'))
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response('{}'))
     .mockImplementation(async () => response('新绷带'));
   const { runtime, onResultsChanged, onCommitted } = await harness({ fetcher });
   await runtime.initialize();
@@ -147,14 +192,34 @@ it('reports one Data result invalidation per applied refresh/save and none for f
   expect(onCommitted).toHaveBeenCalledTimes(2);
 });
 
-async function harness(options: { preference?: string; fetcher?: typeof fetch; noLocks?: boolean } = {}) {
-  const database = new WikiSearchDatabase(`data-runtime-${crypto.randomUUID()}`);
+async function harness(
+  options: {
+    preference?: string;
+    fetcher?: typeof fetch;
+    noLocks?: boolean;
+  } = {},
+) {
+  const database = new WikiSearchDatabase(
+    `data-runtime-${crypto.randomUUID()}`,
+  );
   databases.push(database);
-  await database.dataCodes.put({ source: 'Data:Item/bandage', code: 'bandage', chineseName: '旧绷带',
-    normalizedName: '旧绷带', dataType: 'Item', syncedAt: Date.now() });
-  await database.syncState.put({ key: 'data-code-sync', value: {
-    count: 1, syncedAt: Date.now(), indexVersion: 2, rulesSource: DEFAULT_DATA_CODE_RULES,
-  } });
+  await database.dataCodes.put({
+    source: 'Data:Item/bandage',
+    code: 'bandage',
+    chineseName: '旧绷带',
+    normalizedName: '旧绷带',
+    dataType: 'Item',
+    syncedAt: Date.now(),
+  });
+  await database.syncState.put({
+    key: 'data-code-sync',
+    value: {
+      count: 1,
+      syncedAt: Date.now(),
+      indexVersion: 2,
+      rulesSource: DEFAULT_DATA_CODE_RULES,
+    },
+  });
   let inWriter = false;
   let preferred = options.preference ?? DEFAULT_DATA_CODE_RULES;
   const preference = {
@@ -165,12 +230,16 @@ async function harness(options: { preference?: string; fetcher?: typeof fetch; n
       preferred = source;
     }),
   };
-  const fetcher = options.fetcher ?? vi.fn<typeof fetch>(async () => response('新绷带'));
+  const fetcher =
+    options.fetcher ?? vi.fn<typeof fetch>(async () => response('新绷带'));
   vi.stubGlobal('fetch', fetcher);
   const coordinator = new IncrementalSyncCoordinator(database, {
-    lockManager: options.noLocks ? null : {
-      request: async (_name, _options, callback) => callback({ name: 'test', mode: 'exclusive' }),
-    },
+    lockManager: options.noLocks
+      ? null
+      : {
+          request: async (_name, _options, callback) =>
+            callback({ name: 'test', mode: 'exclusive' }),
+        },
   });
   const writes: string[] = [];
   const onCommitted = vi.fn();
@@ -186,18 +255,46 @@ async function harness(options: { preference?: string; fetcher?: typeof fetch; n
       writes.push(key);
       const result = await coordinator.runExclusive(async () => {
         inWriter = true;
-        try { await task(); } finally { inWriter = false; }
+        try {
+          await task();
+        } finally {
+          inWriter = false;
+        }
       });
-      if (result === 'lock-unavailable') throw new Error('Web Locks unavailable');
+      if (result === 'lock-unavailable')
+        throw new Error('Web Locks unavailable');
     },
-    onStateChange, onResultsChanged, onRulesChange, onCommitted, onInvalidRules,
+    onStateChange,
+    onResultsChanged,
+    onRulesChange,
+    onCommitted,
+    onInvalidRules,
   });
-  return { runtime, database, preference, fetcher, onCommitted, onInvalidRules, onRulesChange, writes,
-    onStateChange, onResultsChanged };
+  return {
+    runtime,
+    database,
+    preference,
+    fetcher,
+    onCommitted,
+    onInvalidRules,
+    onRulesChange,
+    writes,
+    onStateChange,
+    onResultsChanged,
+  };
 }
 
 function response(name: string): Response {
-  return new Response(JSON.stringify({ _returned: 1, _embedded: [
-    { _id: 'Data:Item/bandage', id: 'bandage', locales: { 'zh-CN': { name } } },
-  ] }));
+  return new Response(
+    JSON.stringify({
+      _returned: 1,
+      _embedded: [
+        {
+          _id: 'Data:Item/bandage',
+          id: 'bandage',
+          locales: { 'zh-CN': { name } },
+        },
+      ],
+    }),
+  );
 }

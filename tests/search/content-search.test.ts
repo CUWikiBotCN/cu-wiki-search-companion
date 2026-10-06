@@ -42,7 +42,9 @@ describe('wikitext content search', () => {
 
   it('keeps an entity-encoded tag as searchable text instead of treating it as markup', () => {
     expect(
-      extractWikitext('&lt;script&gt;alert(&quot;encoded&quot;)&lt;/script&gt;'),
+      extractWikitext(
+        '&lt;script&gt;alert(&quot;encoded&quot;)&lt;/script&gt;',
+      ),
     ).toBe('<script>alert("encoded")</script>');
   });
 
@@ -115,7 +117,10 @@ describe('wikitext content search', () => {
   });
 
   it('bounds snippet normalization by the result limit without changing ranking', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     const index = new ContentIndex(measuredAnalyzer);
     const content = `${'背景說明'.repeat(40)}醫療指南`;
     index.rebuild([
@@ -129,7 +134,9 @@ describe('wikitext content search', () => {
     const first = index.search('医疗', undefined, 1);
 
     expect(first.map(({ id }) => id)).toEqual([20]);
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(1);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.length > 100),
+    ).toHaveLength(1);
 
     normalize.mockClear();
     const firstThree = index.search('医疗', undefined, 3);
@@ -137,15 +144,22 @@ describe('wikitext content search', () => {
     expect(firstThree.map(({ id }) => id)).toEqual([20, 1, 2]);
     expect(firstThree[0]!.score).toBeCloseTo(firstThree[1]!.score * 3);
     expect(firstThree[1]!.score).toBe(firstThree[2]!.score);
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(2);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.length > 100),
+    ).toHaveLength(2);
 
     normalize.mockClear();
     expect(index.search('医疗', undefined, 3)).toEqual(firstThree);
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(0);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.length > 100),
+    ).toHaveLength(0);
   });
 
   it('leaves original and case-insensitive snippet hits out of the normalization cache', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     const index = new ContentIndex(measuredAnalyzer);
     const content = `${'背景說明'.repeat(40)}TARGET 医疗`;
     index.rebuild([page(1, '原文页面', content)]);
@@ -153,36 +167,60 @@ describe('wikitext content search', () => {
 
     expect(index.search('target')[0]?.snippet).toContain('TARGET');
     expect(index.search('医疗')[0]?.snippet).toContain('医疗');
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(0);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.length > 100),
+    ).toHaveLength(0);
 
     index.search('target 医疗');
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(0);
+    expect(
+      normalize.mock.calls.filter(([value]) => value.length > 100),
+    ).toHaveLength(0);
   });
 
   it.each([
     [`${'背景說明'.repeat(40)}醫療指南位於尾部`, '医疗', ['医疗']],
     [`${'ﬃ '.repeat(80)}ＴＡＲＧＥＴ 尾部`, 'target', ['target']],
-    [`${'背景說明'.repeat(40)}ＡＬＰＨＡ 與 ＢＥＴＡ`, 'alpha beta', ['alpha', 'beta']],
+    [
+      `${'背景說明'.repeat(40)}ＡＬＰＨＡ 與 ＢＥＴＡ`,
+      'alpha beta',
+      ['alpha', 'beta'],
+    ],
     [`${'背景說明'.repeat(40)}醫療 與 急救`, '医疗急救', ['医疗', '急救']],
-  ])('keeps cold and cached snippet result fields identical for %s', (content, query, hits) => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
-    const index = new ContentIndex(measuredAnalyzer);
-    index.rebuild([page(1, '缓存页面', content)]);
-    const normalize = vi.spyOn(measuredAnalyzer, 'normalize');
+  ])(
+    'keeps cold and cached snippet result fields identical for %s',
+    (content, query, hits) => {
+      const measuredAnalyzer = new Analyzer({
+        cut,
+        cutForSearch: cut_for_search,
+      });
+      const index = new ContentIndex(measuredAnalyzer);
+      index.rebuild([page(1, '缓存页面', content)]);
+      const normalize = vi.spyOn(measuredAnalyzer, 'normalize');
 
-    const cold = index.search(query);
-    expect(cold).toHaveLength(1);
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(1);
-    expect(cold[0]!.highlights!.map(({ start, end }) => cold[0]!.snippet.slice(start, end)))
-      .toEqual(expect.arrayContaining(hits));
+      const cold = index.search(query);
+      expect(cold).toHaveLength(1);
+      expect(
+        normalize.mock.calls.filter(([value]) => value.length > 100),
+      ).toHaveLength(1);
+      expect(
+        cold[0]!.highlights!.map(({ start, end }) =>
+          cold[0]!.snippet.slice(start, end),
+        ),
+      ).toEqual(expect.arrayContaining(hits));
 
-    normalize.mockClear();
-    expect(index.search(query)).toEqual(cold);
-    expect(normalize.mock.calls.filter(([value]) => value.length > 100)).toHaveLength(0);
-  });
+      normalize.mockClear();
+      expect(index.search(query)).toEqual(cold);
+      expect(
+        normalize.mock.calls.filter(([value]) => value.length > 100),
+      ).toHaveLength(0);
+    },
+  );
 
   it('invalidates cached snippets on updates, deletion, and re-adding the same page id', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     const index = new ContentIndex(measuredAnalyzer);
     const before = page(1, '更新页面', '醫療 oldMarker');
     index.rebuild([before]);
@@ -204,22 +242,34 @@ describe('wikitext content search', () => {
   it.each(['rebuild', 'rebuildAsync', 'importSnapshot'] as const)(
     'starts a fresh lazy cache after %s without persisting it in snapshots',
     async (operation) => {
-      const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
-      const index = new ContentIndex(measuredAnalyzer, { yield: async () => undefined });
+      const measuredAnalyzer = new Analyzer({
+        cut,
+        cutForSearch: cut_for_search,
+      });
+      const index = new ContentIndex(measuredAnalyzer, {
+        yield: async () => undefined,
+      });
       const pages = [page(1, '重新建立', '醫療 freshMarker')];
       index.rebuild(pages);
       const expected = index.search('医疗');
       const snapshot = index.exportSnapshot();
-      expect(Object.keys(snapshot as object).sort()).toEqual(['extractedById', 'miniSearch']);
+      expect(Object.keys(snapshot as object).sort()).toEqual([
+        'extractedById',
+        'miniSearch',
+      ]);
 
       if (operation === 'importSnapshot') await index.importSnapshot(snapshot);
       else await index[operation](pages);
       const normalize = vi.spyOn(measuredAnalyzer, 'normalize');
 
       expect(index.search('医疗')).toEqual(expected);
-      expect(normalize.mock.calls.filter(([value]) => value === '醫療 freshMarker')).toHaveLength(1);
+      expect(
+        normalize.mock.calls.filter(([value]) => value === '醫療 freshMarker'),
+      ).toHaveLength(1);
       expect(index.search('医疗')).toEqual(expected);
-      expect(normalize.mock.calls.filter(([value]) => value === '醫療 freshMarker')).toHaveLength(1);
+      expect(
+        normalize.mock.calls.filter(([value]) => value === '醫療 freshMarker'),
+      ).toHaveLength(1);
     },
   );
 
@@ -227,15 +277,18 @@ describe('wikitext content search', () => {
     'replays updates during %s after the current cache has been populated',
     async (operation) => {
       let release!: () => void;
-      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       const index = new ContentIndex(analyzer, { yield: () => blocked });
       const oldPages = [page(1, '并发缓存', '醫療 oldMarker')];
       index.rebuild(oldPages);
       expect(index.search('医疗')[0]?.snippet).toContain('oldmarker');
 
-      const replacing = operation === 'rebuildAsync'
-        ? index.rebuildAsync(oldPages, 1)
-        : index.importSnapshot(index.exportSnapshot());
+      const replacing =
+        operation === 'rebuildAsync'
+          ? index.rebuildAsync(oldPages, 1)
+          : index.importSnapshot(index.exportSnapshot());
       index.update([page(1, '并发缓存', '醫療 newMarker')]);
       expect(index.search('医疗')[0]?.snippet).toContain('newmarker');
       release();
@@ -250,7 +303,10 @@ describe('wikitext content search', () => {
   it('retains the old snapshot whitespace normalization before caching a snippet fallback', async () => {
     const index = new ContentIndex(analyzer);
     index.rebuild([page(1, '旧快照', 'ＴＡＲＧＥＴ tail')]);
-    const snapshot = index.exportSnapshot() as { miniSearch: unknown; extractedById: Array<[number, string]> };
+    const snapshot = index.exportSnapshot() as {
+      miniSearch: unknown;
+      extractedById: Array<[number, string]>;
+    };
     snapshot.extractedById = [[1, ' \n\t ＴＡＲＧＥＴ\t tail \n ']];
     await index.importSnapshot(snapshot);
 
@@ -261,33 +317,48 @@ describe('wikitext content search', () => {
   });
 
   it('counts an empty normalized fallback as a cache hit', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     vi.spyOn(measuredAnalyzer, 'documentTokens').mockReturnValue(['target']);
     const content = 'ＭＡＲＫＥＲ';
     const index = new ContentIndex(measuredAnalyzer);
     index.rebuild([page(1, '空归一结果', content)]);
     const originalNormalize = measuredAnalyzer.normalize.bind(measuredAnalyzer);
-    const normalize = vi.spyOn(measuredAnalyzer, 'normalize').mockImplementation(
-      (value) => value === content ? '' : originalNormalize(value),
-    );
+    const normalize = vi
+      .spyOn(measuredAnalyzer, 'normalize')
+      .mockImplementation((value) =>
+        value === content ? '' : originalNormalize(value),
+      );
 
     const first = index.search('target')[0]!;
     expect(first.snippet).toBe(content);
     expect(first.highlights).toEqual([]);
     expect(index.search('target')[0]).toEqual(first);
-    expect(normalize.mock.calls.filter(([value]) => value === content)).toHaveLength(1);
+    expect(
+      normalize.mock.calls.filter(([value]) => value === content),
+    ).toHaveLength(1);
   });
 
   it('caps the cache at 128 entries and promotes a hit before evicting the oldest', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     vi.spyOn(measuredAnalyzer, 'documentTokens').mockReturnValue(['target']);
     const index = new ContentIndex(measuredAnalyzer);
-    index.rebuild(Array.from({ length: 129 }, (_, offset) => ({
-      ...page(offset + 1, 'LRU页面', `ＴＡＲＧＥＴ entry${offset + 1}`),
-      namespace: offset + 1,
-    })));
+    index.rebuild(
+      Array.from({ length: 129 }, (_, offset) => ({
+        ...page(offset + 1, 'LRU页面', `ＴＡＲＧＥＴ entry${offset + 1}`),
+        namespace: offset + 1,
+      })),
+    );
     const normalize = vi.spyOn(measuredAnalyzer, 'normalize');
-    const bodyCalls = () => normalize.mock.calls.filter(([value]) => value.startsWith('ＴＡＲＧＥＴ'));
+    const bodyCalls = () =>
+      normalize.mock.calls.filter(([value]) =>
+        value.startsWith('ＴＡＲＧＥＴ'),
+      );
     for (let id = 1; id <= 128; id += 1) index.search('target', id);
     expect(bodyCalls()).toHaveLength(128);
 
@@ -300,11 +371,14 @@ describe('wikitext content search', () => {
   });
 
   it('charges normalized UTF-16 text, evicts by 8 MiB, and frees a deleted page payload', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     vi.spyOn(measuredAnalyzer, 'documentTokens').mockReturnValue(['target']);
-    const normalize = vi.spyOn(measuredAnalyzer, 'normalize').mockImplementation(
-      (value) => value.normalize('NFKC').toLowerCase(),
-    );
+    const normalize = vi
+      .spyOn(measuredAnalyzer, 'normalize')
+      .mockImplementation((value) => value.normalize('NFKC').toLowerCase());
     const halfBudget = 2 * 1024 * 1024;
     const content = normalizedPayload(halfBudget);
     const index = new ContentIndex(measuredAnalyzer);
@@ -314,7 +388,8 @@ describe('wikitext content search', () => {
       { ...page(3, '小载荷', 'ＴＡＲＧＥＴ'), namespace: 3 },
     ]);
     normalize.mockClear();
-    const bodyCalls = () => normalize.mock.calls.filter(([value]) => value.includes('ＴＡＲＧＥＴ'));
+    const bodyCalls = () =>
+      normalize.mock.calls.filter(([value]) => value.includes('ＴＡＲＧＥＴ'));
 
     index.search('target', 1);
     index.search('target', 2);
@@ -341,11 +416,14 @@ describe('wikitext content search', () => {
   });
 
   it('returns oversized fallback snippets without caching them or evicting other entries', () => {
-    const measuredAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+    const measuredAnalyzer = new Analyzer({
+      cut,
+      cutForSearch: cut_for_search,
+    });
     vi.spyOn(measuredAnalyzer, 'documentTokens').mockReturnValue(['target']);
-    const normalize = vi.spyOn(measuredAnalyzer, 'normalize').mockImplementation(
-      (value) => value.normalize('NFKC').toLowerCase(),
-    );
+    const normalize = vi
+      .spyOn(measuredAnalyzer, 'normalize')
+      .mockImplementation((value) => value.normalize('NFKC').toLowerCase());
     const content = normalizedPayload(4 * 1024 * 1024 + 1);
     const index = new ContentIndex(measuredAnalyzer);
     index.rebuild([
@@ -357,11 +435,20 @@ describe('wikitext content search', () => {
 
     const oversized = index.search('target', 2)[0]!;
     expect(oversized.snippet.endsWith('target')).toBe(true);
-    expect(oversized.snippet.slice(oversized.highlights![0]!.start, oversized.highlights![0]!.end)).toBe('target');
+    expect(
+      oversized.snippet.slice(
+        oversized.highlights![0]!.start,
+        oversized.highlights![0]!.end,
+      ),
+    ).toBe('target');
     expect(index.search('target', 2)[0]).toEqual(oversized);
     index.search('target', 1);
-    expect(normalize.mock.calls.filter(([value]) => value === content)).toHaveLength(2);
-    expect(normalize.mock.calls.filter(([value]) => value === 'ＴＡＲＧＥＴ cached')).toHaveLength(1);
+    expect(
+      normalize.mock.calls.filter(([value]) => value === content),
+    ).toHaveLength(2);
+    expect(
+      normalize.mock.calls.filter(([value]) => value === 'ＴＡＲＧＥＴ cached'),
+    ).toHaveLength(1);
   });
 
   it('keeps snippet offsets aligned when compatibility characters expand', () => {
@@ -395,11 +482,17 @@ describe('wikitext content search', () => {
     const result = index.search('紧急救治')[0]!;
 
     expect(result.highlights).toEqual([
-      { start: result.snippet.indexOf('紧急救治'), end: result.snippet.indexOf('紧急救治') + 4 },
+      {
+        start: result.snippet.indexOf('紧急救治'),
+        end: result.snippet.indexOf('紧急救治') + 4,
+      },
     ]);
-    expect(result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end)).toBe(
-      '紧急救治',
-    );
+    expect(
+      result.snippet.slice(
+        result.highlights![0]!.start,
+        result.highlights![0]!.end,
+      ),
+    ).toBe('紧急救治');
     expect(result.titleHighlights).toEqual([]);
   });
 
@@ -415,9 +508,12 @@ describe('wikitext content search', () => {
     const miss = results.find(({ title }) => title === '紧急处置手册')!;
 
     expect(hit.titleHighlights).toEqual([{ start: 0, end: 4 }]);
-    expect(hit.title.slice(hit.titleHighlights![0]!.start, hit.titleHighlights![0]!.end)).toBe(
-      '紧急救治',
-    );
+    expect(
+      hit.title.slice(
+        hit.titleHighlights![0]!.start,
+        hit.titleHighlights![0]!.end,
+      ),
+    ).toBe('紧急救治');
     expect(miss.titleHighlights).toEqual([]);
   });
 
@@ -430,14 +526,20 @@ describe('wikitext content search', () => {
     ]);
 
     const variant = index.search('緊急救治')[0]!;
-    expect(variant.snippet.slice(variant.highlights![0]!.start, variant.highlights![0]!.end)).toBe(
-      '紧急救治',
-    );
+    expect(
+      variant.snippet.slice(
+        variant.highlights![0]!.start,
+        variant.highlights![0]!.end,
+      ),
+    ).toBe('紧急救治');
 
     const fullwidth = index.search('ＡＢＣ１２３')[0]!;
-    expect(fullwidth.snippet.slice(fullwidth.highlights![0]!.start, fullwidth.highlights![0]!.end)).toBe(
-      'ABC123',
-    );
+    expect(
+      fullwidth.snippet.slice(
+        fullwidth.highlights![0]!.start,
+        fullwidth.highlights![0]!.end,
+      ),
+    ).toBe('ABC123');
   });
 
   it('highlights the normalized fallback text at the query position', () => {
@@ -450,10 +552,15 @@ describe('wikitext content search', () => {
 
     const at = result.snippet.indexOf('target');
     expect(at).toBeGreaterThanOrEqual(0);
-    expect(result.highlights).toEqual([{ start: at, end: at + 'target'.length }]);
-    expect(result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end)).toBe(
-      'target',
-    );
+    expect(result.highlights).toEqual([
+      { start: at, end: at + 'target'.length },
+    ]);
+    expect(
+      result.snippet.slice(
+        result.highlights![0]!.start,
+        result.highlights![0]!.end,
+      ),
+    ).toBe('target');
   });
 
   it('falls back to per-term highlights when only the OR search matches', () => {
@@ -462,12 +569,22 @@ describe('wikitext content search', () => {
 
     const result = index.search('手枪子弹')[0]!;
 
-    const slices = (result.highlights ?? []).map(({ start, end }) => result.snippet.slice(start, end));
+    const slices = (result.highlights ?? []).map(({ start, end }) =>
+      result.snippet.slice(start, end),
+    );
     expect(slices).toContain('手枪');
     expect(slices).toContain('子弹');
-    const sorted = [...(result.highlights ?? [])].sort((l, r) => l.start - r.start);
-    expect(sorted.every((range, at) => at === 0 || range.start >= sorted[at - 1]!.end)).toBe(true);
-    expect(sorted.every((range) => range.end <= result.snippet.length)).toBe(true);
+    const sorted = [...(result.highlights ?? [])].sort(
+      (l, r) => l.start - r.start,
+    );
+    expect(
+      sorted.every(
+        (range, at) => at === 0 || range.start >= sorted[at - 1]!.end,
+      ),
+    ).toBe(true);
+    expect(sorted.every((range) => range.end <= result.snippet.length)).toBe(
+      true,
+    );
   });
 
   it.each([
@@ -483,23 +600,30 @@ describe('wikitext content search', () => {
       'alpha beta',
       ['alpha', 'beta'],
     ],
-  ])('在%s长正文中以实际逐词命中定位摘要', (_label, content, query, expected) => {
-    const index = new ContentIndex(analyzer);
-    index.rebuild([page(1, '定位页面', content)]);
+  ])(
+    '在%s长正文中以实际逐词命中定位摘要',
+    (_label, content, query, expected) => {
+      const index = new ContentIndex(analyzer);
+      index.rebuild([page(1, '定位页面', content)]);
 
-    const result = index.search(query)[0]!;
-    const slices = result.highlights!.map(({ start, end }) =>
-      result.snippet.slice(start, end),
-    );
+      const result = index.search(query)[0]!;
+      const slices = result.highlights!.map(({ start, end }) =>
+        result.snippet.slice(start, end),
+      );
 
-    expect(result.snippet.startsWith('…')).toBe(true);
-    expect(expected.every((term) => slices.includes(term))).toBe(true);
-  });
+      expect(result.snippet.startsWith('…')).toBe(true);
+      expect(expected.every((term) => slices.includes(term))).toBe(true);
+    },
+  );
 
   it('不让窗口外的重复词耗尽可见命中额度', () => {
     const index = new ContentIndex(analyzer);
     index.rebuild([
-      page(1, '重复词页面', `子弹在这里。${'背景'.repeat(35)}${'手 '.repeat(12)}`),
+      page(
+        1,
+        '重复词页面',
+        `子弹在这里。${'背景'.repeat(35)}${'手 '.repeat(12)}`,
+      ),
     ]);
 
     const result = index.search('手枪子弹')[0]!;
@@ -527,7 +651,10 @@ describe('wikitext content search', () => {
     expect(result.snippet.startsWith('…')).toBe(true);
     expect(result.highlights).toHaveLength(6);
     expect(
-      result.snippet.slice(result.highlights![0]!.start, result.highlights![0]!.end),
+      result.snippet.slice(
+        result.highlights![0]!.start,
+        result.highlights![0]!.end,
+      ),
     ).toBe(combined);
     expect(
       result.highlights!.every(
@@ -539,9 +666,14 @@ describe('wikitext content search', () => {
   it('fetches wikitext and BSON in ordinary-user-sized batches and resumes from cache', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
-      const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+      const ids = (url.searchParams.get('pageids') ?? '')
+        .split('|')
+        .map(Number);
       return json({
         query: {
           pages: ids.map((id) => ({
@@ -573,9 +705,15 @@ describe('wikitext content search', () => {
     await database.pages.bulkPut([
       page(1, '医疗指导', undefined, 10),
       page(2, '武器指导', undefined, 20),
-      { ...page(3, 'Data:Item/pistol.json', undefined, 30), contentModel: 'BSON' },
+      {
+        ...page(3, 'Data:Item/pistol.json', undefined, 30),
+        contentModel: 'BSON',
+      },
       { ...page(4, '旧标题', undefined, 40), isRedirect: true },
-      { ...page(5, 'MediaWiki:Common.css', undefined, 50), contentModel: 'css' },
+      {
+        ...page(5, 'MediaWiki:Common.css', undefined, 50),
+        contentModel: 'css',
+      },
     ]);
     await database.syncState.put({ key: 'local-sequence', value: 5 });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
@@ -592,7 +730,9 @@ describe('wikitext content search', () => {
     expect(first).toEqual({ total: 3, done: 3, pending: 0, failed: 0 });
     expect(second).toEqual(first);
     expect(calls).toHaveLength(1);
-    expect((calls[0]!.searchParams.get('pageids') ?? '').split('|')).toHaveLength(3);
+    expect(
+      (calls[0]!.searchParams.get('pageids') ?? '').split('|'),
+    ).toHaveLength(3);
     expect(calls[0]!.searchParams.get('rvprop')).toBe('ids|content');
     expect(calls[0]!.searchParams.has('rvlimit')).toBe(false);
     expect(indexedBatches).toEqual([[1, 2, 3]]);
@@ -604,7 +744,9 @@ describe('wikitext content search', () => {
     expect((await database.syncState.get('local-sequence'))?.value).toBe(8);
     expect((await database.pages.get(3))?.content).toContain('半自动手枪');
     expect(await database.jobs.count()).toBe(4);
-    expect(await database.jobs.where('pageId').equals(5).first()).toMatchObject({ status: 'pending' });
+    expect(await database.jobs.where('pageId').equals(5).first()).toMatchObject(
+      { status: 'pending' },
+    );
 
     database.close();
     await database.delete();
@@ -625,7 +767,9 @@ describe('wikitext content search', () => {
                 revisions: [
                   {
                     revid: 10,
-                    slots: { main: { contentmodel: 'wikitext', content: '没有变化' } },
+                    slots: {
+                      main: { contentmodel: 'wikitext', content: '没有变化' },
+                    },
                   },
                 ],
               },
@@ -670,7 +814,9 @@ describe('wikitext content search', () => {
                 revisions: [
                   {
                     revid: 10,
-                    slots: { main: { contentmodel: 'wikitext', content: '恢复后正文' } },
+                    slots: {
+                      main: { contentmodel: 'wikitext', content: '恢复后正文' },
+                    },
                   },
                 ],
               },
@@ -739,7 +885,9 @@ describe('wikitext content search', () => {
     const pageReads = vi.fn((value: PageRecord) => value);
     database.pages.hook('reading', pageReads);
     const pagesEach = vi.spyOn(database.pages, 'each');
-    const fetcher = vi.fn(async () => { throw new Error('已完成队列不能发出请求'); });
+    const fetcher = vi.fn(async () => {
+      throw new Error('已完成队列不能发出请求');
+    });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
     const result = await syncContent(database, api, { requestIntervalMs: 0 });
@@ -769,41 +917,77 @@ describe('wikitext content search', () => {
         { ...page(7, '已删除', '旧正文'), deleted: true },
       ]);
       await database.syncState.put({ key: 'local-sequence', value: 7 });
-      await database.jobs.bulkPut(Array.from({ length: 8 }, (_, offset) => ({
-        type: 'wikitext-content',
-        pageId: offset + 1,
-        status: 'running' as const,
-        targetRevisionId: 10,
-      })));
+      await database.jobs.bulkPut(
+        Array.from({ length: 8 }, (_, offset) => ({
+          type: 'wikitext-content',
+          pageId: offset + 1,
+          status: 'running' as const,
+          targetRevisionId: 10,
+        })),
+      );
       const pagesEach = vi.spyOn(database.pages, 'each');
       const fetcher = vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'https://example.test');
-        const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+        const ids = (url.searchParams.get('pageids') ?? '')
+          .split('|')
+          .map(Number);
         return json({
-          query: { pages: ids.map((id) => ({
-            pageid: id,
-            revisions: [{ revid: id * 10, slots: { main: {
-              contentmodel: models[id - 1], content: `缓存正文 ${id}`,
-            } } }],
-          })) },
+          query: {
+            pages: ids.map((id) => ({
+              pageid: id,
+              revisions: [
+                {
+                  revid: id * 10,
+                  slots: {
+                    main: {
+                      contentmodel: models[id - 1],
+                      content: `缓存正文 ${id}`,
+                    },
+                  },
+                },
+              ],
+            })),
+          },
         });
       });
       const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
       const onProgress = vi.fn();
 
       const result = await syncContent(database, api, {
-        scope, force: true, requestIntervalMs: 0, onProgress,
+        scope,
+        force: true,
+        requestIntervalMs: 0,
+        onProgress,
       });
 
       const expectedIds = scope === 'css' ? [4, 5] : [1, 2, 3];
-      expect(result).toEqual({ total: expectedIds.length, done: expectedIds.length, pending: 0, failed: 0 });
+      expect(result).toEqual({
+        total: expectedIds.length,
+        done: expectedIds.length,
+        pending: 0,
+        failed: 0,
+      });
       expect(pagesEach).toHaveBeenCalledTimes(1);
       expect(fetcher).toHaveBeenCalledTimes(1);
-      const request = new URL(String(fetcher.mock.calls[0]![0]), 'https://example.test');
-      expect(request.searchParams.get('pageids')!.split('|').map(Number)).toEqual(expectedIds);
-      expect(onProgress.mock.calls[0]![0]).toEqual({ total: expectedIds.length, done: 0, pending: expectedIds.length, failed: 0 });
-      expect((await database.jobs.toArray()).map(({ pageId, status }) => [pageId, status]))
-        .toEqual(pages.map(({ id }) => [id, 'done']));
+      const request = new URL(
+        String(fetcher.mock.calls[0]![0]),
+        'https://example.test',
+      );
+      expect(
+        request.searchParams.get('pageids')!.split('|').map(Number),
+      ).toEqual(expectedIds);
+      expect(onProgress.mock.calls[0]![0]).toEqual({
+        total: expectedIds.length,
+        done: 0,
+        pending: expectedIds.length,
+        failed: 0,
+      });
+      expect(
+        (await database.jobs.toArray()).map(({ pageId, status }) => [
+          pageId,
+          status,
+        ]),
+      ).toEqual(pages.map(({ id }) => [id, 'done']));
 
       database.close();
       await database.delete();
@@ -831,7 +1015,9 @@ describe('wikitext content search', () => {
                 revisions: [
                   {
                     revid: 10,
-                    slots: { main: { contentmodel: 'wikitext', content: '新正文' } },
+                    slots: {
+                      main: { contentmodel: 'wikitext', content: '新正文' },
+                    },
                   },
                 ],
               },
@@ -842,9 +1028,9 @@ describe('wikitext content search', () => {
       retries: 0,
     });
 
-    await expect(syncContent(database, api, { requestIntervalMs: 0 })).rejects.toThrow(
-      '模拟序列写入失败',
-    );
+    await expect(
+      syncContent(database, api, { requestIntervalMs: 0 }),
+    ).rejects.toThrow('模拟序列写入失败');
 
     expect(await database.pages.get(1)).toMatchObject({
       content: undefined,
@@ -871,28 +1057,28 @@ describe('wikitext content search', () => {
     });
     const originalEach = database.pages.each.bind(database.pages);
     let concurrentWrite: Promise<void> | undefined;
-    vi.spyOn(database.pages, 'each').mockImplementation(
-      (async (callback: Parameters<typeof originalEach>[0]) => {
-        await originalEach(callback);
-        if (!concurrentWrite) {
-          concurrentWrite = writerDatabase.transaction(
-            'rw',
-            writerDatabase.pages,
-            writerDatabase.jobs,
-            async () => {
-              await writerDatabase.pages.update(1, { revisionId: 20 });
-              await writerDatabase.jobs.put({
-                id: jobId,
-                type: 'wikitext-content',
-                pageId: 1,
-                status: 'pending',
-                targetRevisionId: 20,
-              });
-            },
-          );
-        }
-      }) as never,
-    );
+    vi.spyOn(database.pages, 'each').mockImplementation((async (
+      callback: Parameters<typeof originalEach>[0],
+    ) => {
+      await originalEach(callback);
+      if (!concurrentWrite) {
+        concurrentWrite = writerDatabase.transaction(
+          'rw',
+          writerDatabase.pages,
+          writerDatabase.jobs,
+          async () => {
+            await writerDatabase.pages.update(1, { revisionId: 20 });
+            await writerDatabase.jobs.put({
+              id: jobId,
+              type: 'wikitext-content',
+              pageId: 1,
+              status: 'pending',
+              targetRevisionId: 20,
+            });
+          },
+        );
+      }
+    }) as never);
 
     await prepareContentJobs(database, false);
     await concurrentWrite;
@@ -911,8 +1097,13 @@ describe('wikitext content search', () => {
   it('removes jobs when a page no longer has a searchable content model', async () => {
     const calls: number[][] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
-      const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
+      const ids = (url.searchParams.get('pageids') ?? '')
+        .split('|')
+        .map(Number);
       calls.push(ids);
       return json({
         query: {
@@ -921,7 +1112,9 @@ describe('wikitext content search', () => {
             revisions: [
               {
                 revid: id * 10,
-                slots: { main: { contentmodel: 'wikitext', content: `正文 ${id}` } },
+                slots: {
+                  main: { contentmodel: 'wikitext', content: `正文 ${id}` },
+                },
               },
             ],
           })),
@@ -932,15 +1125,25 @@ describe('wikitext content search', () => {
     await database.open();
     await database.pages.bulkPut([
       page(1, '保留页面', undefined, 10),
-      { ...page(2, 'Data:Item/removed.json', undefined, 20), contentModel: 'BSON' },
+      {
+        ...page(2, 'Data:Item/removed.json', undefined, 20),
+        contentModel: 'BSON',
+      },
     ]);
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
     await syncContent(database, api, { requestIntervalMs: 0 });
     await database.pages.update(2, { contentModel: 'css' });
-    const afterModelChange = await syncContent(database, api, { requestIntervalMs: 0 });
+    const afterModelChange = await syncContent(database, api, {
+      requestIntervalMs: 0,
+    });
 
-    expect(afterModelChange).toEqual({ total: 1, done: 1, pending: 0, failed: 0 });
+    expect(afterModelChange).toEqual({
+      total: 1,
+      done: 1,
+      pending: 0,
+      failed: 0,
+    });
     expect(calls).toEqual([[1, 2]]);
 
     database.close();
@@ -951,8 +1154,13 @@ describe('wikitext content search', () => {
     const calls: number[][] = [];
     let failSecondBatch = true;
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
-      const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
+      const ids = (url.searchParams.get('pageids') ?? '')
+        .split('|')
+        .map(Number);
       calls.push(ids);
       if (ids[0] === 51 && failSecondBatch) {
         failSecondBatch = false;
@@ -965,7 +1173,9 @@ describe('wikitext content search', () => {
             revisions: [
               {
                 revid: id * 10,
-                slots: { main: { contentmodel: 'wikitext', content: `正文 ${id}` } },
+                slots: {
+                  main: { contentmodel: 'wikitext', content: `正文 ${id}` },
+                },
               },
             ],
           })),
@@ -976,14 +1186,19 @@ describe('wikitext content search', () => {
     await database.open();
     await database.pages.bulkPut(
       Array.from({ length: 51 }, (_, offset) =>
-        page(offset + 1, `测试页面 ${offset + 1}`, undefined, (offset + 1) * 10),
+        page(
+          offset + 1,
+          `测试页面 ${offset + 1}`,
+          undefined,
+          (offset + 1) * 10,
+        ),
       ),
     );
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
-    await expect(syncContent(database, api, { requestIntervalMs: 0 })).rejects.toThrow(
-      '模拟第二批网络中断',
-    );
+    await expect(
+      syncContent(database, api, { requestIntervalMs: 0 }),
+    ).rejects.toThrow('模拟第二批网络中断');
     const resumed = await syncContent(database, api, { requestIntervalMs: 0 });
 
     expect(calls.map((ids) => [ids[0], ids.at(-1), ids.length])).toEqual([
@@ -1057,7 +1272,9 @@ describe('wikitext content search', () => {
       retries: 0,
       fetcher: vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), 'https://example.test');
-        const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+        const ids = (url.searchParams.get('pageids') ?? '')
+          .split('|')
+          .map(Number);
         return json({
           query: {
             pages: ids.map((id) => ({
@@ -1066,7 +1283,10 @@ describe('wikitext content search', () => {
                 {
                   revid: id * 10,
                   slots: {
-                    main: { contentmodel: 'wikitext', content: `批次正文 ${id}` },
+                    main: {
+                      contentmodel: 'wikitext',
+                      content: `批次正文 ${id}`,
+                    },
                   },
                 },
               ],
@@ -1118,9 +1338,9 @@ describe('wikitext content search', () => {
     });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
-    await expect(syncContent(database, api, { requestIntervalMs: 0 })).rejects.toThrow(
-      '模拟当前批次网络中断',
-    );
+    await expect(
+      syncContent(database, api, { requestIntervalMs: 0 }),
+    ).rejects.toThrow('模拟当前批次网络中断');
 
     expect(
       await database.jobs.filter((job) => job.pageId === 1).first(),
@@ -1143,16 +1363,19 @@ describe('wikitext content search', () => {
       retries: 0,
       requestTimeoutMs: 10,
       fetcher: vi.fn(
-        async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        async (
+          _input: RequestInfo | URL,
+          init?: RequestInit,
+        ): Promise<Response> => {
           requestSignal = init?.signal;
           return new Promise<Response>(() => undefined);
         },
       ) as typeof fetch,
     });
 
-    await expect(syncContent(database, api, { requestIntervalMs: 0 })).rejects.toThrow(
-      '请求超时',
-    );
+    await expect(
+      syncContent(database, api, { requestIntervalMs: 0 }),
+    ).rejects.toThrow('请求超时');
 
     expect(requestSignal?.aborted).toBe(true);
     expect(
@@ -1173,7 +1396,9 @@ describe('wikitext content search', () => {
               revisions: [
                 {
                   revid: 15,
-                  slots: { main: { contentmodel: 'wikitext', content: '较旧响应正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '较旧响应正文' },
+                  },
                 },
               ],
             },
@@ -1183,9 +1408,7 @@ describe('wikitext content search', () => {
     );
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
-    await database.pages.put(
-      page(1, '竞态页面', 'RC 已写入的新正文', 20),
-    );
+    await database.pages.put(page(1, '竞态页面', 'RC 已写入的新正文', 20));
     await database.pages.update(1, { contentRevisionId: 10 });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
@@ -1211,21 +1434,26 @@ describe('wikitext content search', () => {
     await database.open();
     await database.pages.put(page(1, '同步中删除', '旧正文', 10));
     const fetcher = vi.fn(async () => {
-      await database.transaction('rw', database.pages, database.jobs, async () => {
-        const stored = await database.pages.get(1);
-        if (!stored) throw new Error('测试页面缺失');
-        await database.pages.put({
-          ...stored,
-          deleted: true,
-          content: undefined,
-          contentRevisionId: undefined,
-          localSeq: 2,
-        });
-        const jobIds = await database.jobs
-          .filter((job) => job.pageId === 1)
-          .primaryKeys();
-        await database.jobs.bulkDelete(jobIds);
-      });
+      await database.transaction(
+        'rw',
+        database.pages,
+        database.jobs,
+        async () => {
+          const stored = await database.pages.get(1);
+          if (!stored) throw new Error('测试页面缺失');
+          await database.pages.put({
+            ...stored,
+            deleted: true,
+            content: undefined,
+            contentRevisionId: undefined,
+            localSeq: 2,
+          });
+          const jobIds = await database.jobs
+            .filter((job) => job.pageId === 1)
+            .primaryKeys();
+          await database.jobs.bulkDelete(jobIds);
+        },
+      );
       return json({
         query: {
           pages: [
@@ -1234,7 +1462,9 @@ describe('wikitext content search', () => {
               revisions: [
                 {
                   revid: 10,
-                  slots: { main: { contentmodel: 'wikitext', content: '过期响应正文' } },
+                  slots: {
+                    main: { contentmodel: 'wikitext', content: '过期响应正文' },
+                  },
                 },
               ],
             },
@@ -1251,7 +1481,9 @@ describe('wikitext content search', () => {
       content: undefined,
       contentRevisionId: undefined,
     });
-    expect(await database.jobs.filter((job) => job.pageId === 1).count()).toBe(0);
+    expect(await database.jobs.filter((job) => job.pageId === 1).count()).toBe(
+      0,
+    );
 
     database.close();
     await database.delete();
@@ -1290,9 +1522,10 @@ describe('BSON content search', () => {
       title: 'Data:Block/bricks.json',
       snippet: expect.stringContaining('耐火墙体'),
     });
-    expect(index.search('blastResistance')[0]?.title).toBe('Data:Block/bricks.json');
+    expect(index.search('blastResistance')[0]?.title).toBe(
+      'Data:Block/bricks.json',
+    );
   });
-
 });
 
 function normalizedPayload(codeUnits: number): string {

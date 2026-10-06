@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 export type DataCodeSessionResult<T> =
-  | { status: 'complete'; value: T }
-  | { status: 'error'; error: unknown };
+  { status: 'complete'; value: T } | { status: 'error'; error: unknown };
 
 export interface DataCodeSyncSessionOptions<T> {
   refresh(force: boolean): Promise<T>;
@@ -37,7 +36,9 @@ export class DataCodeSyncSession<T> {
     return request;
   }
 
-  private async execute(task: () => Promise<T>): Promise<DataCodeSessionResult<T>> {
+  private async execute(
+    task: () => Promise<T>,
+  ): Promise<DataCodeSessionResult<T>> {
     try {
       const value = await task();
       await this.options.apply(value);

@@ -53,7 +53,9 @@ export class IncrementalSyncCoordinator {
     this.random = options.random ?? Math.random;
   }
 
-  async runIfDue(task: () => Promise<boolean | void>): Promise<CoordinatedSyncResult> {
+  async runIfDue(
+    task: () => Promise<boolean | void>,
+  ): Promise<CoordinatedSyncResult> {
     if (!this.lockManager) return 'lock-unavailable';
 
     return this.lockManager.request(
@@ -62,7 +64,9 @@ export class IncrementalSyncCoordinator {
       async (lock) => {
         if (!lock) return 'lock-unavailable';
 
-        const rawStored = (await this.database.syncState.get(SCHEDULE_STATE_KEY))?.value;
+        const rawStored = (
+          await this.database.syncState.get(SCHEDULE_STATE_KEY)
+        )?.value;
         const stored = isIncrementalSyncScheduleState(rawStored)
           ? rawStored
           : undefined;
@@ -72,7 +76,9 @@ export class IncrementalSyncCoordinator {
         const completed = await task();
         if (completed === false) return 'ran';
         const lastSuccessAt = this.now();
-        const jitter = Math.floor(Math.max(0, Math.min(1, this.random())) * this.jitterMs);
+        const jitter = Math.floor(
+          Math.max(0, Math.min(1, this.random())) * this.jitterMs,
+        );
         await this.database.syncState.put({
           key: SCHEDULE_STATE_KEY,
           value: {

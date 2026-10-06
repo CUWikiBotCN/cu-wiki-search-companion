@@ -39,6 +39,7 @@ export function changeBroadcastEffect(message: unknown): ChangeBroadcastEffect {
       pages: true,
       files: record?.filesChanged === true,
     },
-    dataRefresh: record?.dataCodesInvalidated === true ? 'pending' : 'unchanged',
+    dataRefresh:
+      record?.dataCodesInvalidated === true ? 'pending' : 'unchanged',
   };
 }

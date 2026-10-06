@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import 'fake-indexeddb/auto';
-import { Analyzer, createBootstrapSegmenter } from '../../src/analyzer/analyzer';
+import {
+  Analyzer,
+  createBootstrapSegmenter,
+} from '../../src/analyzer/analyzer';
 import { FileSearchRuntime } from '../../src/runtime/file-search-runtime';
 import { WikiSearchDatabase } from '../../src/storage/database';
 import { IncrementalSyncCoordinator } from '../../src/sync/incremental-sync-coordinator';
@@ -14,7 +17,9 @@ afterEach(async () => {
 
 it('waits for startup, shares concurrent preparation, and does not read files on unused-mode invalidation', async () => {
   let release!: () => void;
-  const startup = new Promise<void>((resolve) => { release = resolve; });
+  const startup = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const { runtime, database, fetcher } = await harness({ startup });
   const reads = vi.spyOn(database.fileResources, 'filter');
   await runtime.refresh(10, true);
@@ -25,13 +30,17 @@ it('waits for startup, shares concurrent preparation, and does not read files on
   expect(fetcher).not.toHaveBeenCalled();
   release();
   await first;
-  expect(runtime.search('绷带').map(({ title }) => title)).toEqual(['文件:绷带.png']);
+  expect(runtime.search('绷带').map(({ title }) => title)).toEqual([
+    '文件:绷带.png',
+  ]);
   expect(fetcher).toHaveBeenCalledOnce();
 });
 
 it('coalesces forced refreshes after initial preparation settles', async () => {
   let release!: () => void;
-  const held = new Promise<void>((resolve) => { release = resolve; });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let calls = 0;
   const fetcher = vi.fn<typeof fetch>(async () => {
     if (++calls === 2) await held;
@@ -50,7 +59,8 @@ it('coalesces forced refreshes after initial preparation settles', async () => {
 
 it('keeps restored files searchable after failure and retries the failed preparation', async () => {
   const failure = new Error('offline');
-  const fetcher = vi.fn<typeof fetch>()
+  const fetcher = vi
+    .fn<typeof fetch>()
     .mockRejectedValueOnce(failure)
     .mockResolvedValue(response());
   const { runtime } = await harness({ fetcher });
@@ -74,7 +84,10 @@ it('reloads active files on newer sequence or explicit invalidation and ignores 
   const { runtime, database } = await harness();
   await runtime.prepare();
   await runtime.refresh(10);
-  await database.fileResources.update(2, { title: '文件:纱布.png', normalizedTitle: '文件:纱布.png' });
+  await database.fileResources.update(2, {
+    title: '文件:纱布.png',
+    normalizedTitle: '文件:纱布.png',
+  });
   await runtime.refresh(10);
   expect(runtime.search('纱布')).toEqual([]);
   await runtime.refresh(11);
@@ -92,16 +105,22 @@ it('keeps cached preparation available when writes are disabled', async () => {
 });
 
 it('notifies after initial installation and same-count renames but ignores unused or duplicate invalidations', async () => {
-  const { runtime, database, onResultsChanged, onStateChange } = await harness({ canWrite: false });
+  const { runtime, database, onResultsChanged, onStateChange } = await harness({
+    canWrite: false,
+  });
   await runtime.refresh(10, true);
   expect(onResultsChanged).not.toHaveBeenCalled();
   expect(onStateChange).not.toHaveBeenCalled();
   await runtime.prepare();
   expect(onResultsChanged).toHaveBeenCalledOnce();
   expect(onStateChange).toHaveBeenCalledOnce();
-  onResultsChanged.mockClear(); onStateChange.mockClear();
+  onResultsChanged.mockClear();
+  onStateChange.mockClear();
 
-  await database.fileResources.update(1, { title: '文件:纱布.png', normalizedTitle: '文件:纱布.png' });
+  await database.fileResources.update(1, {
+    title: '文件:纱布.png',
+    normalizedTitle: '文件:纱布.png',
+  });
   await runtime.refresh(10);
   expect(onResultsChanged).not.toHaveBeenCalled();
   expect(runtime.search('纱布')).toEqual([]);
@@ -121,7 +140,10 @@ it('notifies after initial installation and same-count renames but ignores unuse
 
 it('does not report changed results when a forced file synchronization fails before any batch applies', async () => {
   const failure = new Error('offline');
-  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response()).mockRejectedValueOnce(failure);
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(response())
+    .mockRejectedValueOnce(failure);
   const { runtime, onResultsChanged } = await harness({ fetcher });
   await runtime.prepare();
   onResultsChanged.mockClear();
@@ -132,23 +154,40 @@ it('does not report changed results when a forced file synchronization fails bef
   expect(runtime.search('绷带')).toHaveLength(1);
 });
 
-async function harness(options: {
-  startup?: Promise<void>;
-  fetcher?: typeof fetch;
-  noLocks?: boolean;
-  canWrite?: boolean;
-} = {}) {
-  const database = new WikiSearchDatabase(`file-runtime-${crypto.randomUUID()}`);
+async function harness(
+  options: {
+    startup?: Promise<void>;
+    fetcher?: typeof fetch;
+    noLocks?: boolean;
+    canWrite?: boolean;
+  } = {},
+) {
+  const database = new WikiSearchDatabase(
+    `file-runtime-${crypto.randomUUID()}`,
+  );
   databases.push(database);
-  await database.fileResources.put({ id: 1, title: '文件:旧图.png', normalizedTitle: '文件:旧图.png',
-    namespace: 6, namespaceName: '文件', isRedirect: false, localSeq: 1 });
-  const fetcher = options.fetcher ?? vi.fn<typeof fetch>(async () => response());
-  const coordinator = new IncrementalSyncCoordinator(database, {
-    lockManager: options.noLocks ? null : {
-      request: async (_name, _options, callback) => callback({ name: 'test', mode: 'exclusive' }),
-    },
+  await database.fileResources.put({
+    id: 1,
+    title: '文件:旧图.png',
+    normalizedTitle: '文件:旧图.png',
+    namespace: 6,
+    namespaceName: '文件',
+    isRedirect: false,
+    localSeq: 1,
   });
-  const onCommitted = vi.fn(async () => { await runtime.refresh(0, true); });
+  const fetcher =
+    options.fetcher ?? vi.fn<typeof fetch>(async () => response());
+  const coordinator = new IncrementalSyncCoordinator(database, {
+    lockManager: options.noLocks
+      ? null
+      : {
+          request: async (_name, _options, callback) =>
+            callback({ name: 'test', mode: 'exclusive' }),
+        },
+  });
+  const onCommitted = vi.fn(async () => {
+    await runtime.refresh(0, true);
+  });
   const onStateChange = vi.fn();
   const onResultsChanged = vi.fn();
   const runtime = new FileSearchRuntime({
@@ -164,11 +203,30 @@ async function harness(options: {
     onProgress: vi.fn(),
     onCommitted,
   });
-  return { runtime, database, fetcher, onCommitted, onStateChange, onResultsChanged };
+  return {
+    runtime,
+    database,
+    fetcher,
+    onCommitted,
+    onStateChange,
+    onResultsChanged,
+  };
 }
 
 function response(): Response {
-  return new Response(JSON.stringify({ query: { pages: [
-    { pageid: 2, ns: 6, title: '文件:绷带.png', lastrevid: 1, contentmodel: 'wikitext' },
-  ] } }));
+  return new Response(
+    JSON.stringify({
+      query: {
+        pages: [
+          {
+            pageid: 2,
+            ns: 6,
+            title: '文件:绷带.png',
+            lastrevid: 1,
+            contentmodel: 'wikitext',
+          },
+        ],
+      },
+    }),
+  );
 }

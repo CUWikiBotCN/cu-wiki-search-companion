@@ -3,21 +3,38 @@ import { cut, cut_for_search } from 'jieba-wasm/node';
 import FullOpenCC from 'opencc-js';
 import NarrowOpenCC from 'opencc-js/t2cn';
 
-import { Analyzer, bigrams, latinParts, latinRuns } from '../../src/analyzer/analyzer';
+import {
+  Analyzer,
+  bigrams,
+  latinParts,
+  latinRuns,
+} from '../../src/analyzer/analyzer';
 
 const analyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
 
 describe('Analyzer', () => {
   it('keeps the full entry conversion dictionaries and normalization samples', () => {
     expect(NarrowOpenCC.Locale.to.cn).toEqual(FullOpenCC.Locale.to.cn);
-    expect(NarrowOpenCC.Locale.configs.t2s).toEqual(FullOpenCC.Locale.configs.t2s);
+    expect(NarrowOpenCC.Locale.configs.t2s).toEqual(
+      FullOpenCC.Locale.configs.t2s,
+    );
     const convert = FullOpenCC.Converter({ from: 't', to: 'cn' });
     for (const sample of [
-      ' ＭＯＤ　安裝教學 ', 'L.R.D. 血清', '醫用級興奮劑', '鹿', '鹿x',
-      'getId', 'sleepQuality 高品質睡眠可以恢復健康。', '睡眠 健康',
-      '模組:Foo.bar-test', '乾燥 頭髮 發展 裝備 藥物 治療',
+      ' ＭＯＤ　安裝教學 ',
+      'L.R.D. 血清',
+      '醫用級興奮劑',
+      '鹿',
+      '鹿x',
+      'getId',
+      'sleepQuality 高品質睡眠可以恢復健康。',
+      '睡眠 健康',
+      '模組:Foo.bar-test',
+      '乾燥 頭髮 發展 裝備 藥物 治療',
     ]) {
-      const expected = convert(sample.normalize('NFKC')).toLowerCase().replace(/\s+/g, ' ').trim();
+      const expected = convert(sample.normalize('NFKC'))
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
       expect(analyzer.normalize(sample)).toBe(expected);
     }
   });
@@ -29,7 +46,9 @@ describe('Analyzer', () => {
 
   it('adds CJK bigrams and jieba search tokens to documents', () => {
     const tokens = analyzer.documentTokens('医用级兴奋剂');
-    expect(tokens).toEqual(expect.arrayContaining(['医', '用', '医用', '兴奋', '奋剂']));
+    expect(tokens).toEqual(
+      expect.arrayContaining(['医', '用', '医用', '兴奋', '奋剂']),
+    );
   });
 
   it('only creates CJK bigrams inside contiguous CJK runs', () => {
@@ -47,7 +66,9 @@ describe('Analyzer', () => {
 
   it('keeps short mixed-script and camelCase terms searchable', () => {
     expect(analyzer.queryTokens('x')).toContain('x');
-    expect(analyzer.queryTokens('鹿x')).toEqual(expect.arrayContaining(['鹿', 'x']));
+    expect(analyzer.queryTokens('鹿x')).toEqual(
+      expect.arrayContaining(['鹿', 'x']),
+    );
     expect(analyzer.documentTokens('getId')).toContain('id');
     expect(analyzer.queryTokens('id')).toContain('id');
   });

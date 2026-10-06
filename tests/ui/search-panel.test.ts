@@ -9,7 +9,9 @@ import type { TitleSearchResult } from '../../src/search/title-index';
 import { SearchPanel } from '../../src/ui/search-panel';
 
 afterEach(() => {
-  document.querySelectorAll('#cu-wiki-search-host').forEach((host) => host.remove());
+  document
+    .querySelectorAll('#cu-wiki-search-host')
+    .forEach((host) => host.remove());
   document.querySelector('#editor-focus-target')?.remove();
 });
 
@@ -46,7 +48,9 @@ describe('SearchPanel file resource mode', () => {
     panel.open();
     callbacks.prepareSearch.mockClear();
     callbacks.search.mockClear();
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
     if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
@@ -61,7 +65,9 @@ describe('SearchPanel file resource mode', () => {
     expect(callbacks.search).not.toHaveBeenCalled();
     expect(root.querySelector('.heading')?.textContent).toBe('查找文件资源');
     expect(root.querySelector<HTMLElement>('.namespace')?.hidden).toBe(true);
-    expect(root.querySelector('.results')?.textContent).toContain('文件:Item morphine.png');
+    expect(root.querySelector('.results')?.textContent).toContain(
+      '文件:Item morphine.png',
+    );
   });
 });
 
@@ -99,7 +105,9 @@ describe('SearchPanel Lua module mode', () => {
     const panel = new SearchPanel(callbacks);
     panel.open();
     callbacks.prepareSearch.mockClear();
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
     if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
@@ -115,13 +123,17 @@ describe('SearchPanel Lua module mode', () => {
     expect(callbacks.searchContent).not.toHaveBeenCalled();
     expect(root.querySelector('.heading')?.textContent).toBe('查找 Lua 模块');
     expect(root.querySelector<HTMLElement>('.namespace')?.hidden).toBe(true);
-    expect(root.querySelector('.results')?.textContent).toContain('函数 · p.main');
+    expect(root.querySelector('.results')?.textContent).toContain(
+      '函数 · p.main',
+    );
 
     root.querySelector<HTMLButtonElement>('.result-primary')?.click();
     await nextTick();
     expect(callbacks.copyTitle).toHaveBeenCalledWith(luaResult);
     expect(callbacks.insert).not.toHaveBeenCalled();
-    expect(root.querySelectorAll('.copy-result, .insert-result')).toHaveLength(0);
+    expect(root.querySelectorAll('.copy-result, .insert-result')).toHaveLength(
+      0,
+    );
     root.querySelector<HTMLButtonElement>('.open-result')?.click();
     await nextTick();
     expect(callbacks.open).toHaveBeenCalledWith(luaResult);
@@ -139,7 +151,9 @@ describe('SearchPanel result actions', () => {
     };
     const callbacks = maintenanceCallbacks({ search: vi.fn(() => [result]) });
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const panelElement = root?.querySelector<HTMLElement>('.panel');
     const input = root?.querySelector<HTMLInputElement>('.query');
     if (!root || !panelElement || !input) throw new Error('搜索面板没有挂载');
@@ -155,7 +169,9 @@ describe('SearchPanel result actions', () => {
       ),
     ).toEqual(['打开', '复制插入内容', '插入']);
 
-    const primary = root.querySelector<HTMLButtonElement>('.insert.result-primary');
+    const primary = root.querySelector<HTMLButtonElement>(
+      '.insert.result-primary',
+    );
     if (!primary) throw new Error('结果主按钮没有挂载');
     primary.click();
     await nextTick();
@@ -190,9 +206,13 @@ describe('SearchPanel result actions', () => {
       dataType: 'item',
       score: 100,
     };
-    const callbacks = maintenanceCallbacks({ searchCodes: vi.fn(() => [result]) });
+    const callbacks = maintenanceCallbacks({
+      searchCodes: vi.fn(() => [result]),
+    });
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
     if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
@@ -223,7 +243,9 @@ describe('SearchPanel lazy search preparation', () => {
   it('prepares only the selected heavy mode and leaves Data code mode lightweight', async () => {
     const callbacks = maintenanceCallbacks();
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
     if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
@@ -246,9 +268,9 @@ describe('SearchPanel lazy search preparation', () => {
     expect(root.querySelector('.results')?.textContent).toContain(
       '输入中文名、英文代码片段或已配置字段值查找代码',
     );
-    expect(root.querySelector('.settings .settings-help')?.textContent).toContain(
-      '英文 id 本身始终可搜索',
-    );
+    expect(
+      root.querySelector('.settings .settings-help')?.textContent,
+    ).toContain('英文 id 本身始终可搜索');
 
     mode.value = 'files';
     mode.dispatchEvent(new Event('change'));
@@ -281,10 +303,20 @@ describe('SearchPanel local maintenance', () => {
       saveDataCodeRules: vi.fn(async () => undefined),
       saveHighlightPreferences: vi.fn(),
       loadMaintenance: vi.fn(async () => ({
-        counts: { pages: 3, files: 1, dataCodes: 2, contentSources: 2, luaSources: 1 },
+        counts: {
+          pages: 3,
+          files: 1,
+          dataCodes: 2,
+          contentSources: 2,
+          luaSources: 1,
+        },
         jobs: { done: 2, pending: 1, running: 0, failed: 0 },
         snapshots: [
-          { kind: 'title' as const, status: 'available' as const, throughLocalSeq: 3 },
+          {
+            kind: 'title' as const,
+            status: 'available' as const,
+            throughLocalSeq: 3,
+          },
           { kind: 'content' as const, status: 'missing' as const },
           { kind: 'lua' as const, status: 'not-started' as const },
         ],
@@ -298,20 +330,30 @@ describe('SearchPanel local maintenance', () => {
       resetLocalMirror: vi.fn(async () => undefined),
     };
     new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
 
     root.querySelector<HTMLButtonElement>('.maintenance-toggle')?.click();
     await nextTick();
     await vi.waitFor(() => {
-      expect(root.querySelector('.maintenance-output')?.textContent).toContain('页面 3');
+      expect(root.querySelector('.maintenance-output')?.textContent).toContain(
+        '页面 3',
+      );
     });
-    expect(root.querySelector('.reconcile-now')?.textContent).toContain('需要联网');
-    expect(root.querySelector<HTMLElement>('.danger-confirmation')?.hidden).toBe(true);
+    expect(root.querySelector('.reconcile-now')?.textContent).toContain(
+      '需要联网',
+    );
+    expect(
+      root.querySelector<HTMLElement>('.danger-confirmation')?.hidden,
+    ).toBe(true);
 
     root.querySelector<HTMLButtonElement>('.reveal-danger')?.click();
     await nextTick();
-    expect(root.querySelector<HTMLElement>('.danger-confirmation')?.hidden).toBe(false);
+    expect(
+      root.querySelector<HTMLElement>('.danger-confirmation')?.hidden,
+    ).toBe(false);
     const checkbox = root.querySelector<HTMLInputElement>('.reset-data-rules');
     expect(checkbox?.checked).toBe(false);
     if (!checkbox) throw new Error('缺少重置规则复选框');
@@ -322,13 +364,17 @@ describe('SearchPanel local maintenance', () => {
     expect(callbacks.resetLocalMirror).toHaveBeenCalledWith(true);
 
     await vi.waitFor(() => {
-      expect(root.querySelector<HTMLButtonElement>('.reset-local')?.disabled).toBe(false);
+      expect(
+        root.querySelector<HTMLButtonElement>('.reset-local')?.disabled,
+      ).toBe(false);
     });
 
     root.querySelector<HTMLButtonElement>('.request-persistence')?.click();
     await nextTick();
     await vi.waitFor(() => {
-      expect(root.querySelector('.status')?.textContent).toContain('未授予持久保存');
+      expect(root.querySelector('.status')?.textContent).toContain(
+        '未授予持久保存',
+      );
     });
   });
 
@@ -341,14 +387,18 @@ describe('SearchPanel local maintenance', () => {
       resetLocalMirror: vi.fn(() => reset),
     });
     new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
 
     root.querySelector<HTMLButtonElement>('.reveal-danger')?.click();
     await nextTick();
     const resetButton = root.querySelector<HTMLButtonElement>('.reset-local');
-    const rebuildButton = root.querySelector<HTMLButtonElement>('.rebuild-indexes');
-    const reconcileButton = root.querySelector<HTMLButtonElement>('.reconcile-now');
+    const rebuildButton =
+      root.querySelector<HTMLButtonElement>('.rebuild-indexes');
+    const reconcileButton =
+      root.querySelector<HTMLButtonElement>('.reconcile-now');
     if (!resetButton || !rebuildButton || !reconcileButton) {
       throw new Error('维护按钮没有挂载');
     }
@@ -375,7 +425,9 @@ describe('SearchPanel local maintenance', () => {
         '本地维护操作失败：IndexedDB 删除失败',
       );
     });
-    expect(root.querySelector('.status')?.textContent).not.toContain('操作完成');
+    expect(root.querySelector('.status')?.textContent).not.toContain(
+      '操作完成',
+    );
     expect(resetButton.disabled).toBe(false);
     expect(rebuildButton.disabled).toBe(false);
     expect(reconcileButton.disabled).toBe(false);
@@ -390,18 +442,26 @@ describe('SearchPanel local maintenance', () => {
       rebuildSearchIndexes: vi.fn(() => rebuilding),
     });
     new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
-    const rebuildButton = root.querySelector<HTMLButtonElement>('.rebuild-indexes');
-    const queueButton = root.querySelector<HTMLButtonElement>('.rebuild-content-queue');
+    const rebuildButton =
+      root.querySelector<HTMLButtonElement>('.rebuild-indexes');
+    const queueButton = root.querySelector<HTMLButtonElement>(
+      '.rebuild-content-queue',
+    );
     const resetButton = root.querySelector<HTMLButtonElement>('.reset-local');
-    if (!rebuildButton || !queueButton || !resetButton) throw new Error('维护按钮没有挂载');
+    if (!rebuildButton || !queueButton || !resetButton)
+      throw new Error('维护按钮没有挂载');
 
     rebuildButton.click();
     await nextTick();
 
-    expect([...root.querySelectorAll<HTMLButtonElement>('.maintenance-action')]).toSatisfy(
-      (buttons: HTMLButtonElement[]) => buttons.every((button) => button.disabled),
+    expect([
+      ...root.querySelectorAll<HTMLButtonElement>('.maintenance-action'),
+    ]).toSatisfy((buttons: HTMLButtonElement[]) =>
+      buttons.every((button) => button.disabled),
     );
     queueButton.click();
     await nextTick();
@@ -424,7 +484,9 @@ describe('SearchPanel local maintenance', () => {
       })),
     });
     new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
 
     root.querySelector<HTMLButtonElement>('.rebuild-indexes')?.click();
@@ -435,10 +497,12 @@ describe('SearchPanel local maintenance', () => {
         '索引已重建，某些快照未保存',
       );
     });
-    expect(root.querySelector<HTMLElement>('.status')?.dataset.tone).toBe('normal');
-    expect(root.querySelector('.maintenance-output')?.textContent).not.toContain(
-      '本地维护操作失败',
+    expect(root.querySelector<HTMLElement>('.status')?.dataset.tone).toBe(
+      'normal',
     );
+    expect(
+      root.querySelector('.maintenance-output')?.textContent,
+    ).not.toContain('本地维护操作失败');
   });
 });
 
@@ -447,7 +511,9 @@ describe('SearchPanel startup recovery', () => {
     const reload = vi.fn();
     const callbacks = maintenanceCallbacks();
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
 
     panel.setStartupFailure('IndexedDB 无法打开', reload);
@@ -455,10 +521,15 @@ describe('SearchPanel startup recovery', () => {
     panel.open();
     await nextTick();
 
-    expect(root.querySelector('.status')?.textContent).toContain('IndexedDB 无法打开');
-    expect(root.querySelector<HTMLElement>('.status')?.dataset.tone).toBe('error');
+    expect(root.querySelector('.status')?.textContent).toContain(
+      'IndexedDB 无法打开',
+    );
+    expect(root.querySelector<HTMLElement>('.status')?.dataset.tone).toBe(
+      'error',
+    );
     expect(callbacks.prepareSearch).not.toHaveBeenCalled();
-    const reloadButton = root.querySelector<HTMLButtonElement>('.reload-startup');
+    const reloadButton =
+      root.querySelector<HTMLButtonElement>('.reload-startup');
     expect(reloadButton?.hidden).toBe(false);
     reloadButton?.click();
     await nextTick();
@@ -468,7 +539,9 @@ describe('SearchPanel startup recovery', () => {
   it('keeps mode and refresh controls from restarting work after startup failed', async () => {
     const callbacks = maintenanceCallbacks();
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     if (!root) throw new Error('搜索面板没有挂载');
     const mode = root.querySelector<HTMLSelectElement>('.mode');
     const refresh = root.querySelector<HTMLButtonElement>('.refresh');
@@ -486,7 +559,9 @@ describe('SearchPanel startup recovery', () => {
     expect(callbacks.prepareFiles).not.toHaveBeenCalled();
     expect(callbacks.refresh).not.toHaveBeenCalled();
     expect(callbacks.refreshFiles).not.toHaveBeenCalled();
-    expect(root.querySelector('.status')?.textContent).toContain('IndexedDB 无法打开');
+    expect(root.querySelector('.status')?.textContent).toContain(
+      'IndexedDB 无法打开',
+    );
   });
 });
 
@@ -494,9 +569,9 @@ describe('SearchPanel keyboard lifecycle', () => {
   it('accepts only plain Alt+K and gives the shortcut to the latest panel instance', async () => {
     new SearchPanel(maintenanceCallbacks());
     new SearchPanel(maintenanceCallbacks());
-    const panels = [...document.querySelectorAll<HTMLDivElement>('#cu-wiki-search-host')].map(
-      (host) => host.shadowRoot?.querySelector<HTMLElement>('.panel'),
-    );
+    const panels = [
+      ...document.querySelectorAll<HTMLDivElement>('#cu-wiki-search-host'),
+    ].map((host) => host.shadowRoot?.querySelector<HTMLElement>('.panel'));
     if (panels.some((panel) => !panel)) throw new Error('搜索面板没有挂载');
     const latest = panels[1]!;
 
@@ -521,12 +596,16 @@ describe('SearchPanel keyboard lifecycle', () => {
 
     expect(panels.every((panel) => panel?.hidden)).toBe(true);
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'K', altKey: true }));
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'K', altKey: true }),
+    );
     await nextTick();
     expect(panels[0]?.hidden).toBe(true);
     expect(latest.hidden).toBe(false);
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', altKey: true }));
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'k', altKey: true }),
+    );
     await nextTick();
     expect(latest.hidden).toBe(true);
   });
@@ -535,14 +614,19 @@ describe('SearchPanel keyboard lifecycle', () => {
     'closes from %s when Escape bubbles through the open panel',
     async (selector) => {
       const panel = new SearchPanel(maintenanceCallbacks());
-      const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+      const root = document.querySelector<HTMLDivElement>(
+        '#cu-wiki-search-host',
+      )?.shadowRoot;
       const panelElement = root?.querySelector<HTMLElement>('.panel');
       const control = root?.querySelector<HTMLElement>(selector);
-      if (!root || !panelElement || !control) throw new Error('搜索面板没有挂载');
+      if (!root || !panelElement || !control)
+        throw new Error('搜索面板没有挂载');
       panel.open();
       await nextTick();
 
-      control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      control.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
       await nextTick();
 
       expect(panelElement.hidden).toBe(true);
@@ -551,14 +635,19 @@ describe('SearchPanel keyboard lifecycle', () => {
 
   it('leaves Escape to IME composition outside the query input and honors isComposing', async () => {
     const panel = new SearchPanel(maintenanceCallbacks());
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const panelElement = root?.querySelector<HTMLElement>('.panel');
     const dataRules = root?.querySelector<HTMLTextAreaElement>('.data-rules');
-    if (!root || !panelElement || !dataRules) throw new Error('搜索面板没有挂载');
+    if (!root || !panelElement || !dataRules)
+      throw new Error('搜索面板没有挂载');
     panel.open();
     await nextTick();
 
-    dataRules.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    dataRules.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true }),
+    );
     await nextTick();
     dataRules.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
@@ -566,7 +655,9 @@ describe('SearchPanel keyboard lifecycle', () => {
     await nextTick();
     expect(panelElement.hidden).toBe(false);
 
-    dataRules.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    dataRules.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true }),
+    );
     await nextTick();
     dataRules.dispatchEvent(
       new KeyboardEvent('keydown', {
@@ -600,9 +691,13 @@ describe('SearchPanel keyboard lifecycle', () => {
       namespaceName: '',
       score: 1,
     };
-    const callbacks = maintenanceCallbacks({ search: vi.fn(() => [first, second]) });
+    const callbacks = maintenanceCallbacks({
+      search: vi.fn(() => [first, second]),
+    });
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
     if (!root || !input || !mode) throw new Error('搜索面板没有挂载');
@@ -611,7 +706,9 @@ describe('SearchPanel keyboard lifecycle', () => {
     input.value = '页面';
     panel.refreshResults();
     await nextTick();
-    mode.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    mode.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
     await nextTick();
     expect(callbacks.copyTitle).not.toHaveBeenCalled();
 
@@ -629,23 +726,37 @@ describe('SearchPanel keyboard lifecycle', () => {
     });
     expect(input.dispatchEvent(shiftArrow)).toBe(true);
     expect(input.dispatchEvent(controlArrow)).toBe(true);
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
     await nextTick();
     expect(callbacks.copyTitle).toHaveBeenLastCalledWith(first);
     expect(root.querySelector<HTMLElement>('.panel')?.hidden).toBe(false);
 
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
     await nextTick();
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
     await nextTick();
     expect(callbacks.copyTitle).toHaveBeenLastCalledWith(second);
 
     input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+      }),
     );
     await nextTick();
     input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        metaKey: true,
+        bubbles: true,
+      }),
     );
     await nextTick();
     expect(callbacks.open).toHaveBeenCalledTimes(2);
@@ -661,7 +772,11 @@ describe('SearchPanel keyboard lifecycle', () => {
     );
     await nextTick();
     input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', altKey: true, bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        altKey: true,
+        bubbles: true,
+      }),
     );
     await nextTick();
     expect(callbacks.copyTitle).toHaveBeenCalledTimes(2);
@@ -669,7 +784,11 @@ describe('SearchPanel keyboard lifecycle', () => {
     expect(callbacks.insert).not.toHaveBeenCalled();
 
     input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: true,
+        bubbles: true,
+      }),
     );
     await nextTick();
     expect(callbacks.insert).toHaveBeenCalledWith(second, '页面');
@@ -694,7 +813,9 @@ describe('SearchPanel keyboard lifecycle', () => {
     let results = [first, second];
     const callbacks = maintenanceCallbacks({ search: vi.fn(() => results) });
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     if (!root || !input) throw new Error('搜索面板没有挂载');
     panel.open();
@@ -702,14 +823,23 @@ describe('SearchPanel keyboard lifecycle', () => {
     input.value = '页面';
     panel.refreshResults();
     await nextTick();
-    const primaries = [...root.querySelectorAll<HTMLButtonElement>('.result-primary')];
+    const primaries = [
+      ...root.querySelectorAll<HTMLButtonElement>('.result-primary'),
+    ];
     const items = [...root.querySelectorAll<HTMLElement>('.result')];
-    if (primaries.length !== 2 || items.length !== 2) throw new Error('结果按钮没有挂载');
+    if (primaries.length !== 2 || items.length !== 2)
+      throw new Error('结果按钮没有挂载');
 
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+    );
     await nextTick();
     primaries[0]?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        ctrlKey: true,
+        bubbles: true,
+      }),
     );
     await nextTick();
     expect(callbacks.open).toHaveBeenLastCalledWith(first);
@@ -742,7 +872,9 @@ describe('SearchPanel keyboard lifecycle', () => {
 
   it('cycles Tab inside the panel, skips unavailable controls, and stops site propagation', async () => {
     const panel = new SearchPanel(maintenanceCallbacks());
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const handle = root?.querySelector<HTMLElement>('.drag-handle');
     const input = root?.querySelector<HTMLInputElement>('.query');
     const mode = root?.querySelector<HTMLSelectElement>('.mode');
@@ -756,9 +888,9 @@ describe('SearchPanel keyboard lifecycle', () => {
     for (const control of root.querySelectorAll<HTMLElement>(
       'button, input, select, textarea, [tabindex]',
     )) {
-      vi.spyOn(control, 'getClientRects').mockReturnValue(
-        [makeLayoutRect(0, 0, 10, 10)] as unknown as DOMRectList,
-      );
+      vi.spyOn(control, 'getClientRects').mockReturnValue([
+        makeLayoutRect(0, 0, 10, 10),
+      ] as unknown as DOMRectList);
     }
 
     const siteKeydown = vi.fn();
@@ -814,23 +946,33 @@ describe('SearchPanel keyboard lifecycle', () => {
     editor.focus();
     await nextTick();
     const panel = new SearchPanel(maintenanceCallbacks());
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const input = root?.querySelector<HTMLInputElement>('.query');
     const panelElement = root?.querySelector<HTMLElement>('.panel');
     if (!root || !input || !panelElement) throw new Error('搜索面板没有挂载');
 
     panel.open();
     await nextTick();
-    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    input.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true }),
+    );
     await nextTick();
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
     await nextTick();
 
     expect(panelElement.hidden).toBe(false);
 
-    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    input.dispatchEvent(
+      new CompositionEvent('compositionend', { bubbles: true }),
+    );
     await nextTick();
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
     await nextTick();
 
     expect(panelElement.hidden).toBe(true);
@@ -853,7 +995,9 @@ describe('SearchPanel keyboard lifecycle', () => {
       insert: vi.fn(() => editor.focus()),
     });
     const panel = new SearchPanel(callbacks);
-    const root = document.querySelector<HTMLDivElement>('#cu-wiki-search-host')?.shadowRoot;
+    const root = document.querySelector<HTMLDivElement>(
+      '#cu-wiki-search-host',
+    )?.shadowRoot;
     const toggle = root?.querySelector<HTMLButtonElement>('.toggle');
     const input = root?.querySelector<HTMLInputElement>('.query');
     if (!root || !toggle || !input) throw new Error('搜索面板没有挂载');
@@ -884,7 +1028,9 @@ describe('SearchPanel full-text hit highlighting', () => {
     titleHighlights: [{ start: 0, end: 4 }],
   };
 
-  function mount(overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {}): {
+  function mount(
+    overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {},
+  ): {
     callbacks: ConstructorParameters<typeof SearchPanel>[0];
     panel: SearchPanel;
     root: ShadowRoot;
@@ -913,10 +1059,19 @@ describe('SearchPanel full-text hit highlighting', () => {
     mode.dispatchEvent(new Event('change'));
     await nextTick();
     expect(section.hidden).toBe(false);
-    expect(root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked).toBe(false);
-    expect(root.querySelector<HTMLInputElement>('.content-highlight-toggle')?.checked).toBe(true);
-    expect(root.querySelector<HTMLInputElement>('.title-highlight-color')?.value).toBe('#aee2ff');
-    expect(root.querySelector<HTMLInputElement>('.content-highlight-color')?.value).toBe('#fff3a3');
+    expect(
+      root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked,
+    ).toBe(false);
+    expect(
+      root.querySelector<HTMLInputElement>('.content-highlight-toggle')
+        ?.checked,
+    ).toBe(true);
+    expect(
+      root.querySelector<HTMLInputElement>('.title-highlight-color')?.value,
+    ).toBe('#aee2ff');
+    expect(
+      root.querySelector<HTMLInputElement>('.content-highlight-color')?.value,
+    ).toBe('#fff3a3');
 
     mode.value = 'title';
     mode.dispatchEvent(new Event('change'));
@@ -956,8 +1111,12 @@ describe('SearchPanel full-text hit highlighting', () => {
     mode.dispatchEvent(new Event('change'));
     await nextTick();
 
-    const titleToggle = root.querySelector<HTMLInputElement>('.title-highlight-toggle');
-    const contentToggle = root.querySelector<HTMLInputElement>('.content-highlight-toggle');
+    const titleToggle = root.querySelector<HTMLInputElement>(
+      '.title-highlight-toggle',
+    );
+    const contentToggle = root.querySelector<HTMLInputElement>(
+      '.content-highlight-toggle',
+    );
     if (!titleToggle || !contentToggle) throw new Error('缺少高亮开关');
 
     titleToggle.checked = true;
@@ -1000,7 +1159,9 @@ describe('SearchPanel full-text hit highlighting', () => {
     });
     await nextTick();
     expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#aee2ff');
-    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#fff3a3');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe(
+      '#fff3a3',
+    );
 
     mode.value = 'content';
     mode.dispatchEvent(new Event('change'));
@@ -1010,9 +1171,15 @@ describe('SearchPanel full-text hit highlighting', () => {
     await nextTick();
     const result = root.querySelector<HTMLElement>('.result');
     const titleMark = root.querySelector<HTMLElement>('.result-title mark');
-    const contentMark = root.querySelector<HTMLElement>('.result-namespace mark');
-    const titleColor = root.querySelector<HTMLInputElement>('.title-highlight-color');
-    const contentColor = root.querySelector<HTMLInputElement>('.content-highlight-color');
+    const contentMark = root.querySelector<HTMLElement>(
+      '.result-namespace mark',
+    );
+    const titleColor = root.querySelector<HTMLInputElement>(
+      '.title-highlight-color',
+    );
+    const contentColor = root.querySelector<HTMLInputElement>(
+      '.content-highlight-color',
+    );
     if (!result || !titleMark || !contentMark || !titleColor || !contentColor) {
       throw new Error('高亮结果或颜色选择器没有挂载');
     }
@@ -1023,8 +1190,12 @@ describe('SearchPanel full-text hit highlighting', () => {
     expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#c0ffec');
     expect(callbacks.saveHighlightPreferences).not.toHaveBeenCalled();
     expect(root.querySelector<HTMLElement>('.result')).toBe(result);
-    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(titleMark);
-    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(contentMark);
+    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(
+      titleMark,
+    );
+    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(
+      contentMark,
+    );
 
     titleColor.dispatchEvent(new Event('change'));
     await nextTick();
@@ -1035,11 +1206,17 @@ describe('SearchPanel full-text hit highlighting', () => {
     contentColor.value = '#ff8800';
     contentColor.dispatchEvent(new Event('input'));
     await nextTick();
-    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ff8800');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe(
+      '#ff8800',
+    );
     expect(callbacks.saveHighlightPreferences).toHaveBeenCalledTimes(1);
     expect(root.querySelector<HTMLElement>('.result')).toBe(result);
-    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(titleMark);
-    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(contentMark);
+    expect(root.querySelector<HTMLElement>('.result-title mark')).toBe(
+      titleMark,
+    );
+    expect(root.querySelector<HTMLElement>('.result-namespace mark')).toBe(
+      contentMark,
+    );
 
     contentColor.dispatchEvent(new Event('change'));
     await nextTick();
@@ -1060,17 +1237,32 @@ describe('SearchPanel full-text hit highlighting', () => {
       contentColor: '#ffd6a5',
     });
     await nextTick();
-    expect(root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked).toBe(true);
-    expect(root.querySelector<HTMLInputElement>('.content-highlight-toggle')?.checked).toBe(false);
+    expect(
+      root.querySelector<HTMLInputElement>('.title-highlight-toggle')?.checked,
+    ).toBe(true);
+    expect(
+      root.querySelector<HTMLInputElement>('.content-highlight-toggle')
+        ?.checked,
+    ).toBe(false);
     expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#c0ffec');
-    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ffd6a5');
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe(
+      '#ffd6a5',
+    );
 
     input.value = '紧急救治';
     mode.value = 'content';
     mode.dispatchEvent(new Event('change'));
     await nextTick();
-    expect(root.querySelector<HTMLElement>('.result-title')?.querySelectorAll('mark')).toHaveLength(1);
-    expect(root.querySelector<HTMLElement>('.result-namespace')?.querySelectorAll('mark')).toHaveLength(0);
+    expect(
+      root
+        .querySelector<HTMLElement>('.result-title')
+        ?.querySelectorAll('mark'),
+    ).toHaveLength(1);
+    expect(
+      root
+        .querySelector<HTMLElement>('.result-namespace')
+        ?.querySelectorAll('mark'),
+    ).toHaveLength(0);
   });
 
   it('renders results without highlight data as plain text', async () => {
@@ -1094,10 +1286,12 @@ describe('SearchPanel full-text hit highlighting', () => {
 
     expect(root.querySelectorAll('.result-title mark')).toHaveLength(0);
     expect(root.querySelectorAll('.result-namespace mark')).toHaveLength(0);
-    expect(root.querySelector<HTMLElement>('.result-title')?.textContent).toBe('普通页面');
-    expect(root.querySelector<HTMLElement>('.result-namespace')?.textContent).toBe(
-      '（主） · 普通正文内容。',
+    expect(root.querySelector<HTMLElement>('.result-title')?.textContent).toBe(
+      '普通页面',
     );
+    expect(
+      root.querySelector<HTMLElement>('.result-namespace')?.textContent,
+    ).toBe('（主） · 普通正文内容。');
   });
 });
 
@@ -1108,9 +1302,15 @@ describe('SearchPanel layout contract', () => {
     const header = root.querySelector<HTMLElement>('.header');
     const controls = root.querySelector<HTMLElement>('.controls');
     const footer = root.querySelector<HTMLElement>('.footer');
-    if (!body || !header || !controls || !footer) throw new Error('面板布局没有挂载');
+    if (!body || !header || !controls || !footer)
+      throw new Error('面板布局没有挂载');
 
-    for (const selector of ['.settings', '.maintenance', '.results', '.status-details']) {
+    for (const selector of [
+      '.settings',
+      '.maintenance',
+      '.results',
+      '.status-details',
+    ]) {
       const element = root.querySelector<HTMLElement>(selector);
       if (!element) throw new Error(`缺少 ${selector}`);
       expect(body.contains(element)).toBe(true);
@@ -1126,7 +1326,9 @@ describe('SearchPanel layout contract', () => {
     const panelElement = root.querySelector<HTMLElement>('.panel');
     const status = root.querySelector<HTMLElement>('.status');
     const details = root.querySelector<HTMLElement>('.status-details');
-    const detailsToggle = root.querySelector<HTMLButtonElement>('.status-details-toggle');
+    const detailsToggle = root.querySelector<HTMLButtonElement>(
+      '.status-details-toggle',
+    );
     if (!panelElement || !status || !details || !detailsToggle) {
       throw new Error('状态控件没有挂载');
     }
@@ -1234,11 +1436,17 @@ describe('SearchPanel layout contract', () => {
 
       handle.focus();
       await nextTick();
-      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      handle.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+      );
       await nextTick();
       expect(position().left).toBe(origin.left + 10);
       handle.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+        new KeyboardEvent('keydown', {
+          key: 'ArrowRight',
+          shiftKey: true,
+          bubbles: true,
+        }),
       );
       await nextTick();
       expect(position().left).toBe(origin.left + 11);
@@ -1261,7 +1469,9 @@ describe('SearchPanel layout contract', () => {
       expect(position().left).toBe(1200 - width - 12);
       expect(position().top).toBe(800 - height - 12);
 
-      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      handle.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
       await nextTick();
       expect(panelElement.hidden).toBe(false);
       expect(position()).toEqual(origin);
@@ -1299,7 +1509,10 @@ describe('SearchPanel layout contract', () => {
         clientY: origin.top + 70,
       });
       const committed = position();
-      expect(committed).toEqual({ left: origin.left + 90, top: origin.top + 70 });
+      expect(committed).toEqual({
+        left: origin.left + 90,
+        top: origin.top + 70,
+      });
 
       close.click();
       await nextTick();
@@ -1338,9 +1551,15 @@ describe('SearchPanel layout contract', () => {
     await nextTick();
 
     expect(host.style.getPropertyValue('--cu-title-highlight')).toBe('#000000');
-    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe('#fff');
-    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe('#ffffff');
-    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe('#000');
+    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe(
+      '#fff',
+    );
+    expect(host.style.getPropertyValue('--cu-content-highlight')).toBe(
+      '#ffffff',
+    );
+    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe(
+      '#000',
+    );
 
     panel.setHighlightPreferences({
       titleEnabled: true,
@@ -1349,8 +1568,12 @@ describe('SearchPanel layout contract', () => {
       contentColor: '#000000',
     });
     await nextTick();
-    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe('#000');
-    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe('#fff');
+    expect(host.style.getPropertyValue('--cu-title-highlight-color')).toBe(
+      '#000',
+    );
+    expect(host.style.getPropertyValue('--cu-content-highlight-color')).toBe(
+      '#fff',
+    );
   });
 });
 
@@ -1377,7 +1600,13 @@ function maintenanceCallbacks(
     saveDataCodeRules: vi.fn(async () => undefined),
     saveHighlightPreferences: vi.fn(),
     loadMaintenance: vi.fn(async () => ({
-      counts: { pages: 0, files: 0, dataCodes: 0, contentSources: 0, luaSources: 0 },
+      counts: {
+        pages: 0,
+        files: 0,
+        dataCodes: 0,
+        contentSources: 0,
+        luaSources: 0,
+      },
       jobs: { done: 0, pending: 0, running: 0, failed: 0 },
       snapshots: [],
       storage: {},
@@ -1396,7 +1625,9 @@ function mountLayoutPanel(
   overrides: Partial<ConstructorParameters<typeof SearchPanel>[0]> = {},
 ): { panel: SearchPanel; root: ShadowRoot; host: HTMLDivElement } {
   const panel = new SearchPanel(maintenanceCallbacks(overrides));
-  const host = [...document.querySelectorAll<HTMLDivElement>('#cu-wiki-search-host')].at(-1);
+  const host = [
+    ...document.querySelectorAll<HTMLDivElement>('#cu-wiki-search-host'),
+  ].at(-1);
   const root = host?.shadowRoot;
   if (!host || !root) throw new Error('搜索面板没有挂载');
   return { panel, root, host };
@@ -1405,15 +1636,32 @@ function mountLayoutPanel(
 function setLayoutViewport(width: number, height: number): () => void {
   const previousWidth = window.innerWidth;
   const previousHeight = window.innerHeight;
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: width,
+  });
+  Object.defineProperty(window, 'innerHeight', {
+    configurable: true,
+    value: height,
+  });
   return () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: previousHeight });
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: previousWidth,
+    });
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: previousHeight,
+    });
   };
 }
 
-function makeLayoutRect(left: number, top: number, width: number, height: number): DOMRect {
+function makeLayoutRect(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): DOMRect {
   return {
     x: left,
     y: top,
@@ -1465,7 +1713,9 @@ describe('SearchPanel Vue lifecycle', () => {
       prepare.mockClear();
       search.mockClear();
       window.dispatchEvent(new Event('resize'));
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', altKey: true }));
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'k', altKey: true }),
+      );
       await vi.runAllTimersAsync();
       expect(focus).not.toHaveBeenCalled();
       expect(prepare).not.toHaveBeenCalled();
@@ -1496,8 +1746,18 @@ describe('SearchPanel Vue lifecycle', () => {
     const title = '<img src=x onerror=alert(1)> & 标题';
     const snippet = '<script>bad()</script>正文';
     const result: ContentSearchResult = {
-      kind: 'content', id: 1, namespace: 0, namespaceName: '', title, snippet, score: 1,
-      titleHighlights: [{ start: -5, end: 4 }, { start: 2, end: 9 }, { start: 10, end: 999 }],
+      kind: 'content',
+      id: 1,
+      namespace: 0,
+      namespaceName: '',
+      title,
+      snippet,
+      score: 1,
+      titleHighlights: [
+        { start: -5, end: 4 },
+        { start: 2, end: 9 },
+        { start: 10, end: 999 },
+      ],
       highlights: [{ start: 0, end: snippet.length }],
     };
     const { panel, root } = mountLayoutPanel({ searchContent: () => [result] });
@@ -1508,22 +1768,37 @@ describe('SearchPanel Vue lifecycle', () => {
     input.value = '正文';
     mode.value = 'content';
     mode.dispatchEvent(new Event('change'));
-    panel.setHighlightPreferences({ titleEnabled: true, contentEnabled: true, titleColor: '#aee2ff', contentColor: '#fff3a3' });
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#aee2ff',
+      contentColor: '#fff3a3',
+    });
     await nextTick();
     const primary = root.querySelector<HTMLButtonElement>('.result-primary')!;
     const mark = root.querySelector('.result-title mark');
     primary.focus();
-    panel.setHighlightPreferences({ titleEnabled: true, contentEnabled: true, titleColor: '#ffffff', contentColor: '#000000' });
+    panel.setHighlightPreferences({
+      titleEnabled: true,
+      contentEnabled: true,
+      titleColor: '#ffffff',
+      contentColor: '#000000',
+    });
     await nextTick();
     expect(root.querySelector('.result-title')!.textContent).toBe(title);
-    expect(root.querySelector('.result-namespace')!.textContent).toBe(`主命名空间 · ${snippet}`);
+    expect(root.querySelector('.result-namespace')!.textContent).toBe(
+      `主命名空间 · ${snippet}`,
+    );
     expect(root.querySelectorAll('img, script')).toHaveLength(0);
     expect(root.querySelector('.result-title mark')).toBe(mark);
     expect(root.activeElement).toBe(primary);
   });
 
   it('keeps invalid Data rules editable and returns focus to configuration after saving', async () => {
-    const save = vi.fn().mockRejectedValueOnce(new Error('无效路径')).mockResolvedValue(undefined);
+    const save = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('无效路径'))
+      .mockResolvedValue(undefined);
     const { panel, root } = mountLayoutPanel({ saveDataCodeRules: save });
     panel.setDataCodeRules('default', 'default');
     panel.open();
@@ -1540,18 +1815,28 @@ describe('SearchPanel Vue lifecycle', () => {
     rules.value = 'bad';
     rules.dispatchEvent(new Event('input'));
     root.querySelector<HTMLButtonElement>('.save-rules')!.click();
-    await vi.waitFor(() => expect(root.querySelector('.status')!.textContent).toContain('无效路径'));
+    await vi.waitFor(() =>
+      expect(root.querySelector('.status')!.textContent).toContain('无效路径'),
+    );
     expect(root.querySelector<HTMLElement>('.settings')!.hidden).toBe(false);
     expect(rules.value).toBe('bad');
     root.querySelector<HTMLButtonElement>('.reset-rules')!.click();
-    await vi.waitFor(() => expect(root.querySelector<HTMLElement>('.settings')!.hidden).toBe(true));
+    await vi.waitFor(() =>
+      expect(root.querySelector<HTMLElement>('.settings')!.hidden).toBe(true),
+    );
     expect(save).toHaveBeenLastCalledWith('default');
     expect(root.activeElement).toBe(configure);
   });
 });
 
 it('returns focus to the query when insertion support removes the focused action', async () => {
-  const result: TitleSearchResult = { id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 };
+  const result: TitleSearchResult = {
+    id: 1,
+    title: '页面',
+    namespace: 0,
+    namespaceName: '',
+    score: 1,
+  };
   const { panel, root } = mountLayoutPanel({ search: () => [result] });
   panel.open();
   await nextTick();
@@ -1568,14 +1853,28 @@ it('returns focus to the query when insertion support removes the focused action
 
 describe('redirect links and CSS source results', () => {
   it('renders an independent native redirect link without changing source actions', async () => {
-    const result: TitleSearchResult = { id: 42, title: '别名', namespace: 0, namespaceName: '（主）', score: 10,
-      isRedirect: true, redirectResolved: true, redirectTarget: { title: '长标题'.repeat(80), fragment: '章节#1' } };
-    const callbacks = maintenanceCallbacks({ search: () => [result], redirectUrl: () => 'https://example.org/wiki/Target#section' });
+    const result: TitleSearchResult = {
+      id: 42,
+      title: '别名',
+      namespace: 0,
+      namespaceName: '（主）',
+      score: 10,
+      isRedirect: true,
+      redirectResolved: true,
+      redirectTarget: { title: '长标题'.repeat(80), fragment: '章节#1' },
+    };
+    const callbacks = maintenanceCallbacks({
+      search: () => [result],
+      redirectUrl: () => 'https://example.org/wiki/Target#section',
+    });
     const panel = new SearchPanel(callbacks);
-    panel.open(); await nextTick();
+    panel.open();
+    await nextTick();
     const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
     const input = root.querySelector<HTMLInputElement>('.query')!;
-    input.value = '别名'; panel.refreshResults(); await nextTick();
+    input.value = '别名';
+    panel.refreshResults();
+    await nextTick();
     const link = root.querySelector<HTMLAnchorElement>('.redirect-target')!;
     expect(link.closest('button')).toBeNull();
     expect(link.href).toBe('https://example.org/wiki/Target#section');
@@ -1593,30 +1892,59 @@ describe('redirect links and CSS source results', () => {
   });
 
   it('shows pending and unresolved redirects without constructing a false target', async () => {
-    const result: TitleSearchResult = { id: 1, title: '别名', namespace: 0, namespaceName: '（主）', score: 1, isRedirect: true };
-    const panel = new SearchPanel(maintenanceCallbacks({ search: () => [result] }));
+    const result: TitleSearchResult = {
+      id: 1,
+      title: '别名',
+      namespace: 0,
+      namespaceName: '（主）',
+      score: 1,
+      isRedirect: true,
+    };
+    const panel = new SearchPanel(
+      maintenanceCallbacks({ search: () => [result] }),
+    );
     panel.open();
     const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
     root.querySelector<HTMLInputElement>('.query')!.value = '别名';
-    panel.refreshResults(); await nextTick();
+    panel.refreshResults();
+    await nextTick();
     expect(root.querySelector('.results')?.textContent).toContain('目标待同步');
     result.redirectResolved = true;
-    panel.refreshResults(); await nextTick();
+    panel.refreshResults();
+    await nextTick();
     expect(root.querySelector('.results')?.textContent).toContain('未取得目标');
     expect(root.querySelector('.redirect-target')).toBeNull();
     panel.destroy();
   });
 
   it('searches CSS, shows safe highlighted source with line numbers, and blocks insertion', async () => {
-    const result = { kind: 'css' as const, id: 1, title: 'MediaWiki:Gadget-test.css', namespace: 8, namespaceName: 'MediaWiki',
-      matches: [{ line: 12, text: '.card { content: "<script>"; }', highlights: [{ start: 0, end: 5 }] }] };
-    const callbacks = maintenanceCallbacks({ searchCss: vi.fn(() => [result]) });
+    const result = {
+      kind: 'css' as const,
+      id: 1,
+      title: 'MediaWiki:Gadget-test.css',
+      namespace: 8,
+      namespaceName: 'MediaWiki',
+      matches: [
+        {
+          line: 12,
+          text: '.card { content: "<script>"; }',
+          highlights: [{ start: 0, end: 5 }],
+        },
+      ],
+    };
+    const callbacks = maintenanceCallbacks({
+      searchCss: vi.fn(() => [result]),
+    });
     const panel = new SearchPanel(callbacks);
-    panel.open(); await nextTick();
+    panel.open();
+    await nextTick();
     const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
     const mode = root.querySelector<HTMLSelectElement>('.mode')!;
     const input = root.querySelector<HTMLInputElement>('.query')!;
-    input.value = '.card'; mode.value = 'css'; mode.dispatchEvent(new Event('change')); await nextTick();
+    input.value = '.card';
+    mode.value = 'css';
+    mode.dispatchEvent(new Event('change'));
+    await nextTick();
     expect(callbacks.prepareSearch).toHaveBeenCalledWith('css');
     expect(callbacks.searchCss).toHaveBeenCalledWith('.card');
     expect(root.querySelector('.css-line')?.textContent).toContain('12');
@@ -1624,7 +1952,13 @@ describe('redirect links and CSS source results', () => {
     expect(root.querySelector('.css-match script')).toBeNull();
     expect(root.querySelector('.insert-result')).toBeNull();
     expect(root.querySelector('.copy-result')).toBeNull();
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
     expect(callbacks.insert).not.toHaveBeenCalled();
     root.querySelector<HTMLButtonElement>('.result-primary')!.click();
     expect(callbacks.copyTitle).toHaveBeenCalledWith(result);
@@ -1635,51 +1969,126 @@ describe('redirect links and CSS source results', () => {
 });
 
 describe('SearchPanel six-mode contract', () => {
-  const page = { id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 };
+  const page = {
+    id: 1,
+    title: '页面',
+    namespace: 0,
+    namespaceName: '',
+    score: 1,
+  };
   const scenarios = [
-    { mode: 'title', search: 'search', preparation: 'title', namespace: true, insertable: true, result: page },
-    { mode: 'content', search: 'searchContent', preparation: 'content', namespace: true, insertable: true,
-      result: { ...page, kind: 'content', snippet: '正文' } },
-    { mode: 'data-code', search: 'searchCodes', preparation: undefined, namespace: false, insertable: false,
-      result: { kind: 'data-code', code: 'example', chineseName: '例子', dataType: 'item', source: 'Data:example', score: 1 } },
-    { mode: 'lua', search: 'searchLua', preparation: 'lua', namespace: false, insertable: false,
-      result: { ...page, kind: 'lua', matches: [] } },
-    { mode: 'css', search: 'searchCss', preparation: 'css', namespace: false, insertable: false,
-      result: { ...page, kind: 'css', matches: [] } },
-    { mode: 'files', search: 'searchFiles', preparation: undefined, namespace: false, insertable: true, result: page },
+    {
+      mode: 'title',
+      search: 'search',
+      preparation: 'title',
+      namespace: true,
+      insertable: true,
+      result: page,
+    },
+    {
+      mode: 'content',
+      search: 'searchContent',
+      preparation: 'content',
+      namespace: true,
+      insertable: true,
+      result: { ...page, kind: 'content', snippet: '正文' },
+    },
+    {
+      mode: 'data-code',
+      search: 'searchCodes',
+      preparation: undefined,
+      namespace: false,
+      insertable: false,
+      result: {
+        kind: 'data-code',
+        code: 'example',
+        chineseName: '例子',
+        dataType: 'item',
+        source: 'Data:example',
+        score: 1,
+      },
+    },
+    {
+      mode: 'lua',
+      search: 'searchLua',
+      preparation: 'lua',
+      namespace: false,
+      insertable: false,
+      result: { ...page, kind: 'lua', matches: [] },
+    },
+    {
+      mode: 'css',
+      search: 'searchCss',
+      preparation: 'css',
+      namespace: false,
+      insertable: false,
+      result: { ...page, kind: 'css', matches: [] },
+    },
+    {
+      mode: 'files',
+      search: 'searchFiles',
+      preparation: undefined,
+      namespace: false,
+      insertable: true,
+      result: page,
+    },
   ] as const;
 
-  it.each(scenarios)('routes $mode and agrees on button, keyboard and copy-link eligibility', async (scenario) => {
-    const search = vi.fn(() => [scenario.result]);
-    const callbacks = maintenanceCallbacks({ [scenario.search]: search });
-    const panel = new SearchPanel(callbacks);
-    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
-    const mode = root.querySelector<HTMLSelectElement>('.mode')!;
-    const input = root.querySelector<HTMLInputElement>('.query')!;
-    panel.open();
-    await nextTick();
-    vi.mocked(callbacks.prepareSearch).mockClear();
-    for (const entry of scenarios) vi.mocked(callbacks[entry.search]).mockClear();
-    input.value = 'query';
-    mode.value = scenario.mode;
-    mode.dispatchEvent(new Event('change'));
-    await nextTick();
+  it.each(scenarios)(
+    'routes $mode and agrees on button, keyboard and copy-link eligibility',
+    async (scenario) => {
+      const search = vi.fn(() => [scenario.result]);
+      const callbacks = maintenanceCallbacks({ [scenario.search]: search });
+      const panel = new SearchPanel(callbacks);
+      const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+      const mode = root.querySelector<HTMLSelectElement>('.mode')!;
+      const input = root.querySelector<HTMLInputElement>('.query')!;
+      panel.open();
+      await nextTick();
+      vi.mocked(callbacks.prepareSearch).mockClear();
+      for (const entry of scenarios)
+        vi.mocked(callbacks[entry.search]).mockClear();
+      input.value = 'query';
+      mode.value = scenario.mode;
+      mode.dispatchEvent(new Event('change'));
+      await nextTick();
 
-    expect(search).toHaveBeenCalledExactlyOnceWith(...(scenario.namespace ? ['query', undefined] : ['query']));
-    for (const other of scenarios) {
-      if (other.search !== scenario.search) expect(callbacks[other.search]).not.toHaveBeenCalled();
-    }
-    if (scenario.preparation) expect(callbacks.prepareSearch).toHaveBeenCalledExactlyOnceWith(scenario.preparation);
-    else expect(callbacks.prepareSearch).not.toHaveBeenCalled();
-    expect(callbacks.prepareFiles).toHaveBeenCalledTimes(scenario.mode === 'files' ? 1 : 0);
-    expect(root.querySelector<HTMLElement>('.namespace')!.hidden).toBe(!scenario.namespace);
-    expect(root.querySelectorAll('.copy-result, .insert-result')).toHaveLength(scenario.insertable ? 2 : 0);
-    panel.actions.copyLink(panel.state.results[0]!);
-    expect(callbacks.copy).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
-    expect(callbacks.insert).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
-    panel.destroy();
-  });
+      expect(search).toHaveBeenCalledExactlyOnceWith(
+        ...(scenario.namespace ? ['query', undefined] : ['query']),
+      );
+      for (const other of scenarios) {
+        if (other.search !== scenario.search)
+          expect(callbacks[other.search]).not.toHaveBeenCalled();
+      }
+      if (scenario.preparation)
+        expect(callbacks.prepareSearch).toHaveBeenCalledExactlyOnceWith(
+          scenario.preparation,
+        );
+      else expect(callbacks.prepareSearch).not.toHaveBeenCalled();
+      expect(callbacks.prepareFiles).toHaveBeenCalledTimes(
+        scenario.mode === 'files' ? 1 : 0,
+      );
+      expect(root.querySelector<HTMLElement>('.namespace')!.hidden).toBe(
+        !scenario.namespace,
+      );
+      expect(
+        root.querySelectorAll('.copy-result, .insert-result'),
+      ).toHaveLength(scenario.insertable ? 2 : 0);
+      panel.actions.copyLink(panel.state.results[0]!);
+      expect(callbacks.copy).toHaveBeenCalledTimes(scenario.insertable ? 1 : 0);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          shiftKey: true,
+          bubbles: true,
+        }),
+      );
+      expect(callbacks.insert).toHaveBeenCalledTimes(
+        scenario.insertable ? 1 : 0,
+      );
+      panel.destroy();
+    },
+  );
 });
 
 describe('SearchPanel result invalidation scheduling', () => {
@@ -1694,7 +2103,13 @@ describe('SearchPanel result invalidation scheduling', () => {
     input.value = 'query';
     panel.open();
     await nextTick();
-    for (const callback of [callbacks.search, callbacks.searchContent, callbacks.searchCodes, callbacks.searchFiles]) vi.mocked(callback).mockClear();
+    for (const callback of [
+      callbacks.search,
+      callbacks.searchContent,
+      callbacks.searchCodes,
+      callbacks.searchFiles,
+    ])
+      vi.mocked(callback).mockClear();
     return { panel, root, input, callbacks };
   }
 
@@ -1712,7 +2127,10 @@ describe('SearchPanel result invalidation scheduling', () => {
     panel.invalidateResults(['title']);
     panel.invalidateResults(['title']);
     await vi.advanceTimersByTimeAsync(0);
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('query', undefined);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+      'query',
+      undefined,
+    );
     panel.destroy();
   });
 
@@ -1724,7 +2142,10 @@ describe('SearchPanel result invalidation scheduling', () => {
     await vi.advanceTimersByTimeAsync(119);
     expect(callbacks.search).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('latest', undefined);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+      'latest',
+      undefined,
+    );
     await vi.advanceTimersByTimeAsync(200);
     expect(callbacks.search).toHaveBeenCalledOnce();
     panel.destroy();
@@ -1732,102 +2153,174 @@ describe('SearchPanel result invalidation scheduling', () => {
 
   it('does no hidden work and consumes dirty data or changed conditions when reopening', async () => {
     const { panel, input, callbacks } = await mount();
-    input.value = 'pending'; input.dispatchEvent(new Event('input'));
+    input.value = 'pending';
+    input.dispatchEvent(new Event('input'));
     panel.close();
-    panel.invalidateResults(['title']); panel.refreshResults();
+    panel.invalidateResults(['title']);
+    panel.refreshResults();
     await vi.advanceTimersByTimeAsync(500);
     expect(callbacks.search).not.toHaveBeenCalled();
-    panel.open(); await nextTick();
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('pending', undefined);
+    panel.open();
+    await nextTick();
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+      'pending',
+      undefined,
+    );
     vi.mocked(callbacks.search).mockClear();
-    panel.close(); panel.open(); await nextTick();
+    panel.close();
+    panel.open();
+    await nextTick();
     expect(callbacks.search).not.toHaveBeenCalled();
-    panel.close(); input.value = 'changed while hidden'; panel.open(); await nextTick();
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('changed while hidden', undefined);
+    panel.close();
+    input.value = 'changed while hidden';
+    panel.open();
+    await nextTick();
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+      'changed while hidden',
+      undefined,
+    );
     panel.destroy();
   });
 
-  it.each(['.query', '.data-rules'])('waits throughout composition in %s and resumes once', async (selector) => {
-    const { panel, root, input, callbacks } = await mount();
-    input.value = 'pending'; input.dispatchEvent(new Event('input'));
-    const control = root.querySelector(selector)!;
-    control.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
-    panel.invalidateResults(['title']); panel.refreshResults();
-    await vi.advanceTimersByTimeAsync(200);
-    expect(callbacks.search).not.toHaveBeenCalled();
-    control.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('pending', undefined);
-    await vi.advanceTimersByTimeAsync(200);
-    expect(callbacks.search).toHaveBeenCalledOnce();
-    panel.destroy();
-  });
+  it.each(['.query', '.data-rules'])(
+    'waits throughout composition in %s and resumes once',
+    async (selector) => {
+      const { panel, root, input, callbacks } = await mount();
+      input.value = 'pending';
+      input.dispatchEvent(new Event('input'));
+      const control = root.querySelector(selector)!;
+      control.dispatchEvent(
+        new CompositionEvent('compositionstart', { bubbles: true }),
+      );
+      panel.invalidateResults(['title']);
+      panel.refreshResults();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(callbacks.search).not.toHaveBeenCalled();
+      control.dispatchEvent(
+        new CompositionEvent('compositionend', { bubbles: true }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+        'pending',
+        undefined,
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      expect(callbacks.search).toHaveBeenCalledOnce();
+      panel.destroy();
+    },
+  );
 
   it('consumes old timers on mode, namespace and explicit refresh and destroys all queued work', async () => {
     const { panel, input, callbacks } = await mount();
-    input.value = 'next'; input.dispatchEvent(new Event('input'));
-    panel.state.mode = 'content'; panel.actions.mode();
-    expect(callbacks.searchContent).toHaveBeenCalledExactlyOnceWith('next', undefined);
+    input.value = 'next';
+    input.dispatchEvent(new Event('input'));
+    panel.state.mode = 'content';
+    panel.actions.mode();
+    expect(callbacks.searchContent).toHaveBeenCalledExactlyOnceWith(
+      'next',
+      undefined,
+    );
     await vi.advanceTimersByTimeAsync(150);
     expect(callbacks.search).not.toHaveBeenCalled();
     expect(callbacks.searchContent).toHaveBeenCalledOnce();
     input.dispatchEvent(new Event('input'));
-    panel.state.namespace = '828'; panel.actions.search();
+    panel.state.namespace = '828';
+    panel.actions.search();
     expect(callbacks.searchContent).toHaveBeenLastCalledWith('next', 828);
     await vi.advanceTimersByTimeAsync(150);
     expect(callbacks.searchContent).toHaveBeenCalledTimes(2);
-    panel.invalidateResults(['content']); panel.refreshResults();
+    panel.invalidateResults(['content']);
+    panel.refreshResults();
     await vi.advanceTimersByTimeAsync(150);
     expect(callbacks.searchContent).toHaveBeenCalledTimes(3);
-    panel.invalidateResults(['content']); panel.destroy();
+    panel.invalidateResults(['content']);
+    panel.destroy();
     await vi.advanceTimersByTimeAsync(150);
     expect(callbacks.searchContent).toHaveBeenCalledTimes(3);
   });
 
   it('invalidates namespace filtering when the selected namespace disappears', async () => {
     const { panel, callbacks } = await mount();
-    panel.setNamespaces([{ id: 0, name: '（主）' }, { id: 828, name: '模块' }]);
-    panel.state.namespace = '828'; panel.actions.search();
+    panel.setNamespaces([
+      { id: 0, name: '（主）' },
+      { id: 828, name: '模块' },
+    ]);
+    panel.state.namespace = '828';
+    panel.actions.search();
     vi.mocked(callbacks.search).mockClear();
     panel.setNamespaces([{ id: 0, name: '（主）' }]);
     await vi.advanceTimersByTimeAsync(0);
     expect(panel.state.namespace).toBe('');
-    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith('query', undefined);
+    expect(callbacks.search).toHaveBeenCalledExactlyOnceWith(
+      'query',
+      undefined,
+    );
     panel.destroy();
   });
 
   it('preserves selected identity and native result/link focus through background updates', async () => {
     const { panel, root, callbacks, input } = await mount();
     callbacks.redirectUrl = () => 'https://example.org/wiki/Target';
-    const first = { id: 1, title: '第一页', namespace: 0, namespaceName: '', score: 2 };
-    const second = { ...first, id: 2, title: '别名', isRedirect: true, redirectResolved: true, redirectTarget: { title: '目标' } };
-    vi.mocked(callbacks.search).mockReturnValue([first, second]); panel.refreshResults(); await nextTick();
+    const first = {
+      id: 1,
+      title: '第一页',
+      namespace: 0,
+      namespaceName: '',
+      score: 2,
+    };
+    const second = {
+      ...first,
+      id: 2,
+      title: '别名',
+      isRedirect: true,
+      redirectResolved: true,
+      redirectTarget: { title: '目标' },
+    };
+    vi.mocked(callbacks.search).mockReturnValue([first, second]);
+    panel.refreshResults();
+    await nextTick();
     const link = root.querySelector<HTMLAnchorElement>('.redirect-target')!;
-    link.focus(); await nextTick();
-    vi.mocked(callbacks.search).mockReturnValue([{ ...second, title: '改名后别名' }, first]);
-    panel.invalidateResults(['title']); await vi.advanceTimersByTimeAsync(0);
+    link.focus();
+    await nextTick();
+    vi.mocked(callbacks.search).mockReturnValue([
+      { ...second, title: '改名后别名' },
+      first,
+    ]);
+    panel.invalidateResults(['title']);
+    await vi.advanceTimersByTimeAsync(0);
     expect(panel.state.selectedIndex).toBe(0);
     expect(root.activeElement).toBe(link);
     expect(root.querySelector('.redirect-target')).toBe(link);
     const button = root.querySelector<HTMLButtonElement>('.result-primary')!;
-    button.focus(); vi.mocked(callbacks.search).mockReturnValue([first]);
-    panel.invalidateResults(['title']); await vi.advanceTimersByTimeAsync(0);
+    button.focus();
+    vi.mocked(callbacks.search).mockReturnValue([first]);
+    panel.invalidateResults(['title']);
+    await vi.advanceTimersByTimeAsync(0);
     expect(panel.state.selectedIndex).toBe(0);
     expect(root.activeElement).toBe(input);
-    vi.mocked(callbacks.search).mockReturnValue([first, second]); panel.refreshResults(); await nextTick();
-    panel.actions.select(1); input.value = 'different'; panel.refreshResults();
+    vi.mocked(callbacks.search).mockReturnValue([first, second]);
+    panel.refreshResults();
+    await nextTick();
+    panel.actions.select(1);
+    input.value = 'different';
+    panel.refreshResults();
     expect(panel.state.selectedIndex).toBe(0);
     panel.destroy();
   });
 
   it('does not repair lost result focus after the user has focused another control', async () => {
     const { panel, root, callbacks } = await mount();
-    vi.mocked(callbacks.search).mockReturnValue([{ id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 }]);
-    panel.refreshResults(); await nextTick();
+    vi.mocked(callbacks.search).mockReturnValue([
+      { id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 },
+    ]);
+    panel.refreshResults();
+    await nextTick();
     root.querySelector<HTMLButtonElement>('.result-primary')!.focus();
-    vi.mocked(callbacks.search).mockReturnValue([]); panel.refreshResults();
+    vi.mocked(callbacks.search).mockReturnValue([]);
+    panel.refreshResults();
     const mode = root.querySelector<HTMLSelectElement>('.mode')!;
-    mode.focus(); await nextTick();
+    mode.focus();
+    await nextTick();
     expect(root.activeElement).toBe(mode);
     expect(panel.state.selectedIndex).toBe(-1);
     panel.destroy();
@@ -1835,12 +2328,22 @@ describe('SearchPanel result invalidation scheduling', () => {
 
   it('preserves Data selection by source and code when rows reorder', async () => {
     const { panel, callbacks } = await mount();
-    const first = { kind: 'data-code' as const, source: 'Data:A', code: 'same', chineseName: '甲', dataType: 'item', score: 1 };
+    const first = {
+      kind: 'data-code' as const,
+      source: 'Data:A',
+      code: 'same',
+      chineseName: '甲',
+      dataType: 'item',
+      score: 1,
+    };
     const second = { ...first, source: 'Data:B', chineseName: '乙' };
     vi.mocked(callbacks.searchCodes).mockReturnValue([first, second]);
-    panel.state.mode = 'data-code'; panel.actions.mode(); panel.actions.select(1);
+    panel.state.mode = 'data-code';
+    panel.actions.mode();
+    panel.actions.select(1);
     vi.mocked(callbacks.searchCodes).mockReturnValue([second, first]);
-    panel.invalidateResults(['data-code']); await vi.advanceTimersByTimeAsync(0);
+    panel.invalidateResults(['data-code']);
+    await vi.advanceTimersByTimeAsync(0);
     expect(panel.state.selectedIndex).toBe(0);
     expect(panel.state.results[0]).toBe(second);
     panel.destroy();

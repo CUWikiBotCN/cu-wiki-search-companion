@@ -6,7 +6,10 @@ import { insertAtEditorSelection, wikiLink } from './editor';
 import { LocalDataMaintenance } from './maintenance/local-data-maintenance';
 import { changeBroadcastEffect } from './runtime/change-broadcast';
 import { browserTaskScheduler } from './runtime/cooperative-task-scheduler';
-import { DataCodeRuntime, type DataCodeCommit } from './runtime/data-code-runtime';
+import {
+  DataCodeRuntime,
+  type DataCodeCommit,
+} from './runtime/data-code-runtime';
 import { FileSearchRuntime } from './runtime/file-search-runtime';
 import { InitialBackgroundRefreshCoordinator } from './runtime/initial-background-refresh';
 import {
@@ -64,7 +67,10 @@ declare const __CU_WIKI_BUILD_ID__: string;
 interface MediaWikiWindow extends Window {
   mw?: {
     config?: { get(key: string): unknown };
-    util?: { getUrl(title: string): string; escapeIdForLink?(fragment: string): string };
+    util?: {
+      getUrl(title: string): string;
+      escapeIdForLink?(fragment: string): string;
+    };
   };
   __CU_WIKI_SEARCH__?: DebugApi;
 }
@@ -132,7 +138,9 @@ let rejectStartup: ((error: unknown) => void) | undefined;
 if (shouldActivate()) {
   void start().catch((error: unknown) => {
     rejectStartup?.(error);
-    startupPanel?.setStartupFailure(errorMessage(error), () => pageWindow.location.reload());
+    startupPanel?.setStartupFailure(errorMessage(error), () =>
+      pageWindow.location.reload(),
+    );
     console.error('[CU Wiki Search] startup failed', error);
   });
 }
@@ -140,7 +148,12 @@ if (shouldActivate()) {
 function shouldActivate(): boolean {
   const configuredAction = pageWindow.mw?.config?.get('wgAction');
   const urlAction = new URL(location.href).searchParams.get('action');
-  return configuredAction === 'edit' || configuredAction === 'submit' || urlAction === 'edit' || urlAction === 'submit';
+  return (
+    configuredAction === 'edit' ||
+    configuredAction === 'submit' ||
+    urlAction === 'edit' ||
+    urlAction === 'submit'
+  );
 }
 
 async function start(): Promise<void> {
@@ -149,14 +162,15 @@ async function start(): Promise<void> {
   const indexCache = new VersionedSearchIndexCache(database);
   let incrementalChannel: BroadcastChannel | undefined;
   const maintenance = new LocalDataMaintenance(database, indexCache, {
-    broadcast: { postMessage: (message) => incrementalChannel?.postMessage(message) },
+    broadcast: {
+      postMessage: (message) => incrementalChannel?.postMessage(message),
+    },
   });
   let pageSearchRuntime: PageSearchRuntime | undefined;
   let fileSearchRuntime: FileSearchRuntime | undefined;
   let dataCodeRuntime: DataCodeRuntime | undefined;
-  let incrementalCoordinator: IncrementalSyncCoordinator | undefined;
   let runtimeLifecycle: RuntimeLifecycleCoordinator | undefined;
-  let mirrorSyncOrchestrator: MirrorSyncOrchestrator | undefined;
+  let mirrorSyncOrchestrator: MirrorSyncOrchestrator | undefined = undefined;
   let redirectFactsCommitted = false;
   let writesCompatible = true;
   let resolveInitialCacheReady!: () => void;
@@ -168,22 +182,26 @@ async function start(): Promise<void> {
   void initialCacheReady.catch(() => undefined);
   let resolvePageSearchRuntimeReady!: (runtime: PageSearchRuntime) => void;
   let rejectPageSearchRuntimeReady!: (error: unknown) => void;
-  const pageSearchRuntimeReady = new Promise<PageSearchRuntime>((resolve, reject) => {
-    resolvePageSearchRuntimeReady = resolve;
-    rejectPageSearchRuntimeReady = reject;
-  });
+  const pageSearchRuntimeReady = new Promise<PageSearchRuntime>(
+    (resolve, reject) => {
+      resolvePageSearchRuntimeReady = resolve;
+      rejectPageSearchRuntimeReady = reject;
+    },
+  );
   void pageSearchRuntimeReady.catch(() => undefined);
   rejectStartup = (error) => {
     rejectInitialCacheReady(error);
     rejectPageSearchRuntimeReady(error);
   };
   const contentModel = pageWindow.mw?.config?.get('wgPageContentModel');
-  const canInsertWikiText = typeof contentModel !== 'string' || contentModel === 'wikitext';
+  const canInsertWikiText =
+    typeof contentModel !== 'string' || contentModel === 'wikitext';
   const initialBackgroundRefresh = new InitialBackgroundRefreshCoordinator({
     canRun: () => writesCompatible,
     isVisible: () => document.visibilityState === 'visible',
     syncIncremental: () => requestIncrementalSync(),
-    syncData: async () => (await requestDataCodeSync(false)).status === 'complete',
+    syncData: async () =>
+      (await requestDataCodeSync(false)).status === 'complete',
   });
 
   const panel = new SearchPanel({
@@ -223,7 +241,10 @@ async function start(): Promise<void> {
         result.namespace,
       );
       const editor = insertAtEditorSelection(link);
-      panel.setStatus(`已插入 ${link} · ${editor === 'codemirror' ? 'CodeMirror' : '文本框'}`, 'success');
+      panel.setStatus(
+        `已插入 ${link} · ${editor === 'codemirror' ? 'CodeMirror' : '文本框'}`,
+        'success',
+      );
     },
     copy: (result, query) => {
       const link = wikiLink(
@@ -273,7 +294,10 @@ async function start(): Promise<void> {
     saveDataCodeRules: (source) => saveDataCodeRules(source),
     saveHighlightPreferences: (preferences) => {
       void highlightPreference.set(preferences).catch((error: unknown) => {
-        console.warn('[CU Wiki Search] failed to save highlight preferences', error);
+        console.warn(
+          '[CU Wiki Search] failed to save highlight preferences',
+          error,
+        );
       });
     },
     loadMaintenance: () => maintenance.inspect(),
@@ -330,8 +354,11 @@ async function start(): Promise<void> {
   await database.open();
   const versionState = await inspectVersionContract(database);
   writesCompatible = versionState.status === 'compatible';
-  const fallbackAnalyzer = new Analyzer(createBootstrapSegmenter(), 'bootstrap');
-  incrementalCoordinator = new IncrementalSyncCoordinator(database);
+  const fallbackAnalyzer = new Analyzer(
+    createBootstrapSegmenter(),
+    'bootstrap',
+  );
+  const incrementalCoordinator = new IncrementalSyncCoordinator(database);
   runtimeLifecycle = new RuntimeLifecycleCoordinator({
     applyStorageInvalidation: applyStorageInvalidation,
     writer: incrementalCoordinator,
@@ -348,40 +375,48 @@ async function start(): Promise<void> {
     synchronizeTitles: async (force, analyzer, onBatch) => {
       let coordinated;
       try {
-        coordinated = await incrementalCoordinator!.runExclusive(async () => {
+        coordinated = await incrementalCoordinator.runExclusive(async () => {
           const state = await syncTitles(database, api, analyzer, {
             force,
             onBatch,
-            onProgress: (progress) => panel.setStatus(progressMessage(progress)),
+            onProgress: (progress) =>
+              panel.setStatus(progressMessage(progress)),
           });
           await syncRedirectTargets(database, api, {
             refreshSince: state.generation,
-            onBatch: () => { redirectFactsCommitted = true; },
+            onBatch: () => {
+              redirectFactsCommitted = true;
+            },
           });
         });
       } finally {
         await refreshRedirectFacts();
       }
-      if (coordinated === 'lock-unavailable') throw writerLockUnavailableError();
+      if (coordinated === 'lock-unavailable')
+        throw writerLockUnavailableError();
     },
     synchronizeContent: async (force, scope = 'content') => {
       let progress: Awaited<ReturnType<typeof syncContent>> | undefined;
-      const coordinated = await runtimeLifecycle!.runWriter(`content:${scope}`, async () => {
-        progress = await syncContent(database, api, {
-          force,
-          scope,
-          onBatch: () => {
-            incrementalChannel?.postMessage({ type: 'content-committed' });
-          },
-          onProgress: (current) => {
-            panel.setStatus(
-              `同步${scope === 'css' ? 'CSS 源码' : '页面正文'} ${current.done}/${current.total}` +
-                (current.failed ? ` · ${current.failed} 失败` : ''),
-            );
-          },
-        });
-      });
-      if (coordinated === 'lock-unavailable') throw writerLockUnavailableError();
+      const coordinated = await runtimeLifecycle!.runWriter(
+        `content:${scope}`,
+        async () => {
+          progress = await syncContent(database, api, {
+            force,
+            scope,
+            onBatch: () => {
+              incrementalChannel?.postMessage({ type: 'content-committed' });
+            },
+            onProgress: (current) => {
+              panel.setStatus(
+                `同步${scope === 'css' ? 'CSS 源码' : '页面正文'} ${current.done}/${current.total}` +
+                  (current.failed ? ` · ${current.failed} 失败` : ''),
+              );
+            },
+          });
+        },
+      );
+      if (coordinated === 'lock-unavailable')
+        throw writerLockUnavailableError();
       if (!progress) throw new Error('正文同步未返回进度');
       return progress;
     },
@@ -399,15 +434,16 @@ async function start(): Promise<void> {
     analyzer: fallbackAnalyzer,
     waitUntilReady: () => initialCacheReady,
     canWrite: ensureWritesAllowed,
-    runExclusive: (task) => incrementalCoordinator!.runExclusive(task),
+    runExclusive: (task) => incrementalCoordinator.runExclusive(task),
     onStateChange: (state) => {
       debugApi.indexedFiles = state.indexedFiles;
     },
     onResultsChanged: () => panel.invalidateResults(['files']),
-    onRestored: (count) => panel.setStatus(
-      count ? `已恢复 ${count} 个文件资源` : '正在首次同步文件资源…',
-      count ? 'success' : 'normal',
-    ),
+    onRestored: (count) =>
+      panel.setStatus(
+        count ? `已恢复 ${count} 个文件资源` : '正在首次同步文件资源…',
+        count ? 'success' : 'normal',
+      ),
     onProgress: (progress) => {
       if (progress.status === 'running') {
         panel.setStatus(`同步文件资源 ${progress.pagesFetched} 页…`);
@@ -416,7 +452,10 @@ async function start(): Promise<void> {
     onCommitted: async (state) => {
       await refreshIndexesFromStorage({ files: true });
       incrementalChannel?.postMessage({ type: 'files-committed' });
-      panel.setStatus(`文件资源同步完成 · ${state.pagesFetched} 项可独立搜索`, 'success');
+      panel.setStatus(
+        `文件资源同步完成 · ${state.pagesFetched} 项可独立搜索`,
+        'success',
+      );
     },
   });
   dataCodeRuntime = new DataCodeRuntime({
@@ -428,10 +467,14 @@ async function start(): Promise<void> {
       debugApi.indexedDataCodes = state.indexedDataCodes;
     },
     onResultsChanged: () => panel.invalidateResults(['data-code']),
-    onRulesChange: (source) => panel.setDataCodeRules(source, DEFAULT_DATA_CODE_RULES),
+    onRulesChange: (source) =>
+      panel.setDataCodeRules(source, DEFAULT_DATA_CODE_RULES),
     onCommitted: applyDataCodeCommit,
     onInvalidRules: (origin, error) => {
-      console.warn(`[CU Wiki Search] ignored invalid ${origin} Data code rules`, error);
+      console.warn(
+        `[CU Wiki Search] ignored invalid ${origin} Data code rules`,
+        error,
+      );
     },
   });
   const [, recentChangeState, reconciliationState] = await Promise.all([
@@ -445,7 +488,8 @@ async function start(): Promise<void> {
         database.syncState.delete(LEGACY_DATA_EXTRACTION_RULES_KEY),
       );
     } catch (error) {
-      if (error instanceof FactWriteCompatibilityError) writesCompatible = false;
+      if (error instanceof FactWriteCompatibilityError)
+        writesCompatible = false;
       else throw error;
     }
   }
@@ -483,8 +527,11 @@ async function start(): Promise<void> {
       resolveRedirects: async () => {
         const state = await readReconciliationSyncState(database);
         await syncRedirectTargets(database, api, {
-          refreshSince: state?.status === 'complete' ? state.generation : undefined,
-          onBatch: () => { redirectFactsCommitted = true; },
+          refreshSince:
+            state?.status === 'complete' ? state.generation : undefined,
+          onBatch: () => {
+            redirectFactsCommitted = true;
+          },
         });
       },
     },
@@ -492,7 +539,8 @@ async function start(): Promise<void> {
       refreshStorage: () => refreshIndexesFromStorage(),
       refreshRedirects: () => refreshRedirectFacts(),
       refreshReconciliation: () => committedReconciliationRefresh.apply(),
-      refreshRecentChanges: (result) => committedRecentChangeRefresh.apply(result),
+      refreshRecentChanges: (result) =>
+        committedRecentChangeRefresh.apply(result),
     },
     derived: {
       refreshData: () => requestDataCodeSync(false),
@@ -518,7 +566,9 @@ async function start(): Promise<void> {
   rejectStartup = undefined;
 
   if (typeof BroadcastChannel === 'function') {
-    incrementalChannel = new BroadcastChannel('cu-wiki-local-search:changes:v1');
+    incrementalChannel = new BroadcastChannel(
+      'cu-wiki-local-search:changes:v1',
+    );
     incrementalChannel.addEventListener('message', (event) => {
       const effect = changeBroadcastEffect(event.data);
       if (effect.type === 'reset') {
@@ -526,8 +576,10 @@ async function start(): Promise<void> {
         location.reload();
         return;
       }
-      if (effect.dataRefresh === 'pending') initialBackgroundRefresh.markPending();
-      else if (effect.dataRefresh === 'complete') initialBackgroundRefresh.markComplete();
+      if (effect.dataRefresh === 'pending')
+        initialBackgroundRefresh.markPending();
+      else if (effect.dataRefresh === 'complete')
+        initialBackgroundRefresh.markComplete();
       if (document.visibilityState !== 'visible') {
         runtimeLifecycle?.deferStorageRefresh(effect.invalidation);
         return;
@@ -555,7 +607,10 @@ async function start(): Promise<void> {
         '本地索引刷新暂停，稍后将自动重试',
       );
     }
-    observeRuntimeTask(initialBackgroundRefresh.request(), 'visible Data refresh');
+    observeRuntimeTask(
+      initialBackgroundRefresh.request(),
+      'visible Data refresh',
+    );
     observeRuntimeTask(requestIncrementalSync(), 'visible incremental sync');
   };
   window.addEventListener('focus', requestVisibleIncrementalSync);
@@ -601,7 +656,9 @@ async function start(): Promise<void> {
     await dataCodeRuntime.save(source);
   }
 
-  async function requestDataCodeSync(force: boolean): Promise<SyncAttemptResult> {
+  async function requestDataCodeSync(
+    force: boolean,
+  ): Promise<SyncAttemptResult> {
     if (!ensureWritesAllowed()) {
       initialBackgroundRefresh.markPending();
       return { status: 'error', error: new Error('本地数据版本不兼容') };
@@ -687,7 +744,9 @@ async function start(): Promise<void> {
     );
   }
 
-  async function applyMirrorSyncOutcome(outcome: MirrorSyncOutcome): Promise<void> {
+  async function applyMirrorSyncOutcome(
+    outcome: MirrorSyncOutcome,
+  ): Promise<void> {
     const reconciliation = outcome.reconciliation;
     if (reconciliation) {
       debugApi.reconciliationStatus =
@@ -741,7 +800,10 @@ async function start(): Promise<void> {
       console.error(`[CU Wiki Search] mirror sync ${phase} failed`, error);
     }
     if (outcome.status === 'complete') {
-      if (outcome.request === 'manual' && reconciliation?.status === 'complete') {
+      if (
+        outcome.request === 'manual' &&
+        reconciliation?.status === 'complete'
+      ) {
         panel.setStatus(
           `全量对账完成 · ${reconciliation.pagesFetched} 页 · ${reconciliation.pagesChanged} 个页面变化` +
             (reconciliation.filesChanged ? ' · 文件资源已更新' : ''),
@@ -774,9 +836,12 @@ async function start(): Promise<void> {
       outcome.errors?.committedRefresh;
     if (cause instanceof Error) return cause;
     if (cause !== undefined) return new Error(String(cause));
-    if (outcome.status === 'login-required') return new Error('请先登录灰机账号');
+    if (outcome.status === 'login-required')
+      return new Error('请先登录灰机账号');
     if (outcome.status === 'lock-unavailable') {
-      return new Error('无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试');
+      return new Error(
+        '无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试',
+      );
     }
     if (outcome.status === 'no-baseline') {
       return new Error('尚无完整标题基线，请先重试标题同步');
@@ -799,14 +864,17 @@ async function start(): Promise<void> {
   async function applyStorageInvalidation(
     invalidation: StorageInvalidation,
   ): Promise<void> {
-    const incrementalState = invalidation.pages || invalidation.files
-      ? await readRecentChangeSyncState(database)
-      : undefined;
+    const incrementalState =
+      invalidation.pages || invalidation.files
+        ? await readRecentChangeSyncState(database)
+        : undefined;
     if (invalidation.pages) await pageSearchRuntime?.refresh();
     await fileSearchRuntime?.refresh(
-      incrementalState?.fileChangeSeq ?? 0, invalidation.files,
+      incrementalState?.fileChangeSeq ?? 0,
+      invalidation.files,
     );
-    if (incrementalState) debugApi.incrementalThrough = incrementalState.through;
+    if (incrementalState)
+      debugApi.incrementalThrough = incrementalState.through;
     if (invalidation.data) await dataCodeRuntime?.reloadFromStorage();
   }
 
@@ -815,7 +883,9 @@ async function start(): Promise<void> {
     return pageSearchRuntime?.synchronizeContent(force) ?? Promise.resolve();
   }
 
-  async function rebuildSearchIndexes(): Promise<MaintenanceActionFeedback | undefined> {
+  async function rebuildSearchIndexes(): Promise<
+    MaintenanceActionFeedback | undefined
+  > {
     const runtime = await pageSearchRuntimeReady;
     const warnings = await runtime.rebuildIndexes();
     if (warnings.length) {
@@ -851,7 +921,8 @@ async function start(): Promise<void> {
   }
 
   function assertWritesAllowed(): void {
-    if (!ensureWritesAllowed()) throw new Error('本地数据版本不兼容，后台写入已停止');
+    if (!ensureWritesAllowed())
+      throw new Error('本地数据版本不兼容，后台写入已停止');
   }
 
   async function runCoordinatedWriter(
@@ -863,7 +934,9 @@ async function start(): Promise<void> {
       ? await runtimeLifecycle.runWriter(key, task)
       : 'lock-unavailable';
     if (coordinated === 'lock-unavailable') {
-      throw new Error('无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试');
+      throw new Error(
+        '无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试',
+      );
     }
   }
 
@@ -873,16 +946,20 @@ async function start(): Promise<void> {
     userMessage?: string,
   ): void {
     void task.catch((error: unknown) => {
-      if (error instanceof FactWriteCompatibilityError) writesCompatible = false;
-      if (userMessage) panel.setStatus(`${userMessage}：${errorMessage(error)}`, 'error');
+      if (error instanceof FactWriteCompatibilityError)
+        writesCompatible = false;
+      if (userMessage)
+        panel.setStatus(`${userMessage}：${errorMessage(error)}`, 'error');
       console.error(`[CU Wiki Search] ${context} failed`, error);
     });
   }
 }
 
 function progressMessage(progress: TitleSyncProgress): string {
-  if (progress.status === 'failed') return `标题同步失败：${progress.error ?? '未知错误'}`;
-  if (progress.status === 'complete') return `标题同步完成 · ${progress.pagesFetched} 页`;
+  if (progress.status === 'failed')
+    return `标题同步失败：${progress.error ?? '未知错误'}`;
+  if (progress.status === 'complete')
+    return `标题同步完成 · ${progress.pagesFetched} 页`;
   return `同步标题 ${progress.pagesFetched} 页 · ${progress.namespaceName ?? '命名空间'} (${Math.min(progress.namespaceIndex + 1, progress.namespaceCount)}/${progress.namespaceCount})`;
 }
 

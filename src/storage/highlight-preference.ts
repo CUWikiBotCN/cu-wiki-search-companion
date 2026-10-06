@@ -26,7 +26,9 @@ export const highlightPreference: HighlightPreferenceStore = {
     if (typeof GM_getValue !== 'function') {
       return { ...DEFAULT_HIGHLIGHT_PREFERENCES };
     }
-    return parseHighlightPreferences(GM_getValue<unknown>(HIGHLIGHT_PREFERENCE_KEY));
+    return parseHighlightPreferences(
+      GM_getValue<unknown>(HIGHLIGHT_PREFERENCE_KEY),
+    );
   },
   async set(value: HighlightPreferences): Promise<void> {
     if (typeof GM_setValue === 'function') {
@@ -58,9 +60,11 @@ export function parseHighlightPreferences(raw: unknown): HighlightPreferences {
         ? record.contentEnabled
         : DEFAULT_HIGHLIGHT_PREFERENCES.contentEnabled,
     titleColor:
-      normalizeColor(record.titleColor) ?? DEFAULT_HIGHLIGHT_PREFERENCES.titleColor,
+      normalizeColor(record.titleColor) ??
+      DEFAULT_HIGHLIGHT_PREFERENCES.titleColor,
     contentColor:
-      normalizeColor(record.contentColor) ?? DEFAULT_HIGHLIGHT_PREFERENCES.contentColor,
+      normalizeColor(record.contentColor) ??
+      DEFAULT_HIGHLIGHT_PREFERENCES.contentColor,
   };
 }
 

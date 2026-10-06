@@ -42,7 +42,14 @@ describe('Lua module search', () => {
       expect.arrayContaining(['p.render_read_error', 'p.alias']),
     );
     expect(extracted.returnKeys).toEqual(
-      expect.arrayContaining(['ok', 'error-code', '1', 'nested', 'render_read_error', 'alias']),
+      expect.arrayContaining([
+        'ok',
+        'error-code',
+        '1',
+        'nested',
+        'render_read_error',
+        'alias',
+      ]),
     );
     expect(extracted.strings).toEqual(
       expect.arrayContaining([
@@ -153,7 +160,9 @@ describe('Lua module search', () => {
     );
     expect(luaIndex.search('普通说明')).toEqual([]);
     expect(contentIndex.search('malformed_record')).toEqual([]);
-    expect(contentIndex.search('普通说明')[0]?.title).toBe('模块:Base/查询工具/doc');
+    expect(contentIndex.search('普通说明')[0]?.title).toBe(
+      '模块:Base/查询工具/doc',
+    );
   });
 
   it('ranks an exact returned key above the same text used as an ordinary string', () => {
@@ -201,7 +210,12 @@ describe('Lua module search', () => {
   it('finds a single CJK character inside a multi-character Lua string', () => {
     const index = new LuaModuleIndex(analyzer);
     index.rebuild([
-      page(834, '模块:中文字符串', `return { label = '诊断字符串' }`, 'Scribunto'),
+      page(
+        834,
+        '模块:中文字符串',
+        `return { label = '诊断字符串' }`,
+        'Scribunto',
+      ),
     ]);
 
     expect(index.search('串')[0]?.id).toBe(834);
@@ -217,7 +231,12 @@ describe('Lua module search', () => {
 
     const rebuilding = index.rebuildAsync(oldPages, 1);
     index.update([
-      page(836, '模块:Second', `return { label = '并发最新符号' }`, 'Scribunto'),
+      page(
+        836,
+        '模块:Second',
+        `return { label = '并发最新符号' }`,
+        'Scribunto',
+      ),
     ]);
 
     await expect(rebuilding).resolves.toBeUndefined();
@@ -248,7 +267,9 @@ describe('Lua module search', () => {
     ).join(',')} }`;
     const index = new LuaModuleIndex(analyzer);
 
-    index.rebuild([page(832, '模块:Data/大型生成表', generatedSource, 'Scribunto')]);
+    index.rebuild([
+      page(832, '模块:Data/大型生成表', generatedSource, 'Scribunto'),
+    ]);
 
     expect(index.search('recipe.2999')[0]?.title).toBe('模块:Data/大型生成表');
   });
@@ -256,8 +277,13 @@ describe('Lua module search', () => {
   it('syncs Scribunto through the shared 50-page content queue while excluding CSS', async () => {
     const calls: number[][] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
-      const ids = (url.searchParams.get('pageids') ?? '').split('|').map(Number);
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
+      const ids = (url.searchParams.get('pageids') ?? '')
+        .split('|')
+        .map(Number);
       calls.push(ids);
       return json({
         query: {
@@ -269,7 +295,10 @@ describe('Lua module search', () => {
                 slots: {
                   main: {
                     contentmodel: id === 2 ? 'Scribunto' : 'wikitext',
-                    content: id === 2 ? 'local p = {}; function p.main() end; return p' : '正文',
+                    content:
+                      id === 2
+                        ? 'local p = {}; function p.main() end; return p'
+                        : '正文',
                   },
                 },
               },
@@ -285,7 +314,9 @@ describe('Lua module search', () => {
       page(2, '模块:About', '', 'Scribunto'),
       page(3, 'MediaWiki:Common.css', '', 'css'),
     ]);
-    await database.pages.toCollection().modify({ content: undefined, contentRevisionId: undefined });
+    await database.pages
+      .toCollection()
+      .modify({ content: undefined, contentRevisionId: undefined });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
     const progress = await syncContent(database, api, { requestIntervalMs: 0 });

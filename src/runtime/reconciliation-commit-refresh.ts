@@ -28,7 +28,9 @@ export class CommittedReconciliationRefresh {
   private broadcastBaselineInitialized = false;
   private lastBroadcastSequence = 0;
 
-  constructor(private readonly options: CommittedReconciliationRefreshOptions) {}
+  constructor(
+    private readonly options: CommittedReconciliationRefreshOptions,
+  ) {}
 
   async apply(): Promise<CommittedReconciliationRefreshResult | undefined> {
     const state = await this.options.readState();
@@ -48,7 +50,8 @@ export class CommittedReconciliationRefresh {
         this.lastBroadcastSequence = committedSequence;
       }
     }
-    const shouldRefresh = hasCommittedFacts && committedSequence > lastAppliedBefore;
+    const shouldRefresh =
+      hasCommittedFacts && committedSequence > lastAppliedBefore;
     const shouldBroadcast =
       hasCommittedFacts && committedSequence > this.lastBroadcastSequence;
     if (!shouldRefresh && !shouldBroadcast && !state.dataCodesInvalidated) {

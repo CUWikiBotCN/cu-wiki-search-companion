@@ -18,7 +18,10 @@ describe('full mirror reconciliation', () => {
   it('repairs a missing local page, closes a remote deletion, and repairs content jobs', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
@@ -64,7 +67,12 @@ describe('full mirror reconciliation', () => {
       }),
     ]);
     await database.jobs.bulkAdd([
-      { type: 'wikitext-content', pageId: 1, status: 'done', targetRevisionId: 10 },
+      {
+        type: 'wikitext-content',
+        pageId: 1,
+        status: 'done',
+        targetRevisionId: 10,
+      },
       {
         type: 'wikitext-content',
         pageId: 3,
@@ -72,7 +80,12 @@ describe('full mirror reconciliation', () => {
         targetRevisionId: 30,
         updatedAt: 123,
       },
-      { type: 'wikitext-content', pageId: 999, status: 'failed', targetRevisionId: 1 },
+      {
+        type: 'wikitext-content',
+        pageId: 999,
+        status: 'failed',
+        targetRevisionId: 1,
+      },
     ]);
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
@@ -117,7 +130,9 @@ describe('full mirror reconciliation', () => {
         updatedAt: 123,
       }),
     ]);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T06:00:05Z',
     });
     expect(
@@ -127,17 +142,24 @@ describe('full mirror reconciliation', () => {
           url.searchParams.get('maxlag') === '5',
       ),
     ).toBe(true);
-    const allPagesCall = calls.find((url) => url.searchParams.has('gapnamespace'));
+    const allPagesCall = calls.find((url) =>
+      url.searchParams.has('gapnamespace'),
+    );
     expect(allPagesCall?.searchParams.get('gaplimit')).toBe('500');
     expect(allPagesCall?.searchParams.get('prop')).toBe('info');
-    expect(calls.some((url) => url.searchParams.get('gapnamespace') === '6')).toBe(false);
+    expect(
+      calls.some((url) => url.searchParams.get('gapnamespace') === '6'),
+    ).toBe(false);
 
     await destroy(database);
   });
 
   it('stays idle inside 24 hours but reconciles an explicit long RecentChanges gap', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
           curtimestamp: '2026-08-31T06:00:05Z',
@@ -182,7 +204,10 @@ describe('full mirror reconciliation', () => {
     let failSecondBatch = true;
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
@@ -234,7 +259,9 @@ describe('full mirror reconciliation', () => {
       }),
     ).rejects.toThrow('Wiki API 网络请求失败（network-error）');
     expect(await database.pages.get(10)).toMatchObject({ title: '第一批页' });
-    expect((await database.syncState.get('reconciliation-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('reconciliation-sync'))?.value,
+    ).toMatchObject({
       status: 'failed',
       gapcontinue: '第二批',
       pagesFetched: 1,
@@ -247,8 +274,12 @@ describe('full mirror reconciliation', () => {
 
     expect(resumed).toMatchObject({ status: 'complete', pagesFetched: 2 });
     expect(await database.pages.get(11)).toMatchObject({ title: '第二批页' });
-    expect(calls.filter((url) => url.searchParams.get('meta') === 'siteinfo')).toHaveLength(1);
-    expect(calls.filter((url) => !url.searchParams.has('gapcontinue'))).toHaveLength(2);
+    expect(
+      calls.filter((url) => url.searchParams.get('meta') === 'siteinfo'),
+    ).toHaveLength(1);
+    expect(
+      calls.filter((url) => !url.searchParams.has('gapcontinue')),
+    ).toHaveLength(2);
 
     await destroy(database);
   });
@@ -256,7 +287,10 @@ describe('full mirror reconciliation', () => {
   it('retries a reconciliation batch whose transaction aborts during commit', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
@@ -301,7 +335,9 @@ describe('full mirror reconciliation', () => {
       revisionId: 1,
       deleted: false,
     });
-    expect((await database.syncState.get('reconciliation-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('reconciliation-sync'))?.value,
+    ).toMatchObject({
       status: 'failed',
       namespaceIndex: 0,
       pagesFetched: 0,
@@ -324,7 +360,9 @@ describe('full mirror reconciliation', () => {
     });
     expect(
       calls.filter(
-        (url) => url.searchParams.has('gapnamespace') && !url.searchParams.has('gapcontinue'),
+        (url) =>
+          url.searchParams.has('gapnamespace') &&
+          !url.searchParams.has('gapcontinue'),
       ),
     ).toHaveLength(2);
 
@@ -371,7 +409,8 @@ describe('full mirror reconciliation', () => {
     const interruptedApi = new WikiApi({
       retries: 0,
       fetcher: vi.fn(async (input: RequestInfo | URL) => {
-        const parameters = new URL(String(input), 'https://example.test').searchParams;
+        const parameters = new URL(String(input), 'https://example.test')
+          .searchParams;
         if (parameters.get('meta') === 'siteinfo') {
           return json({
             curtimestamp: '2026-08-31T06:00:05Z',
@@ -389,7 +428,13 @@ describe('full mirror reconciliation', () => {
           return json({
             query: {
               pages: [
-                { pageid: 1, ns: 0, title: '主页', lastrevid: 10, contentmodel: 'wikitext' },
+                {
+                  pageid: 1,
+                  ns: 0,
+                  title: '主页',
+                  lastrevid: 10,
+                  contentmodel: 'wikitext',
+                },
               ],
             },
           });
@@ -465,7 +510,9 @@ describe('full mirror reconciliation', () => {
 
     const resumedApi = new WikiApi({
       retries: 0,
-      fetcher: vi.fn(async () => json({ query: { pages: [] } })) as typeof fetch,
+      fetcher: vi.fn(async () =>
+        json({ query: { pages: [] } }),
+      ) as typeof fetch,
     });
     await reconcileWikiMirror(database, resumedApi, analyzer, {
       now: () => now + 2_000,
@@ -552,11 +599,16 @@ describe('full mirror reconciliation', () => {
       requestIntervalMs: 0,
     });
 
-    expect(requests.some((request) => request.searchParams.get('meta') === 'siteinfo')).toBe(
-      true,
-    );
     expect(
-      requests.some((request) => request.searchParams.get('gapcontinue') === 'legacy-second-page'),
+      requests.some(
+        (request) => request.searchParams.get('meta') === 'siteinfo',
+      ),
+    ).toBe(true);
+    expect(
+      requests.some(
+        (request) =>
+          request.searchParams.get('gapcontinue') === 'legacy-second-page',
+      ),
     ).toBe(false);
     expect(await database.pages.orderBy('id').toArray()).toEqual([
       expect.objectContaining({ id: 1, deleted: false }),
@@ -571,38 +623,46 @@ describe('full mirror reconciliation', () => {
       page({ id: 1, title: '扫描期间被删除', revisionId: 10, localSeq: 2 }),
     ]);
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
           curtimestamp: '2026-08-31T06:00:05Z',
           query: { namespaces: { 0: { id: 0, name: '' } } },
         });
       }
-      await database.transaction('rw', database.pages, database.syncState, async () => {
-        const deleted = await database.pages.get(1);
-        if (!deleted) throw new Error('测试基线缺页');
-        await database.pages.bulkPut([
-          {
-            ...deleted,
-            deleted: true,
-            content: undefined,
-            contentRevisionId: undefined,
-            localSeq: 3,
-          },
-          page({ id: 9, title: '扫描期间新建', revisionId: 90, localSeq: 4 }),
-        ]);
-        await database.syncState.bulkPut([
-          { key: 'local-sequence', value: 4 },
-          {
-            key: 'recent-changes-sync',
-            value: {
-              through: '2026-08-31T06:00:10Z',
-              completedAt: now + 10_000,
-              recentChanges: [],
+      await database.transaction(
+        'rw',
+        database.pages,
+        database.syncState,
+        async () => {
+          const deleted = await database.pages.get(1);
+          if (!deleted) throw new Error('测试基线缺页');
+          await database.pages.bulkPut([
+            {
+              ...deleted,
+              deleted: true,
+              content: undefined,
+              contentRevisionId: undefined,
+              localSeq: 3,
             },
-          },
-        ]);
-      });
+            page({ id: 9, title: '扫描期间新建', revisionId: 90, localSeq: 4 }),
+          ]);
+          await database.syncState.bulkPut([
+            { key: 'local-sequence', value: 4 },
+            {
+              key: 'recent-changes-sync',
+              value: {
+                through: '2026-08-31T06:00:10Z',
+                completedAt: now + 10_000,
+                recentChanges: [],
+              },
+            },
+          ]);
+        },
+      );
       return json({
         query: {
           pages: [
@@ -624,9 +684,17 @@ describe('full mirror reconciliation', () => {
       requestIntervalMs: 0,
     });
 
-    expect(await database.pages.get(1)).toMatchObject({ deleted: true, localSeq: 3 });
-    expect(await database.pages.get(9)).toMatchObject({ deleted: false, localSeq: 4 });
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(await database.pages.get(1)).toMatchObject({
+      deleted: true,
+      localSeq: 3,
+    });
+    expect(await database.pages.get(9)).toMatchObject({
+      deleted: false,
+      localSeq: 4,
+    });
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       through: '2026-08-31T06:00:10Z',
     });
 
@@ -669,7 +737,10 @@ describe('full mirror reconciliation', () => {
     });
     const api = new WikiApi({
       fetcher: vi.fn(async (input: RequestInfo | URL) => {
-        const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+        const url = new URL(
+          String(input),
+          'https://casualtiesunknown.huijiwiki.com',
+        );
         if (url.searchParams.get('meta') === 'siteinfo') {
           return json({
             curtimestamp: '2026-08-31T06:00:05Z',
@@ -747,7 +818,10 @@ describe('full mirror reconciliation', () => {
       } satisfies TitleSyncState,
     });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
           curtimestamp: '2026-08-31T06:00:05Z',
@@ -784,7 +858,9 @@ describe('full mirror reconciliation', () => {
     });
 
     expect(result).toMatchObject({ status: 'complete', filesChanged: true });
-    expect(await database.fileResources.get(6001)).toMatchObject({ deleted: true });
+    expect(await database.fileResources.get(6001)).toMatchObject({
+      deleted: true,
+    });
     const restoredFile = await database.fileResources.get(6002);
     expect(restoredFile).toMatchObject({
       deleted: false,
@@ -792,7 +868,9 @@ describe('full mirror reconciliation', () => {
       seenInFileSync: 1,
     });
     expect(restoredFile).not.toHaveProperty('seenInTitleSync');
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       fileChangeSeq: expect.any(Number),
     });
 
@@ -824,7 +902,10 @@ describe('full mirror reconciliation', () => {
       value: { syncedAt: now, count: 655, indexVersion: 2 },
     });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (url.searchParams.get('meta') === 'siteinfo') {
         return json({
           curtimestamp: '2026-08-31T06:00:05Z',
@@ -862,11 +943,15 @@ describe('full mirror reconciliation', () => {
       content: undefined,
       contentRevisionId: undefined,
     });
-    expect((await database.jobs.where('pageId').equals(350).first())).toMatchObject({
+    expect(
+      await database.jobs.where('pageId').equals(350).first(),
+    ).toMatchObject({
       status: 'pending',
       targetRevisionId: 41,
     });
-    expect((await database.syncState.get('data-code-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('data-code-sync'))?.value,
+    ).toMatchObject({
       syncedAt: 0,
     });
 
@@ -894,7 +979,8 @@ describe('full mirror reconciliation', () => {
     const api = new WikiApi({
       retries: 0,
       fetcher: vi.fn(async (input: RequestInfo | URL) => {
-        const parameters = new URL(String(input), 'https://example.test').searchParams;
+        const parameters = new URL(String(input), 'https://example.test')
+          .searchParams;
         if (parameters.get('meta') === 'siteinfo') {
           return json({
             curtimestamp: '2026-08-31T06:00:05Z',
@@ -939,11 +1025,15 @@ describe('full mirror reconciliation', () => {
       title: '移出 Data 后页面',
       deleted: false,
     });
-    expect((await database.syncState.get('data-code-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('data-code-sync'))?.value,
+    ).toMatchObject({
       syncedAt: 0,
       count: 1,
     });
-    expect((await database.syncState.get('reconciliation-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('reconciliation-sync'))?.value,
+    ).toMatchObject({
       status: 'failed',
       dataCodesInvalidated: true,
       throughLocalSeq: 3,
@@ -973,7 +1063,8 @@ describe('full mirror reconciliation', () => {
     const api = new WikiApi({
       retries: 0,
       fetcher: vi.fn(async (input: RequestInfo | URL) => {
-        const parameters = new URL(String(input), 'https://example.test').searchParams;
+        const parameters = new URL(String(input), 'https://example.test')
+          .searchParams;
         if (parameters.get('meta') === 'siteinfo') {
           return json({
             curtimestamp: '2026-08-31T06:00:05Z',
@@ -1018,7 +1109,9 @@ describe('full mirror reconciliation', () => {
       dataCodesInvalidated: true,
       throughLocalSeq: 3,
     });
-    expect((await database.syncState.get('reconciliation-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('reconciliation-sync'))?.value,
+    ).toMatchObject({
       status: 'running',
       pagesFetched: 1,
       pagesChanged: 1,

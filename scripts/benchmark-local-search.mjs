@@ -23,42 +23,54 @@ const { values } = parseArgs({
 const root = resolve(values.root);
 
 if (values.help) {
-  process.stdout.write([
-    'Usage: node scripts/benchmark-local-search.mjs [options]',
-    '',
-    '  --root PATH       Load production source/config from another checkout.',
-    '  --output FILE     Write the JSON report to this file; otherwise use stdout.',
-    '  --suite NAMES     search, storage, bundle, or all (default: search,storage).',
-    '  --smoke           Tiny correctness run; its timings are not performance evidence.',
-    '  --help, -h        Show this help.',
-    '',
-    'Normal search runs: 3 rounds, 5 warmups, 30 samples per hot query/stage.',
-    'Cold queries: one first query with an empty cache per case/round (n=1).',
-    'Import/build time is outside query timing; call counters run separately.',
-    'Storage uses fake-indexeddb; bundle uses production Vite config/write:false.',
-    'This measures Node query/serialization work, not browser latency or heap.',
-    '',
-  ].join('\n'));
+  process.stdout.write(
+    [
+      'Usage: node scripts/benchmark-local-search.mjs [options]',
+      '',
+      '  --root PATH       Load production source/config from another checkout.',
+      '  --output FILE     Write the JSON report to this file; otherwise use stdout.',
+      '  --suite NAMES     search, storage, bundle, or all (default: search,storage).',
+      '  --smoke           Tiny correctness run; its timings are not performance evidence.',
+      '  --help, -h        Show this help.',
+      '',
+      'Normal search runs: 3 rounds, 5 warmups, 30 samples per hot query/stage.',
+      'Cold queries: one first query with an empty cache per case/round (n=1).',
+      'Import/build time is outside query timing; call counters run separately.',
+      'Storage uses fake-indexeddb; bundle uses production Vite config/write:false.',
+      'This measures Node query/serialization work, not browser latency or heap.',
+      '',
+    ].join('\n'),
+  );
 } else {
   try {
-    const requestedSuites = values.suite === 'all'
-      ? ['search', 'storage', 'bundle']
-      : values.suite.split(',');
-    assert.ok(requestedSuites.length && requestedSuites.every(
-      (suite) => ['search', 'storage', 'bundle'].includes(suite),
-    ), 'Unknown suite; use search,storage,bundle or all');
+    const requestedSuites =
+      values.suite === 'all'
+        ? ['search', 'storage', 'bundle']
+        : values.suite.split(',');
+    assert.ok(
+      requestedSuites.length &&
+        requestedSuites.every((suite) =>
+          ['search', 'storage', 'bundle'].includes(suite),
+        ),
+      'Unknown suite; use search,storage,bundle or all',
+    );
     const suites = new Set(requestedSuites);
-    const packageInfo = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+    const packageInfo = JSON.parse(
+      await readFile(resolve(root, 'package.json'), 'utf8'),
+    );
     const protocol = {
       smoke: values.smoke,
       rounds: values.smoke ? 1 : 3,
       warmups: values.smoke ? 1 : 5,
       hotSamples: values.smoke ? 1 : 30,
       coldSamplesPerCaseAndRound: 1,
-      coldPreparation: 'Content uses snapshot import; titles use a fresh rebuild. Preparation is not timed.',
+      coldPreparation:
+        'Content uses snapshot import; titles use a fresh rebuild. Preparation is not timed.',
       percentile: 'Sorted samples: p50 at floor(n*0.5), p95 at ceil(n*0.95)-1.',
-      resultHash: 'SHA-256 of the full JSON result (ids, order, scores, snippets, metadata, highlights).',
-      callCounts: 'Separate untimed cold/warm queries; instrumentation is absent from timed samples.',
+      resultHash:
+        'SHA-256 of the full JSON result (ids, order, scores, snippets, metadata, highlights).',
+      callCounts:
+        'Separate untimed cold/warm queries; instrumentation is absent from timed samples.',
     };
     const report = {
       environment: {
@@ -67,7 +79,9 @@ if (values.help) {
         architecture: process.arch,
         cpu: cpus()[0]?.model,
         sourceRevision: git(['rev-parse', 'HEAD']),
-        trackedSourceDirty: Boolean(git(['status', '--porcelain', '--untracked-files=no'])),
+        trackedSourceDirty: Boolean(
+          git(['status', '--porcelain', '--untracked-files=no']),
+        ),
         sourceVersion: packageInfo.version,
         dependencies: packageInfo.dependencies,
         devDependencies: packageInfo.devDependencies,
@@ -93,13 +107,16 @@ if (values.help) {
         server: { middlewareMode: true, hmr: false, watch: null },
       });
       try {
-        if (suites.has('search')) report.search = await searchSuite(server, protocol);
-        if (suites.has('storage')) report.storage = await storageSuite(server, protocol);
+        if (suites.has('search'))
+          report.search = await searchSuite(server, protocol);
+        if (suites.has('storage'))
+          report.storage = await storageSuite(server, protocol);
       } finally {
         await server.close();
       }
     }
-    if (suites.has('bundle')) report.bundle = await bundleSuite(build, loadConfigFromFile);
+    if (suites.has('bundle'))
+      report.bundle = await bundleSuite(build, loadConfigFromFile);
     const json = JSON.stringify(report, null, 2) + '\n';
     if (values.output) await writeFile(resolve(values.output), json);
     else process.stdout.write(json);
@@ -115,7 +132,8 @@ if (values.help) {
 function git(args) {
   try {
     return execFileSync('git', ['-C', root, ...args], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
     return null;
@@ -162,9 +180,13 @@ function countAnalyzerCalls(analyzer, fn, candidateTitles = new Set()) {
   const normalize = analyzer.normalize;
   const compact = analyzer.compact;
   const counts = {
-    normalizeCalls: 0, normalizeChars: 0,
-    longNormalizeCalls: 0, longNormalizeChars: 0,
-    candidateNormalizeCalls: 0, compactCalls: 0, candidateCompactCalls: 0,
+    normalizeCalls: 0,
+    normalizeChars: 0,
+    longNormalizeCalls: 0,
+    longNormalizeChars: 0,
+    candidateNormalizeCalls: 0,
+    compactCalls: 0,
+    candidateCompactCalls: 0,
   };
   analyzer.normalize = function (text) {
     counts.normalizeCalls += 1;
@@ -183,7 +205,11 @@ function countAnalyzerCalls(analyzer, fn, candidateTitles = new Set()) {
   };
   try {
     const results = fn();
-    return { ...counts, results: results.length, resultHash: resultHash(results) };
+    return {
+      ...counts,
+      results: results.length,
+      resultHash: resultHash(results),
+    };
   } finally {
     analyzer.normalize = normalize;
     analyzer.compact = compact;
@@ -192,19 +218,32 @@ function countAnalyzerCalls(analyzer, fn, candidateTitles = new Set()) {
 
 function page(analyzer, id, title, content) {
   return {
-    id, title, normalizedTitle: analyzer.normalize(title),
-    namespace: 0, namespaceName: '', localSeq: id, isRedirect: false,
-    contentModel: 'wikitext', content, revisionId: 1, contentRevisionId: 1,
+    id,
+    title,
+    normalizedTitle: analyzer.normalize(title),
+    namespace: 0,
+    namespaceName: '',
+    localSeq: id,
+    isRedirect: false,
+    contentModel: 'wikitext',
+    content,
+    revisionId: 1,
+    contentRevisionId: 1,
   };
 }
 
 async function searchSuite(server, protocol) {
   const { cut, cut_for_search } = await import('jieba-wasm/node');
   const { Analyzer } = await server.ssrLoadModule('/src/analyzer/analyzer.ts');
-  const { ContentIndex } = await server.ssrLoadModule('/src/search/content-index.ts');
-  const { TitleIndex, LinearTitleIndex } = await server.ssrLoadModule('/src/search/title-index.ts');
+  const { ContentIndex } = await server.ssrLoadModule(
+    '/src/search/content-index.ts',
+  );
+  const { TitleIndex, LinearTitleIndex } = await server.ssrLoadModule(
+    '/src/search/title-index.ts',
+  );
   const analyzer = new Analyzer({ cut, cutForSearch: cut_for_search }, 'jieba');
-  const filler = '這是一段用於評估搜尋效能的測試文字，包含藥物、治療與裝備資訊。';
+  const filler =
+    '這是一段用於評估搜尋效能的測試文字，包含藥物、治療與裝備資訊。';
   const queries = [
     { category: 'direct-english', query: 'sleepQuality' },
     { category: 'simplified-fallback', query: '恢复健康' },
@@ -217,14 +256,27 @@ async function searchSuite(server, protocol) {
   ];
   const results = { content: [], titles: [], snapshots: [] };
   for (let round = 1; round <= protocol.rounds; round += 1) {
-    for (const largeCount of (protocol.smoke ? [1] : [1, 5, 20])) {
-      const pages = Array.from({ length: protocol.smoke ? 20 : 1_000 }, (_, offset) =>
-        page(analyzer, offset + 1, '測試條目' + (offset + 1),
-          filler.repeat(10) + ' ordinaryRecord' + offset));
+    for (const largeCount of protocol.smoke ? [1] : [1, 5, 20]) {
+      const pages = Array.from(
+        { length: protocol.smoke ? 20 : 1_000 },
+        (_, offset) =>
+          page(
+            analyzer,
+            offset + 1,
+            '測試條目' + (offset + 1),
+            filler.repeat(10) + ' ordinaryRecord' + offset,
+          ),
+      );
       for (let offset = 0; offset < largeCount; offset += 1) {
-        pages.push(page(analyzer, 1_001 + offset, '長篇資料' + offset,
-          filler.repeat(protocol.smoke ? 10 : 3_600) +
-          ' sleepQuality 高品質睡眠可以恢復健康。'));
+        pages.push(
+          page(
+            analyzer,
+            1_001 + offset,
+            '長篇資料' + offset,
+            filler.repeat(protocol.smoke ? 10 : 3_600) +
+              ' sleepQuality 高品質睡眠可以恢復健康。',
+          ),
+        );
       }
       const index = new ContentIndex(analyzer);
       const started = performance.now();
@@ -232,30 +284,54 @@ async function searchSuite(server, protocol) {
       const buildMs = performance.now() - started;
       const snapshot = index.exportSnapshot();
       const dataset = {
-        round, largeCount, totalPages: pages.length,
+        round,
+        largeCount,
+        totalPages: pages.length,
         longPageChars: pages.at(-1).content.length,
         corpusHash: resultHash(pages),
       };
       for (const { category, query } of queries) {
         await index.importSnapshot(snapshot);
         const cold = timedQuery(() => index.search(query));
-        assert.equal(cold.result.length, largeCount, 'Unexpected synthetic content result count');
+        assert.equal(
+          cold.result.length,
+          largeCount,
+          'Unexpected synthetic content result count',
+        );
         const hot = measure(() => index.search(query), protocol);
-        assert.deepEqual(hot.lastResult, cold.result, 'Cold/hot content result mismatch');
+        assert.deepEqual(
+          hot.lastResult,
+          cold.result,
+          'Cold/hot content result mismatch',
+        );
         // Restore again so call counts observe the first fallback, not a cache hit.
         await index.importSnapshot(snapshot);
-        const coldCalls = countAnalyzerCalls(analyzer, () => index.search(query));
-        const warmCalls = countAnalyzerCalls(analyzer, () => index.search(query));
+        const coldCalls = countAnalyzerCalls(analyzer, () =>
+          index.search(query),
+        );
+        const warmCalls = countAnalyzerCalls(analyzer, () =>
+          index.search(query),
+        );
         const signature = resultHash(cold.result);
         assert.equal(coldCalls.resultHash, signature);
         assert.equal(warmCalls.resultHash, signature);
         results.content.push({
-          ...dataset, category, query, buildMs, results: cold.result.length,
-          resultHash: signature, cold: { n: 1, ms: cold.ms },
-          hot: hot.timing, coldCalls, warmCalls,
+          ...dataset,
+          category,
+          query,
+          buildMs,
+          results: cold.result.length,
+          resultHash: signature,
+          cold: { n: 1, ms: cold.ms },
+          hot: hot.timing,
+          coldCalls,
+          warmCalls,
         });
       }
-      const exported = measure(() => JSON.stringify(index.exportSnapshot()), protocol);
+      const exported = measure(
+        () => JSON.stringify(index.exportSnapshot()),
+        protocol,
+      );
       const json = exported.lastResult;
       const encoder = new TextEncoder();
       const encoded = measure(() => encoder.encode(json), protocol);
@@ -263,47 +339,83 @@ async function searchSuite(server, protocol) {
       assert.equal(encoded.lastResult.byteLength, Buffer.byteLength(json));
       assert.equal(parsed.lastResult.miniSearch.documentCount, pages.length);
       results.snapshots.push({
-        ...dataset, payloadBytes: encoded.lastResult.byteLength,
+        ...dataset,
+        payloadBytes: encoded.lastResult.byteLength,
         payloadHash: sha256(json),
-        exportAndStringify: exported.timing, encode: encoded.timing, parse: parsed.timing,
+        exportAndStringify: exported.timing,
+        encode: encoded.timing,
+        parse: parsed.timing,
       });
     }
-    const titles = Array.from({ length: protocol.smoke ? 20 : 2_000 }, (_, offset) =>
-      page(analyzer, offset + 1, '治療裝備資料' + (offset + 1), ''));
+    const titles = Array.from(
+      { length: protocol.smoke ? 20 : 2_000 },
+      (_, offset) =>
+        page(analyzer, offset + 1, '治療裝備資料' + (offset + 1), ''),
+    );
     const candidateTitles = new Set(titles.map(({ title }) => title));
     const primary = new TitleIndex(analyzer);
     primary.rebuild(titles);
     const snapshot = primary.exportSnapshot();
     const cold = timedQuery(() => primary.search('资料'));
     const hot = measure(() => primary.search('资料'), protocol);
-    assert.deepEqual(hot.lastResult, cold.result, 'Cold/hot title result mismatch');
+    assert.deepEqual(
+      hot.lastResult,
+      cold.result,
+      'Cold/hot title result mismatch',
+    );
     await primary.importSnapshot(snapshot);
-    const coldCalls = countAnalyzerCalls(analyzer, () => primary.search('资料'), candidateTitles);
-    const warmCalls = countAnalyzerCalls(analyzer, () => primary.search('资料'), candidateTitles);
+    const coldCalls = countAnalyzerCalls(
+      analyzer,
+      () => primary.search('资料'),
+      candidateTitles,
+    );
+    const warmCalls = countAnalyzerCalls(
+      analyzer,
+      () => primary.search('资料'),
+      candidateTitles,
+    );
     assert.equal(coldCalls.resultHash, resultHash(cold.result));
     assert.equal(warmCalls.resultHash, resultHash(cold.result));
     const linear = new LinearTitleIndex(analyzer, titles);
     const fallback = measure(() => linear.search('资料'), protocol);
     results.titles.push({
-      round, pages: titles.length, corpusHash: resultHash(titles), query: '资料',
-      results: cold.result.length, resultHash: resultHash(cold.result),
-      cold: { n: 1, ms: cold.ms }, hot: hot.timing, coldCalls, warmCalls,
-      linear: { ...fallback.timing, resultHash: resultHash(fallback.lastResult) },
+      round,
+      pages: titles.length,
+      corpusHash: resultHash(titles),
+      query: '资料',
+      results: cold.result.length,
+      resultHash: resultHash(cold.result),
+      cold: { n: 1, ms: cold.ms },
+      hot: hot.timing,
+      coldCalls,
+      warmCalls,
+      linear: {
+        ...fallback.timing,
+        resultHash: resultHash(fallback.lastResult),
+      },
     });
   }
   return results;
 }
 
 async function storageSuite(server, protocol) {
-  const { WikiSearchDatabase } = await server.ssrLoadModule('/src/storage/database.ts');
-  const { syncContent, prepareContentJobs } = await server.ssrLoadModule('/src/sync/content-sync.ts');
-  const { VersionedSearchIndexCache } =
-    await server.ssrLoadModule('/src/search/versioned-search-index-cache.ts');
-  const { Analyzer, createBootstrapSegmenter } =
-    await server.ssrLoadModule('/src/analyzer/analyzer.ts');
+  const { WikiSearchDatabase } = await server.ssrLoadModule(
+    '/src/storage/database.ts',
+  );
+  const { syncContent, prepareContentJobs } = await server.ssrLoadModule(
+    '/src/sync/content-sync.ts',
+  );
+  const { VersionedSearchIndexCache } = await server.ssrLoadModule(
+    '/src/search/versioned-search-index-cache.ts',
+  );
+  const { Analyzer, createBootstrapSegmenter } = await server.ssrLoadModule(
+    '/src/analyzer/analyzer.ts',
+  );
   const rounds = [];
   for (let round = 1; round <= protocol.rounds; round += 1) {
-    const database = new WikiSearchDatabase('offline-search-benchmark-' + crypto.randomUUID());
+    const database = new WikiSearchDatabase(
+      'offline-search-benchmark-' + crypto.randomUUID(),
+    );
     const analyzer = new Analyzer(createBootstrapSegmenter(), 'bootstrap');
     const pageCount = 100;
     const body = '正文'.repeat(2_048);
@@ -311,7 +423,8 @@ async function storageSuite(server, protocol) {
     try {
       const pages = Array.from({ length: pageCount }, (_, offset) => ({
         ...page(analyzer, offset + 1, '条目' + offset, body),
-        namespaceName: '主', deleted: false,
+        namespaceName: '主',
+        deleted: false,
       }));
       await database.pages.bulkPut(pages);
       await database.syncState.put({ key: 'local-sequence', value: pageCount });
@@ -327,22 +440,35 @@ async function storageSuite(server, protocol) {
           callback(row, cursor);
         });
       };
-      const progress = await syncContent(database, {
-        query: async () => {
-          networkCalls += 1;
-          throw new Error('Unexpected request in fully cached offline content sync');
+      const progress = await syncContent(
+        database,
+        {
+          query: async () => {
+            networkCalls += 1;
+            throw new Error(
+              'Unexpected request in fully cached offline content sync',
+            );
+          },
         },
-      }, { requestIntervalMs: 0 });
+        { requestIntervalMs: 0 },
+      );
       database.pages.each = originalEach;
       assert.equal(networkCalls, 0);
       assert.equal(pageRows, pagePasses * pageCount);
-      assert.deepEqual(progress, { total: pageCount, done: pageCount, pending: 0, failed: 0 });
+      assert.deepEqual(progress, {
+        total: pageCount,
+        done: pageCount,
+        pending: 0,
+        failed: 0,
+      });
       cache = new VersionedSearchIndexCache(database);
       const handle = await cache.restoreOrRebuild('title', analyzer);
       assert.equal((await cache.publish(handle)).status, 'published');
       let snapshotGets = 0;
       let returnedJsonChars = 0;
-      const originalGet = database.indexSnapshots.get.bind(database.indexSnapshots);
+      const originalGet = database.indexSnapshots.get.bind(
+        database.indexSnapshots,
+      );
       database.indexSnapshots.get = async (key) => {
         snapshotGets += 1;
         const record = await originalGet(key);
@@ -362,10 +488,15 @@ async function storageSuite(server, protocol) {
         return originalUpdate(rows, ...args);
       };
       await database.pages.put({
-        ...pages[0], title: '改名条目', normalizedTitle: analyzer.normalize('改名条目'),
+        ...pages[0],
+        title: '改名条目',
+        normalizedTitle: analyzer.normalize('改名条目'),
         localSeq: pageCount + 1,
       });
-      await database.syncState.put({ key: 'local-sequence', value: pageCount + 1 });
+      await database.syncState.put({
+        key: 'local-sequence',
+        value: pageCount + 1,
+      });
       const replayed = await cache.refresh(handle);
       assert.equal(replayed, 1);
       assert.equal(appliedRows, 1);
@@ -373,21 +504,32 @@ async function storageSuite(server, protocol) {
       const titleReplay = { replayed, appliedRows, rowsWithContent };
       await database.fileResources.put({
         ...page(analyzer, 50_000, '文件:offline.png', ''),
-        namespace: 6, namespaceName: '文件', localSeq: pageCount + 2,
+        namespace: 6,
+        namespaceName: '文件',
+        localSeq: pageCount + 2,
       });
-      await database.syncState.put({ key: 'local-sequence', value: pageCount + 2 });
+      await database.syncState.put({
+        key: 'local-sequence',
+        value: pageCount + 2,
+      });
       const fileOnlyReplay = await cache.refresh(handle);
       assert.equal(fileOnlyReplay, 0);
       assert.equal(handle.throughLocalSeq, pageCount + 2);
       assert.equal(handle.index.size, pageCount);
       rounds.push({
-        round, database: 'fake-indexeddb (disposable memory only)',
-        dataset: { pages: pageCount, bodyCharsPerPage: body.length, corpusHash: resultHash(pages) },
+        round,
+        database: 'fake-indexeddb (disposable memory only)',
+        dataset: {
+          pages: pageCount,
+          bodyCharsPerPage: body.length,
+          corpusHash: resultHash(pages),
+        },
         noOpContentSync: { pagePasses, pageRows, networkCalls, progress },
         noOpPublish: { snapshotGets, returnedJsonChars, publication },
         titleReplay,
         fileOnlyReplay: {
-          replayed: fileOnlyReplay, throughLocalSeq: handle.throughLocalSeq,
+          replayed: fileOnlyReplay,
+          throughLocalSeq: handle.throughLocalSeq,
         },
       });
     } finally {
@@ -407,22 +549,38 @@ async function bundleSuite(build, loadConfigFromFile) {
     const pair = [];
     for (const entry of ['full', 't2cn']) {
       const loaded = await loadConfigFromFile(
-        { command: 'build', mode: 'production' }, resolve(root, 'vite.config.ts'), root, 'silent',
+        { command: 'build', mode: 'production' },
+        resolve(root, 'vite.config.ts'),
+        root,
+        'silent',
       );
       assert.ok(loaded, 'Production Vite config is unavailable');
       const config = loaded.config;
       const result = await build({
-        ...config, root, configFile: false, logLevel: 'silent',
-        plugins: [...(config.plugins ?? []), {
-          name: 'offline-opencc-entry-comparison', enforce: 'pre',
-          transform(code, id) {
-            if (!id.replace(/\?.*$/, '').endsWith('/src/analyzer/analyzer.ts')) return;
-            const importPattern = /from (['"])opencc-js(?:\/t2cn)?\1/;
-            if (!importPattern.test(code)) throw new Error('Expected Analyzer OpenCC import is missing');
-            return code.replace(importPattern,
-              'from "opencc-js' + (entry === 't2cn' ? '/t2cn' : '') + '"');
+        ...config,
+        root,
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [
+          ...(config.plugins ?? []),
+          {
+            name: 'offline-opencc-entry-comparison',
+            enforce: 'pre',
+            transform(code, id) {
+              if (
+                !id.replace(/\?.*$/, '').endsWith('/src/analyzer/analyzer.ts')
+              )
+                return;
+              const importPattern = /from (['"])opencc-js(?:\/t2cn)?\1/;
+              if (!importPattern.test(code))
+                throw new Error('Expected Analyzer OpenCC import is missing');
+              return code.replace(
+                importPattern,
+                'from "opencc-js' + (entry === 't2cn' ? '/t2cn' : '') + '"',
+              );
+            },
           },
-        }],
+        ],
         build: { ...config.build, write: false },
       });
       const userscripts = (Array.isArray(result) ? result : [result])
@@ -430,15 +588,20 @@ async function bundleSuite(build, loadConfigFromFile) {
         .filter((item) => item.fileName.endsWith('.user.js'));
       assert.equal(userscripts.length, 1, 'Expected one userscript bundle');
       const artifact = userscripts[0];
-      const source = artifact.type === 'asset' ? artifact.source : artifact.code;
+      const source =
+        artifact.type === 'asset' ? artifact.source : artifact.code;
       pair.push({
-        entry, filename: artifact.fileName, bytes: Buffer.byteLength(source),
-        gzipBytes: gzipSync(source).length, sha256: sha256(source),
+        entry,
+        filename: artifact.fileName,
+        bytes: Buffer.byteLength(source),
+        gzipBytes: gzipSync(source).length,
+        sha256: sha256(source),
       });
     }
     return {
       marker: 'CU_WIKI_BUILD_ID:' + marker,
-      configuration: 'Same production config/source/options; force only the OpenCC import; write:false.',
+      configuration:
+        'Same production config/source/options; force only the OpenCC import; write:false.',
       gzip: 'node:zlib gzipSync defaults for both artifacts',
       pair,
       byteReductionPercent: (1 - pair[1].bytes / pair[0].bytes) * 100,

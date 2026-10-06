@@ -7,13 +7,12 @@ import type {
 import type { CommittedRefreshResult } from './recent-change-commit-refresh';
 
 export type SyncAttemptResult =
-  | { status: 'complete' }
-  | { status: 'error'; error: unknown };
+  { status: 'complete' } | { status: 'error'; error: unknown };
 
 export interface MirrorSyncCoordinator {
-  runIfDue(task: () => Promise<boolean | void>): Promise<
-    'ran' | 'not-due' | 'lock-unavailable'
-  >;
+  runIfDue(
+    task: () => Promise<boolean | void>,
+  ): Promise<'ran' | 'not-due' | 'lock-unavailable'>;
   runExclusive(task: () => Promise<void>): Promise<'ran' | 'lock-unavailable'>;
 }
 
@@ -133,7 +132,8 @@ export class MirrorSyncOrchestrator {
         return false;
       }
       if (reconciliation.status === 'login-required') return false;
-      if (request === 'manual' && reconciliation.status !== 'complete') return false;
+      if (request === 'manual' && reconciliation.status !== 'complete')
+        return false;
       try {
         recentChanges = await this.options.facts.catchUp();
       } catch (error) {
@@ -189,7 +189,8 @@ export class MirrorSyncOrchestrator {
       }
     }
 
-    let dataInvalidated = committedReconciliation?.dataCodesInvalidated === true;
+    let dataInvalidated =
+      committedReconciliation?.dataCodesInvalidated === true;
     if (recentChanges?.status === 'complete') {
       // Invalidation belongs to the committed facts, even if local refresh fails.
       dataInvalidated ||= recentChanges.dataCodesInvalidated;
@@ -241,9 +242,13 @@ export class MirrorSyncOrchestrator {
     }
 
     const errors = {
-      ...(synchronizationError ? { synchronization: synchronizationError } : {}),
+      ...(synchronizationError
+        ? { synchronization: synchronizationError }
+        : {}),
       ...(catchUpError ? { catchUp: catchUpError } : {}),
-      ...(committedRefreshError ? { committedRefresh: committedRefreshError } : {}),
+      ...(committedRefreshError
+        ? { committedRefresh: committedRefreshError }
+        : {}),
       ...(dataError ? { data: dataError } : {}),
       ...(contentError ? { content: contentError } : {}),
     };
@@ -282,14 +287,12 @@ interface OutcomeStatusInput {
 
 function outcomeStatus(input: OutcomeStatusInput): MirrorSyncOutcome['status'] {
   if (input.synchronizationError) return 'error';
-  if (input.reconciliation?.status === 'login-required') return 'login-required';
+  if (input.reconciliation?.status === 'login-required')
+    return 'login-required';
   if (input.catchUpError) return 'catch-up-error';
   if (input.recentChanges?.status === 'login-required') return 'login-required';
   if (input.recentChanges?.status === 'no-baseline') return 'no-baseline';
-  if (
-    input.reconciliation?.status === 'no-baseline' &&
-    !input.recentChanges
-  ) {
+  if (input.reconciliation?.status === 'no-baseline' && !input.recentChanges) {
     return 'no-baseline';
   }
   if (input.reconciliation?.status === 'not-due' && !input.recentChanges) {

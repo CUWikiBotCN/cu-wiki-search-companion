@@ -35,7 +35,10 @@ describe('StagedPreparationCoordinator', () => {
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(originalError)
       .mockResolvedValue(undefined);
-    const coordinator = new StagedPreparationCoordinator({ prepareLocal, settle });
+    const coordinator = new StagedPreparationCoordinator({
+      prepareLocal,
+      settle,
+    });
 
     await expect(coordinator.prepare()).rejects.toBe(originalError);
     await coordinator.prepare();

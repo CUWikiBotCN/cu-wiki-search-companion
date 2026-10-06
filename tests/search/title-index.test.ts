@@ -30,12 +30,18 @@ function page(id: number, title: string, namespace = 0): PageRecord {
 describe('TitleIndex', () => {
   it('ranks exact and infix CJK matches', () => {
     const index = new TitleIndex(analyzer);
-    index.rebuild([page(1, '12号鹿弹'), page(2, '12号霰弹弹盒'), page(3, '鹿弹')]);
-
-    expect(index.search('鹿弹').slice(0, 2).map(({ title }) => title)).toEqual([
-      '鹿弹',
-      '12号鹿弹',
+    index.rebuild([
+      page(1, '12号鹿弹'),
+      page(2, '12号霰弹弹盒'),
+      page(3, '鹿弹'),
     ]);
+
+    expect(
+      index
+        .search('鹿弹')
+        .slice(0, 2)
+        .map(({ title }) => title),
+    ).toEqual(['鹿弹', '12号鹿弹']);
   });
 
   it('supports traditional queries and latin mid-run queries', () => {
@@ -141,9 +147,14 @@ describe('TitleIndex', () => {
   it.each(['synchronous', 'asynchronous', 'snapshot'] as const)(
     'starts with an empty candidate cache after a %s replacement',
     async (replacement) => {
-      const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
+      const tracedAnalyzer = new Analyzer({
+        cut,
+        cutForSearch: cut_for_search,
+      });
       const compact = vi.spyOn(tracedAnalyzer, 'compact');
-      const index = new TitleIndex(tracedAnalyzer, { yield: async () => undefined });
+      const index = new TitleIndex(tracedAnalyzer, {
+        yield: async () => undefined,
+      });
       const titles = [page(1, '缓存候选 甲'), page(2, '缓存候选 乙')];
       index.rebuild(titles);
       const snapshot = index.exportSnapshot();
@@ -152,7 +163,8 @@ describe('TitleIndex', () => {
       expect(Object.keys(snapshot as object)).toEqual(['miniSearch']);
 
       if (replacement === 'synchronous') index.rebuild(titles);
-      else if (replacement === 'asynchronous') await index.rebuildAsync(titles, 1);
+      else if (replacement === 'asynchronous')
+        await index.rebuildAsync(titles, 1);
       else await index.importSnapshot(snapshot);
       compact.mockClear();
 
@@ -166,7 +178,9 @@ describe('TitleIndex', () => {
 
   it('replays cache invalidation for updates during a yielding rebuild', async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const tracedAnalyzer = new Analyzer({ cut, cutForSearch: cut_for_search });
     const compact = vi.spyOn(tracedAnalyzer, 'compact');
     const index = new TitleIndex(tracedAnalyzer, { yield: () => blocked });
@@ -247,7 +261,11 @@ describe('TitleIndex', () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
     await database.pages.bulkPut([
-      { ...page(1, '带正文页面'), content: '很长的正文', contentModel: 'wikitext' },
+      {
+        ...page(1, '带正文页面'),
+        content: '很长的正文',
+        contentModel: 'wikitext',
+      },
       { ...page(2, '已删除页面'), content: '删除页正文', deleted: true },
     ]);
 
@@ -270,7 +288,12 @@ describe('TitleIndex', () => {
     await database.pages.bulkPut([
       { ...page(1, '未变化'), content: '旧正文', localSeq: 1 },
       { ...page(2, '已更新'), content: '新正文', localSeq: 2 },
-      { ...page(3, '已删除'), content: '删除页正文', localSeq: 3, deleted: true },
+      {
+        ...page(3, '已删除'),
+        content: '删除页正文',
+        localSeq: 3,
+        deleted: true,
+      },
     ]);
 
     const headers = await readPageHeadersAfter(database, 1);

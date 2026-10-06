@@ -16,7 +16,10 @@ describe('file resource search', () => {
   it('retries a file batch whose transaction aborts during commit', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (url.searchParams.get('gapcontinue') === '文件:第二批.png') {
         return json({
@@ -59,14 +62,16 @@ describe('file resource search', () => {
     ).rejects.toBeDefined();
 
     expect(await database.fileResources.get(6001)).toBeUndefined();
-    expect((await database.syncState.get('file-resource-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('file-resource-sync'))?.value,
+    ).toMatchObject({
       status: 'failed',
       namespaceIndex: 0,
       pagesFetched: 0,
     });
-    expect((await database.syncState.get('file-resource-sync'))?.value).not.toHaveProperty(
-      'apcontinue',
-    );
+    expect(
+      (await database.syncState.get('file-resource-sync'))?.value,
+    ).not.toHaveProperty('apcontinue');
 
     const resumed = await syncFileResources(database, api, analyzer, {
       requestIntervalMs: 0,
@@ -83,7 +88,9 @@ describe('file resource search', () => {
       deleted: false,
       writerSeq: 3,
     });
-    expect(calls.filter((url) => !url.searchParams.has('gapcontinue'))).toHaveLength(2);
+    expect(
+      calls.filter((url) => !url.searchParams.has('gapcontinue')),
+    ).toHaveLength(2);
 
     database.close();
     await database.delete();
@@ -117,7 +124,9 @@ describe('file resource search', () => {
 
     expect(await database.fileResources.get(6001)).toBeDefined();
     expect((await database.syncState.get('local-sequence'))?.value).toBe(1);
-    expect((await database.syncState.get('file-resource-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('file-resource-sync'))?.value,
+    ).toMatchObject({
       status: 'failed',
       namespaceIndex: 1,
       pagesFetched: 0,
@@ -133,7 +142,9 @@ describe('file resource search', () => {
     expect(resumed).toMatchObject({ status: 'complete', namespaceIndex: 1 });
     expect(await database.fileResources.get(6001)).toBeUndefined();
     expect((await database.syncState.get('local-sequence'))?.value).toBe(2);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       fileChangeSeq: 2,
     });
 
@@ -144,7 +155,10 @@ describe('file resource search', () => {
   it('syncs namespace 6 separately, resumes from cache, and keeps normal titles clean', async () => {
     const calls: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       calls.push(url);
       if (!url.searchParams.has('gapcontinue')) {
         return json({
@@ -191,11 +205,21 @@ describe('file resource search', () => {
     await database.syncState.put({ key: 'local-sequence', value: 1 });
     const api = new WikiApi({ fetcher: fetcher as typeof fetch, retries: 0 });
 
-    const first = await syncFileResources(database, api, analyzer, { requestIntervalMs: 0 });
+    const first = await syncFileResources(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
     const callsAfterFirstSync = calls.length;
-    const second = await syncFileResources(database, api, analyzer, { requestIntervalMs: 0 });
-    const normalIndex = new LinearTitleIndex(analyzer, await database.pages.toArray());
-    const fileIndex = new LinearTitleIndex(analyzer, await database.fileResources.toArray());
+    const second = await syncFileResources(database, api, analyzer, {
+      requestIntervalMs: 0,
+    });
+    const normalIndex = new LinearTitleIndex(
+      analyzer,
+      await database.pages.toArray(),
+    );
+    const fileIndex = new LinearTitleIndex(
+      analyzer,
+      await database.fileResources.toArray(),
+    );
 
     expect(first.status).toBe('complete');
     expect(first.pagesFetched).toBe(2);
@@ -218,13 +242,19 @@ describe('file resource search', () => {
       expect.objectContaining({ seenInFileSync: first.generation }),
       expect.objectContaining({ seenInFileSync: first.generation }),
     ]);
-    expect(storedFiles.every((file) => !Object.hasOwn(file, 'seenInTitleSync'))).toBe(true);
+    expect(
+      storedFiles.every((file) => !Object.hasOwn(file, 'seenInTitleSync')),
+    ).toBe(true);
     expect((await database.syncState.get('local-sequence'))?.value).toBe(3);
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toMatchObject({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toMatchObject({
       fileChangeSeq: 3,
     });
     expect(normalIndex.search('morphine')).toEqual([]);
-    expect(fileIndex.search('morphine')[0]?.title).toBe('文件:Item morphine.png');
+    expect(fileIndex.search('morphine')[0]?.title).toBe(
+      '文件:Item morphine.png',
+    );
 
     database.close();
     await database.delete();
@@ -320,7 +350,9 @@ describe('file resource search', () => {
 
     await syncFileResources(database, api, analyzer, { requestIntervalMs: 0 });
 
-    expect((await database.syncState.get('recent-changes-sync'))?.value).toEqual({
+    expect(
+      (await database.syncState.get('recent-changes-sync'))?.value,
+    ).toEqual({
       ...recentState,
       fileChangeSeq: 7,
     });
@@ -334,7 +366,10 @@ describe('file resource search', () => {
   it('resumes a failed file scan from its saved continuation', async () => {
     const requests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       requests.push(url);
       if (!url.searchParams.has('gapcontinue')) {
         return json({
@@ -405,7 +440,9 @@ describe('file resource search', () => {
     });
 
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.searchParams.get('gapcontinue')).toBe('文件:第二页.png');
+    expect(requests[0]?.searchParams.get('gapcontinue')).toBe(
+      '文件:第二页.png',
+    );
     expect(result).toMatchObject({
       status: 'complete',
       generation: 100,
@@ -418,9 +455,9 @@ describe('file resource search', () => {
       title: '文件:第二页.png',
       seenInFileSync: 100,
     });
-    expect((await database.syncState.get('file-resource-sync'))?.value).not.toHaveProperty(
-      'apcontinue',
-    );
+    expect(
+      (await database.syncState.get('file-resource-sync'))?.value,
+    ).not.toHaveProperty('apcontinue');
 
     requests.length = 0;
     const forced = await syncFileResources(database, api, analyzer, {
@@ -436,7 +473,10 @@ describe('file resource search', () => {
 
   it('applies file batches incrementally and closes once after final pruning', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input), 'https://casualtiesunknown.huijiwiki.com');
+      const url = new URL(
+        String(input),
+        'https://casualtiesunknown.huijiwiki.com',
+      );
       if (!url.searchParams.has('gapcontinue')) {
         return json({
           continue: { gapcontinue: '文件:第二批.png' },

@@ -14,9 +14,11 @@ export const dataRulesPreference: DataRulesPreferenceStore = {
     return typeof value === 'string' ? value : undefined;
   },
   async set(value: string): Promise<void> {
-    if (typeof GM_setValue === 'function') GM_setValue(DATA_CODE_RULES_PREFERENCE_KEY, value);
+    if (typeof GM_setValue === 'function')
+      GM_setValue(DATA_CODE_RULES_PREFERENCE_KEY, value);
   },
   async remove(): Promise<void> {
-    if (typeof GM_deleteValue === 'function') GM_deleteValue(DATA_CODE_RULES_PREFERENCE_KEY);
+    if (typeof GM_deleteValue === 'function')
+      GM_deleteValue(DATA_CODE_RULES_PREFERENCE_KEY);
   },
 };

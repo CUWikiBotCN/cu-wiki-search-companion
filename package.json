@@ -13,7 +13,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "vite",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint src tests scripts *.ts eslint.config.js --max-warnings=0",
+    "format": "prettier --write \"src/**/*.{ts,vue,css}\" \"tests/**/*.ts\" \"scripts/**/*.{js,mjs,ts}\" \"*.{js,ts,json}\" \".github/workflows/*.{yml,yaml}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,vue,css}\" \"tests/**/*.ts\" \"scripts/**/*.{js,mjs,ts}\" \"*.{js,ts,json}\" \".github/workflows/*.{yml,yaml}\"",
+    "check": "npm run lint && npm run format:check && npm test && npm run build"
   },
   "dependencies": {
     "dexie": "4.4.5",
@@ -23,11 +27,18 @@
     "vue": "3.5.42"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/node": "24.13.3",
     "@vitejs/plugin-vue": "6.0.8",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.11.1",
     "fake-indexeddb": "6.2.4",
+    "globals": "17.13.0",
     "jsdom": "30.0.1",
+    "prettier": "3.9.9",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
     "vite": "8.2.2",
     "vite-plugin-monkey": "8.1.1",
     "vitest": "4.1.11",

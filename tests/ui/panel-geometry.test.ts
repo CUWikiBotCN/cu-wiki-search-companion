@@ -15,18 +15,28 @@ it('keeps layout and scroll tasks independent and disposes every task and listen
     frames.set(++frameId, callback);
     return frameId;
   });
-  const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => { frames.delete(id); });
+  const cancel = vi
+    .spyOn(window, 'cancelAnimationFrame')
+    .mockImplementation((id) => {
+      frames.delete(id);
+    });
   const disconnect = vi.fn();
   let resize!: ResizeObserverCallback;
-  vi.stubGlobal('ResizeObserver', class {
-    constructor(callback: ResizeObserverCallback) { resize = callback; }
-    observe = vi.fn();
-    disconnect = disconnect;
-  });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+      observe = vi.fn();
+      disconnect = disconnect;
+    },
+  );
   const viewport = new EventTarget();
   vi.stubGlobal('visualViewport', viewport);
   const host = document.createElement('div');
-  host.innerHTML = '<section><header></header><div><article></article><aside></aside></div></section>';
+  host.innerHTML =
+    '<section><header></header><div><article></article><aside></aside></div></section>';
   document.body.append(host);
   const panel = host.querySelector('section')!;
   const handle = host.querySelector('header')!;
@@ -34,7 +44,14 @@ it('keeps layout and scroll tasks independent and disposes every task and listen
   const first = host.querySelector('article')!;
   const second = host.querySelector('aside')!;
   const onLayout = vi.fn();
-  const geometry = new PanelGeometry(host, panel, handle, body, handle, onLayout);
+  const geometry = new PanelGeometry(
+    host,
+    panel,
+    handle,
+    body,
+    handle,
+    onLayout,
+  );
   geometry.scheduleLayoutUpdate();
   geometry.scheduleBodyScroll(first, 'start');
   geometry.scheduleBodyScroll(second, 'nearest');
@@ -66,39 +83,58 @@ it('keeps layout and scroll tasks independent and disposes every task and listen
 it('keeps the closed launcher clear of late, resized and replaced docks without moving the panel', async () => {
   const frames = new Map<number, FrameRequestCallback>();
   let id = 0;
-  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
     frames.set(++id, callback);
     return id;
   });
-  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(key => { frames.delete(key); });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((key) => {
+    frames.delete(key);
+  });
   const flush = async () => {
     await Promise.resolve();
     const pending = [...frames.values()];
     frames.clear();
-    pending.forEach(callback => callback(0));
+    pending.forEach((callback) => callback(0));
   };
   let resize!: ResizeObserverCallback;
   const unobserve = vi.fn();
   const disconnect = vi.fn();
-  vi.stubGlobal('ResizeObserver', class {
-    constructor(callback: ResizeObserverCallback) { resize = callback; }
-    observe = vi.fn();
-    unobserve = unobserve;
-    disconnect = disconnect;
-  });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+      observe = vi.fn();
+      unobserve = unobserve;
+      disconnect = disconnect;
+    },
+  );
   const host = document.createElement('div');
-  host.innerHTML = '<button></button><section hidden><header></header><main></main></section>';
+  host.innerHTML =
+    '<button></button><section hidden><header></header><main></main></section>';
   document.body.append(host);
   const panel = host.querySelector('section')!;
   const launcher = host.querySelector('button')!;
-  vi.spyOn(launcher, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 88, 40));
+  vi.spyOn(launcher, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(0, 0, 88, 40),
+  );
   const onLayout = vi.fn();
-  const geometry = new PanelGeometry(host, panel, launcher, host.querySelector('main')!, host.querySelector('header')!, onLayout);
+  const geometry = new PanelGeometry(
+    host,
+    panel,
+    launcher,
+    host.querySelector('main')!,
+    host.querySelector('header')!,
+    onLayout,
+  );
   expect(host.style.getPropertyValue('--cu-launcher-right')).toBe('12px');
   const dock = document.createElement('div');
   dock.className = 'skin-dock';
   let dockWidth = 60;
-  vi.spyOn(dock, 'getBoundingClientRect').mockImplementation(() => new DOMRect(window.innerWidth - 12 - dockWidth, 600, dockWidth, 96));
+  vi.spyOn(dock, 'getBoundingClientRect').mockImplementation(
+    () => new DOMRect(window.innerWidth - 12 - dockWidth, 600, dockWidth, 96),
+  );
   document.body.append(dock);
   await flush();
   expect(host.style.getPropertyValue('--cu-launcher-right')).toBe('84px');
@@ -120,7 +156,9 @@ it('keeps the closed launcher clear of late, resized and replaced docks without 
   expect(onLayout).not.toHaveBeenCalled();
   const replacement = document.createElement('div');
   replacement.className = 'skin-dock';
-  vi.spyOn(replacement, 'getBoundingClientRect').mockReturnValue(new DOMRect(window.innerWidth - 92, 600, 80, 96));
+  vi.spyOn(replacement, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(window.innerWidth - 92, 600, 80, 96),
+  );
   dock.replaceWith(replacement);
   await flush();
   expect(unobserve).toHaveBeenLastCalledWith(dock);

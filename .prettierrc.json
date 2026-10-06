@@ -1,0 +1,19 @@
+{
+  "tabWidth": 2,
+  "singleQuote": true,
+  "semi": true,
+  "trailingComma": "all",
+  "printWidth": 80,
+  "endOfLine": "lf",
+  "htmlWhitespaceSensitivity": "css",
+  "embeddedLanguageFormatting": "off",
+  "overrides": [
+    {
+      "files": "*.vue",
+      "options": {
+        "embeddedLanguageFormatting": "auto",
+        "htmlWhitespaceSensitivity": "strict"
+      }
+    }
+  ]
+}

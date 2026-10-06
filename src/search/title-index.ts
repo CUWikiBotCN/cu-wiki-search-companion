@@ -43,7 +43,11 @@ export interface TitleSearchResult extends RedirectSearchMetadata {
 }
 
 export interface TitleSearchBackend {
-  search(query: string, namespace?: number, limit?: number): TitleSearchResult[];
+  search(
+    query: string,
+    namespace?: number,
+    limit?: number,
+  ): TitleSearchResult[];
   readonly size: number;
 }
 
@@ -165,7 +169,8 @@ export class CombinedTitleIndex implements TitleSearchBackend {
       ...this.fallback.search(query, namespace, limit),
     ]) {
       const previous = merged.get(result.id);
-      if (!previous || result.score > previous.score) merged.set(result.id, result);
+      if (!previous || result.score > previous.score)
+        merged.set(result.id, result);
     }
     return [...merged.values()]
       .sort((left, right) => right.score - left.score || left.id - right.id)
@@ -189,8 +194,10 @@ export class TitleIndex implements TitleSearchBackend {
 
   constructor(
     private readonly analyzer: Analyzer,
-    private readonly taskScheduler: Pick<CooperativeTaskScheduler, 'yield'> =
-      browserTaskScheduler,
+    private readonly taskScheduler: Pick<
+      CooperativeTaskScheduler,
+      'yield'
+    > = browserTaskScheduler,
   ) {}
 
   rebuild(pages: PageRecord[]): void {
@@ -204,7 +211,10 @@ export class TitleIndex implements TitleSearchBackend {
       const nextState = this.createState();
       const activePages = pages.filter((page) => !page.deleted);
       for (let offset = 0; offset < activePages.length; offset += batchSize) {
-        this.applyPages(nextState, activePages.slice(offset, offset + batchSize));
+        this.applyPages(
+          nextState,
+          activePages.slice(offset, offset + batchSize),
+        );
         await this.taskScheduler.yield();
       }
       return nextState;
@@ -306,11 +316,14 @@ export class TitleIndex implements TitleSearchBackend {
           namespace: Number(result.namespace),
           namespaceName: String(result.namespaceName),
           score: result.score * boost,
-          ...(result.isRedirect ? {
-            isRedirect: true,
-            redirectResolved: Boolean(result.redirectResolved),
-            redirectTarget: result.redirectTarget as RedirectTarget | undefined,
-          } : {}),
+          ...(result.isRedirect
+            ? {
+                isRedirect: true,
+                redirectResolved: Boolean(result.redirectResolved),
+                redirectTarget: result.redirectTarget as
+                  RedirectTarget | undefined,
+              }
+            : {}),
         };
       })
       .sort((left, right) => right.score - left.score || left.id - right.id)
@@ -331,7 +344,15 @@ export class TitleIndex implements TitleSearchBackend {
     return {
       idField: 'id',
       fields: ['tokens'],
-      storeFields: ['title', 'normalizedTitle', 'namespace', 'namespaceName', 'isRedirect', 'redirectResolved', 'redirectTarget'],
+      storeFields: [
+        'title',
+        'normalizedTitle',
+        'namespace',
+        'namespaceName',
+        'isRedirect',
+        'redirectResolved',
+        'redirectTarget',
+      ],
       tokenize: (value) => value.split(/\s+/),
       processTerm: (term) => term,
     };
@@ -355,5 +376,9 @@ export class TitleIndex implements TitleSearchBackend {
 function redirectSearchMetadata(page: PageRecord): RedirectSearchMetadata {
   if (!page.isRedirect) return {};
   const resolution = currentRedirectResolution(page);
-  return { isRedirect: true, redirectResolved: Boolean(resolution), redirectTarget: resolution?.target };
+  return {
+    isRedirect: true,
+    redirectResolved: Boolean(resolution),
+    redirectTarget: resolution?.target,
+  };
 }

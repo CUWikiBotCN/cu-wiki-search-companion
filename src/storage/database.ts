@@ -84,7 +84,12 @@ function toPageHeader(page: PageRecord): PageRecord {
     namespace: page.namespace,
     namespaceName: page.namespaceName,
     isRedirect: page.isRedirect,
-    ...(page.isRedirect ? { revisionId: page.revisionId, redirectResolution: page.redirectResolution } : {}),
+    ...(page.isRedirect
+      ? {
+          revisionId: page.revisionId,
+          redirectResolution: page.redirectResolution,
+        }
+      : {}),
     localSeq: page.localSeq,
     seenInTitleSync: page.seenInTitleSync,
     deleted: page.deleted,

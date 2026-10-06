@@ -12,44 +12,63 @@ import {
 import { IncrementalSyncCoordinator } from '../../src/sync/incremental-sync-coordinator';
 
 describe('fact writer compatibility across live tabs', () => {
-  it.each(['explicit', 'scheduled'] as const)('rejects an already-running tab after a format upgrade (%s)', async (mode) => {
-    const name = `test-${crypto.randomUUID()}`;
-    const oldTab = new WikiSearchDatabase(name);
-    const newTab = new WikiSearchDatabase(name);
-    await Promise.all([oldTab.open(), newTab.open()]);
-    try {
-      await initializeVersionContract(oldTab);
-      const lockManager = new QueuedLocks();
-      const oldWriter = new IncrementalSyncCoordinator(oldTab, { lockManager });
-      const newWriter = new IncrementalSyncCoordinator(newTab, { lockManager });
-      await oldWriter.runExclusive(async () => undefined);
-      await newWriter.runExclusive(async () => {
-        await newTab.syncState.put({
-          key: CACHE_VERSION_CONTRACT_KEY,
-          value: { ...CURRENT_VERSION_CONTRACT, pageFacts: CURRENT_VERSION_CONTRACT.pageFacts + 1 },
+  it.each(['explicit', 'scheduled'] as const)(
+    'rejects an already-running tab after a format upgrade (%s)',
+    async (mode) => {
+      const name = `test-${crypto.randomUUID()}`;
+      const oldTab = new WikiSearchDatabase(name);
+      const newTab = new WikiSearchDatabase(name);
+      await Promise.all([oldTab.open(), newTab.open()]);
+      try {
+        await initializeVersionContract(oldTab);
+        const lockManager = new QueuedLocks();
+        const oldWriter = new IncrementalSyncCoordinator(oldTab, {
+          lockManager,
         });
-      });
-      const before = await oldTab.syncState.toArray();
-      const task = vi.fn(async () => undefined);
+        const newWriter = new IncrementalSyncCoordinator(newTab, {
+          lockManager,
+        });
+        await oldWriter.runExclusive(async () => undefined);
+        await newWriter.runExclusive(async () => {
+          await newTab.syncState.put({
+            key: CACHE_VERSION_CONTRACT_KEY,
+            value: {
+              ...CURRENT_VERSION_CONTRACT,
+              pageFacts: CURRENT_VERSION_CONTRACT.pageFacts + 1,
+            },
+          });
+        });
+        const before = await oldTab.syncState.toArray();
+        const task = vi.fn(async () => undefined);
 
-      const attempt = mode === 'explicit' ? oldWriter.runExclusive(task) : oldWriter.runIfDue(task);
-      await expect(attempt).rejects.toBeInstanceOf(FactWriteCompatibilityError);
-      expect(task).not.toHaveBeenCalled();
-      expect(await oldTab.syncState.toArray()).toEqual(before);
-    } finally {
-      oldTab.close();
-      newTab.close();
-      await oldTab.delete();
-    }
-  });
+        const attempt =
+          mode === 'explicit'
+            ? oldWriter.runExclusive(task)
+            : oldWriter.runIfDue(task);
+        await expect(attempt).rejects.toBeInstanceOf(
+          FactWriteCompatibilityError,
+        );
+        expect(task).not.toHaveBeenCalled();
+        expect(await oldTab.syncState.toArray()).toEqual(before);
+      } finally {
+        oldTab.close();
+        newTab.close();
+        await oldTab.delete();
+      }
+    },
+  );
 
   it('checks the durable format after a queued writer obtains its lock', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
     let release!: () => void;
     let started!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
     const lockManager = new QueuedLocks();
     const writer = new IncrementalSyncCoordinator(database, { lockManager });
     try {
@@ -57,13 +76,17 @@ describe('fact writer compatibility across live tabs', () => {
       const upgrading = writer.runExclusive(async () => {
         started();
         await held;
-        await database.syncState.put({ key: CACHE_VERSION_CONTRACT_KEY,
-          value: { ...CURRENT_VERSION_CONTRACT, contentJobFormat: 2 } });
+        await database.syncState.put({
+          key: CACHE_VERSION_CONTRACT_KEY,
+          value: { ...CURRENT_VERSION_CONTRACT, contentJobFormat: 2 },
+        });
       });
       await ready;
       const task = vi.fn(async () => undefined);
       const queued = writer.runExclusive(task);
-      const rejected = expect(queued).rejects.toBeInstanceOf(FactWriteCompatibilityError);
+      const rejected = expect(queued).rejects.toBeInstanceOf(
+        FactWriteCompatibilityError,
+      );
       release();
       await Promise.all([upgrading, rejected]);
       expect(task).not.toHaveBeenCalled();
@@ -78,15 +101,25 @@ describe('fact writer compatibility across live tabs', () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
     try {
-      const stored = { ...CURRENT_VERSION_CONTRACT, analyzerPipeline: 99,
-        extractors: { wikitext: 99, bson: 99, lua: 99 } };
-      await database.syncState.put({ key: CACHE_VERSION_CONTRACT_KEY, value: stored });
-      const writer = new IncrementalSyncCoordinator(database, { lockManager: new QueuedLocks() });
+      const stored = {
+        ...CURRENT_VERSION_CONTRACT,
+        analyzerPipeline: 99,
+        extractors: { wikitext: 99, bson: 99, lua: 99 },
+      };
+      await database.syncState.put({
+        key: CACHE_VERSION_CONTRACT_KEY,
+        value: stored,
+      });
+      const writer = new IncrementalSyncCoordinator(database, {
+        lockManager: new QueuedLocks(),
+      });
       const task = vi.fn(async () => undefined);
       await writer.runExclusive(task);
       await writer.runIfDue(task);
       expect(task).toHaveBeenCalledTimes(2);
-      expect((await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value).toEqual(stored);
+      expect(
+        (await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value,
+      ).toEqual(stored);
     } finally {
       database.close();
       await database.delete();
@@ -98,18 +131,31 @@ describe('fact writer compatibility across live tabs', () => {
     await database.open();
     try {
       await database.syncState.put({ key: 'local-sequence', value: 7 });
-      await database.jobs.put({ type: 'wikitext-content', pageId: 1, status: 'pending' });
+      await database.jobs.put({
+        type: 'wikitext-content',
+        pageId: 1,
+        status: 'pending',
+      });
       const before = await database.syncState.toArray();
-      expect(await inspectVersionContract(database)).toMatchObject({ status: 'compatible', registeredLegacy: false });
+      expect(await inspectVersionContract(database)).toMatchObject({
+        status: 'compatible',
+        registeredLegacy: false,
+      });
       expect(await database.syncState.toArray()).toEqual(before);
       const task = vi.fn(async () => {
-        expect((await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value).toEqual(CURRENT_VERSION_CONTRACT);
+        expect(
+          (await database.syncState.get(CACHE_VERSION_CONTRACT_KEY))?.value,
+        ).toEqual(CURRENT_VERSION_CONTRACT);
       });
-      const unavailable = new IncrementalSyncCoordinator(database, { lockManager: null });
+      const unavailable = new IncrementalSyncCoordinator(database, {
+        lockManager: null,
+      });
       expect(await unavailable.runExclusive(task)).toBe('lock-unavailable');
       expect(await database.syncState.toArray()).toEqual(before);
       expect(task).not.toHaveBeenCalled();
-      const writer = new IncrementalSyncCoordinator(database, { lockManager: new QueuedLocks() });
+      const writer = new IncrementalSyncCoordinator(database, {
+        lockManager: new QueuedLocks(),
+      });
       expect(await writer.runExclusive(task)).toBe('ran');
       expect((await database.syncState.get('local-sequence'))?.value).toBe(7);
       expect(await database.jobs.count()).toBe(1);
@@ -127,11 +173,18 @@ describe('fact writer compatibility across live tabs', () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
     try {
-      await database.syncState.put({ key: CACHE_VERSION_CONTRACT_KEY, value: contract });
+      await database.syncState.put({
+        key: CACHE_VERSION_CONTRACT_KEY,
+        value: contract,
+      });
       const before = await database.syncState.toArray();
       const task = vi.fn(async () => undefined);
-      const writer = new IncrementalSyncCoordinator(database, { lockManager: new QueuedLocks() });
-      await expect(writer.runIfDue(task)).rejects.toBeInstanceOf(FactWriteCompatibilityError);
+      const writer = new IncrementalSyncCoordinator(database, {
+        lockManager: new QueuedLocks(),
+      });
+      await expect(writer.runIfDue(task)).rejects.toBeInstanceOf(
+        FactWriteCompatibilityError,
+      );
       expect(task).not.toHaveBeenCalled();
       expect(await database.syncState.toArray()).toEqual(before);
     } finally {
@@ -151,7 +204,8 @@ class QueuedLocks {
     callback: LockGrantedCallback<T>,
   ): Promise<T> {
     if (this.busy && options.ifAvailable) return callback(null);
-    if (this.busy) await new Promise<void>((resolve) => this.waiters.push(resolve));
+    if (this.busy)
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
     this.busy = true;
     try {
       return await callback({ name: 'test-lock', mode: 'exclusive' });

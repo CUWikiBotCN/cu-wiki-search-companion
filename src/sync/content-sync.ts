@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { WikiSearchDatabase } from '../storage/database';
 import { LOCAL_SEQUENCE_KEY, readLocalSequence } from '../storage/sync-state';
-import type {
-  ContentSyncProgress,
-  JobRecord,
-  PageRecord,
-} from '../types';
+import type { ContentSyncProgress, JobRecord, PageRecord } from '../types';
 import {
   CONTENT_JOB_TYPE,
   matchesContentScope,
@@ -62,7 +58,9 @@ export async function syncContent(
       const batch = await database.jobs
         .where('status')
         .equals('pending')
-        .filter((job) => job.type === CONTENT_JOB_TYPE && selectedIds.has(job.pageId))
+        .filter(
+          (job) => job.type === CONTENT_JOB_TYPE && selectedIds.has(job.pageId),
+        )
         .limit(BATCH_SIZE)
         .toArray();
       if (!batch.length) break;
@@ -86,7 +84,9 @@ export async function syncContent(
         rvprop: 'ids|content',
         rvslots: 'main',
       });
-      const rawById = new Map((response.query?.pages ?? []).map((page) => [page.pageid, page]));
+      const rawById = new Map(
+        (response.query?.pages ?? []).map((page) => [page.pageid, page]),
+      );
       const updatedPages: PageRecord[] = [];
 
       const progressDelta = await database.transaction(
@@ -96,94 +96,103 @@ export async function syncContent(
         database.jobs,
         database.syncState,
         async () => {
-        const storedPages = new Map(
-          (await database.pages.bulkGet(batch.map((job) => job.pageId)))
-            .filter((page): page is PageRecord => page !== undefined)
-            .map((page) => [page.id, page]),
-        );
-        const currentJobs = new Map(
-          (await database.jobs.bulkGet(batch.flatMap((job) => job.id ?? [])))
-            .filter((job): job is JobRecord => job !== undefined)
-            .map((job) => [job.id, job]),
-        );
-        const jobsToPut: JobRecord[] = [];
-        const jobsToDelete: number[] = [];
-        const delta = emptyProgress();
-        let sequence = await readLocalSequence(database);
-        const initialSequence = sequence;
-        for (const requestedJob of batch) {
-          const job =
-            requestedJob.id === undefined ? undefined : currentJobs.get(requestedJob.id);
-          if (!job) {
-            addJobTransition(delta, requestedJob.status, undefined);
-            continue;
-          }
-          if (job.status !== 'running' && job.status !== 'pending') continue;
-          const stored = storedPages.get(job.pageId);
-          if (
-            !stored ||
-            stored.deleted ||
-            stored.isRedirect ||
-            !isSearchableContentModel(stored.contentModel)
-          ) {
-            if (job.id !== undefined) jobsToDelete.push(job.id);
-            addJobTransition(delta, job.status, undefined);
-            continue;
-          }
+          const storedPages = new Map(
+            (await database.pages.bulkGet(batch.map((job) => job.pageId)))
+              .filter((page): page is PageRecord => page !== undefined)
+              .map((page) => [page.id, page]),
+          );
+          const currentJobs = new Map(
+            (await database.jobs.bulkGet(batch.flatMap((job) => job.id ?? [])))
+              .filter((job): job is JobRecord => job !== undefined)
+              .map((job) => [job.id, job]),
+          );
+          const jobsToPut: JobRecord[] = [];
+          const jobsToDelete: number[] = [];
+          const delta = emptyProgress();
+          let sequence = await readLocalSequence(database);
+          const initialSequence = sequence;
+          for (const requestedJob of batch) {
+            const job =
+              requestedJob.id === undefined
+                ? undefined
+                : currentJobs.get(requestedJob.id);
+            if (!job) {
+              addJobTransition(delta, requestedJob.status, undefined);
+              continue;
+            }
+            if (job.status !== 'running' && job.status !== 'pending') continue;
+            const stored = storedPages.get(job.pageId);
+            if (
+              !stored ||
+              stored.deleted ||
+              stored.isRedirect ||
+              !isSearchableContentModel(stored.contentModel)
+            ) {
+              if (job.id !== undefined) jobsToDelete.push(job.id);
+              addJobTransition(delta, job.status, undefined);
+              continue;
+            }
 
-          const raw = rawById.get(job.pageId);
-          const revision = raw?.revisions?.[0];
-          const slot = revision?.slots?.main;
-          if (!revision || typeof slot?.content !== 'string') {
+            const raw = rawById.get(job.pageId);
+            const revision = raw?.revisions?.[0];
+            const slot = revision?.slots?.main;
+            if (!revision || typeof slot?.content !== 'string') {
+              const previousStatus = job.status;
+              job.status = 'failed';
+              job.error = '页面或正文响应缺失';
+              job.updatedAt = Date.now();
+              jobsToPut.push(job);
+              addJobTransition(delta, previousStatus, job.status);
+              continue;
+            }
+
+            const expectedRevision = Math.max(
+              stored.revisionId ?? 0,
+              stored.contentRevisionId ?? 0,
+              job.targetRevisionId ?? 0,
+            );
+            if (revision.revid < expectedRevision) {
+              throw new Error(
+                `正文响应版本落后：页面 ${job.pageId} 期望 ${expectedRevision}，收到 ${revision.revid}`,
+              );
+            }
+
+            const nextContentModel =
+              slot.contentmodel ?? stored.contentModel ?? 'wikitext';
+            const searchableFactChanged =
+              stored.content !== slot.content ||
+              stored.contentModel?.toLocaleLowerCase() !==
+                nextContentModel.toLocaleLowerCase();
+            stored.content = slot.content;
+            stored.contentRevisionId = revision.revid;
+            stored.contentModel = nextContentModel;
+            stored.revisionId = Math.max(
+              stored.revisionId ?? 0,
+              revision.revid,
+            );
+            if (searchableFactChanged) {
+              sequence += 1;
+              stored.localSeq = sequence;
+            }
             const previousStatus = job.status;
-            job.status = 'failed';
-            job.error = '页面或正文响应缺失';
+            job.status = 'done';
+            job.targetRevisionId = stored.revisionId;
+            job.error = undefined;
             job.updatedAt = Date.now();
+            updatedPages.push(stored);
             jobsToPut.push(job);
             addJobTransition(delta, previousStatus, job.status);
-            continue;
           }
-
-          const expectedRevision = Math.max(
-            stored.revisionId ?? 0,
-            stored.contentRevisionId ?? 0,
-            job.targetRevisionId ?? 0,
-          );
-          if (revision.revid < expectedRevision) {
-            throw new Error(
-              `正文响应版本落后：页面 ${job.pageId} 期望 ${expectedRevision}，收到 ${revision.revid}`,
-            );
+          await database.pages.bulkPut(updatedPages);
+          if (jobsToDelete.length) await database.jobs.bulkDelete(jobsToDelete);
+          if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);
+          if (sequence !== initialSequence) {
+            await database.syncState.put({
+              key: LOCAL_SEQUENCE_KEY,
+              value: sequence,
+            });
           }
-
-          const nextContentModel = slot.contentmodel ?? stored.contentModel ?? 'wikitext';
-          const searchableFactChanged =
-            stored.content !== slot.content ||
-            stored.contentModel?.toLocaleLowerCase() !==
-              nextContentModel.toLocaleLowerCase();
-          stored.content = slot.content;
-          stored.contentRevisionId = revision.revid;
-          stored.contentModel = nextContentModel;
-          stored.revisionId = Math.max(stored.revisionId ?? 0, revision.revid);
-          if (searchableFactChanged) {
-            sequence += 1;
-            stored.localSeq = sequence;
-          }
-          const previousStatus = job.status;
-          job.status = 'done';
-          job.targetRevisionId = stored.revisionId;
-          job.error = undefined;
-          job.updatedAt = Date.now();
-          updatedPages.push(stored);
-          jobsToPut.push(job);
-          addJobTransition(delta, previousStatus, job.status);
-        }
-        await database.pages.bulkPut(updatedPages);
-        if (jobsToDelete.length) await database.jobs.bulkDelete(jobsToDelete);
-        if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);
-        if (sequence !== initialSequence) {
-          await database.syncState.put({ key: LOCAL_SEQUENCE_KEY, value: sequence });
-        }
-        return delta;
+          return delta;
         },
       );
 
@@ -194,7 +203,9 @@ export async function syncContent(
     }
   } catch (error) {
     await database.transaction('rw', database.jobs, async () => {
-      const running = (await database.jobs.bulkGet([...claimedJobs.keys()])).filter(
+      const running = (
+        await database.jobs.bulkGet([...claimedJobs.keys()])
+      ).filter(
         (job): job is JobRecord =>
           job !== undefined &&
           job.type === CONTENT_JOB_TYPE &&
@@ -233,7 +244,9 @@ async function prepareContentJobsInScope(
       .where('type')
       .equals(CONTENT_JOB_TYPE)
       .toArray();
-    const existingByPage = new Map(existingJobs.map((job) => [job.pageId, job]));
+    const existingByPage = new Map(
+      existingJobs.map((job) => [job.pageId, job]),
+    );
     const eligiblePageIds = new Set<number>();
     const selectedIds = new Set<number>();
     const now = Date.now();
@@ -246,7 +259,9 @@ async function prepareContentJobsInScope(
       const existing = existingByPage.get(page.id);
       const projection = projectContentJob(page, force && selected);
       if (!contentJobMatchesProjection(existing, page.id, projection)) {
-        jobsToPut.push(contentJobFromProjection(page.id, projection, existing, now));
+        jobsToPut.push(
+          contentJobFromProjection(page.id, projection, existing, now),
+        );
       }
     });
     const staleJobIds = existingJobs
@@ -260,7 +275,10 @@ async function prepareContentJobsInScope(
 
 export const syncWikitextContent = syncContent;
 
-async function progress(database: WikiSearchDatabase, selectedIds: Set<number>): Promise<ContentSyncProgress> {
+async function progress(
+  database: WikiSearchDatabase,
+  selectedIds: Set<number>,
+): Promise<ContentSyncProgress> {
   const result = emptyProgress();
   await database.jobs
     .where('type')
@@ -286,13 +304,19 @@ function addJobTransition(
   else incrementStatus(delta, after);
 }
 
-function incrementStatus(progress: ContentSyncProgress, status: JobRecord['status']): void {
+function incrementStatus(
+  progress: ContentSyncProgress,
+  status: JobRecord['status'],
+): void {
   if (status === 'done') progress.done += 1;
   else if (status === 'failed') progress.failed += 1;
   else progress.pending += 1;
 }
 
-function decrementStatus(progress: ContentSyncProgress, status: JobRecord['status']): void {
+function decrementStatus(
+  progress: ContentSyncProgress,
+  status: JobRecord['status'],
+): void {
   if (status === 'done') progress.done -= 1;
   else if (status === 'failed') progress.failed -= 1;
   else progress.pending -= 1;

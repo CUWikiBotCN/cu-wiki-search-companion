@@ -9,25 +9,44 @@ export interface ContentJobProjection {
   error: undefined;
 }
 
-export function isSearchableContentModel(contentModel: string | undefined): boolean {
+export function isSearchableContentModel(
+  contentModel: string | undefined,
+): boolean {
   const normalized = contentModel?.toLocaleLowerCase();
-  return normalized === 'wikitext' || normalized === 'bson' || normalized === 'scribunto' || isCssContentModel(normalized);
+  return (
+    normalized === 'wikitext' ||
+    normalized === 'bson' ||
+    normalized === 'scribunto' ||
+    isCssContentModel(normalized)
+  );
 }
 
 export type ContentSyncScope = 'content' | 'css';
 
 export function isCssContentModel(model: string | undefined): boolean {
-  return model?.toLowerCase() === 'css' || model?.toLowerCase() === 'sanitized-css';
+  return (
+    model?.toLowerCase() === 'css' || model?.toLowerCase() === 'sanitized-css'
+  );
 }
 
-export function matchesContentScope(model: string | undefined, scope: ContentSyncScope): boolean {
-  return isSearchableContentModel(model) && isCssContentModel(model) === (scope === 'css');
+export function matchesContentScope(
+  model: string | undefined,
+  scope: ContentSyncScope,
+): boolean {
+  return (
+    isSearchableContentModel(model) &&
+    isCssContentModel(model) === (scope === 'css')
+  );
 }
 
 export function isContentJobEligible(
   page: Pick<PageRecord, 'deleted' | 'isRedirect' | 'contentModel'>,
 ): boolean {
-  return !page.deleted && !page.isRedirect && isSearchableContentModel(page.contentModel);
+  return (
+    !page.deleted &&
+    !page.isRedirect &&
+    isSearchableContentModel(page.contentModel)
+  );
 }
 
 export function projectContentJob(

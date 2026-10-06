@@ -61,14 +61,17 @@ export class LuaModuleIndex {
     PageRecord[]
   >(
     this.createState(),
-    ({ index, symbolsById }, pages) => this.applyPages(index, symbolsById, pages),
+    ({ index, symbolsById }, pages) =>
+      this.applyPages(index, symbolsById, pages),
     (pages) => pages.map((page) => ({ ...page })),
   );
 
   constructor(
     private readonly analyzer: Analyzer,
-    private readonly taskScheduler: Pick<CooperativeTaskScheduler, 'yield'> =
-      browserTaskScheduler,
+    private readonly taskScheduler: Pick<
+      CooperativeTaskScheduler,
+      'yield'
+    > = browserTaskScheduler,
   ) {}
 
   rebuild(pages: PageRecord[]): void {
@@ -148,7 +151,10 @@ export class LuaModuleIndex {
       for (const [id, symbols] of symbolEntries) {
         restoredSymbolsById.set(
           id,
-          symbols.map((symbol) => ({ ...symbol, terms: new Set(symbol.terms) })),
+          symbols.map((symbol) => ({
+            ...symbol,
+            terms: new Set(symbol.terms),
+          })),
         );
       }
       const restored = await MiniSearch.loadJSAsync<IndexedLuaModule>(
@@ -176,7 +182,10 @@ export class LuaModuleIndex {
     const { index, symbolsById } = this.lifecycle.current;
     let results = index.search(normalizedQuery, options);
     if (!results.length && terms.length > 1) {
-      results = index.search(normalizedQuery, { ...options, combineWith: 'OR' });
+      results = index.search(normalizedQuery, {
+        ...options,
+        combineWith: 'OR',
+      });
     }
 
     const compactQuery = this.analyzer.compactNormalized(normalizedQuery);
@@ -189,7 +198,9 @@ export class LuaModuleIndex {
           compactQuery,
           terms,
         );
-        const titleBoost = this.analyzer.compact(title).includes(compactQuery) ? 3 : 1;
+        const titleBoost = this.analyzer.compact(title).includes(compactQuery)
+          ? 3
+          : 1;
         return {
           kind: 'lua' as const,
           id: Number(result.id),
@@ -197,7 +208,8 @@ export class LuaModuleIndex {
           namespace: Number(result.namespace),
           namespaceName: String(result.namespaceName),
           matches: matches.map(({ kind, value }) => ({ kind, value })),
-          score: result.score * titleBoost * (1 + (matches[0]?.rank ?? 0) / 100),
+          score:
+            result.score * titleBoost * (1 + (matches[0]?.rank ?? 0) / 100),
           matchRank: matches[0]?.rank ?? 0,
         };
       })
@@ -270,8 +282,11 @@ export class LuaModuleIndex {
     if (!values) return [];
     return values
       .map((candidate) => {
-        let relevance = 0;
-        if (candidate.normalized === normalizedQuery || candidate.compact === compactQuery) {
+        let relevance: number;
+        if (
+          candidate.normalized === normalizedQuery ||
+          candidate.compact === compactQuery
+        ) {
           relevance = 100;
         } else if (
           candidate.normalized.startsWith(normalizedQuery) ||
@@ -284,19 +299,28 @@ export class LuaModuleIndex {
         ) {
           relevance = 40;
         } else {
-          const overlap = queryTerms.filter((term) => candidate.terms.has(term)).length;
+          const overlap = queryTerms.filter((term) =>
+            candidate.terms.has(term),
+          ).length;
           relevance = overlap ? (overlap / queryTerms.length) * 20 : 0;
         }
         return { ...candidate, rank: relevance + candidate.priority };
       })
       .filter(({ rank, priority }) => rank > priority)
-      .sort((left, right) => right.rank - left.rank || left.value.length - right.value.length)
+      .sort(
+        (left, right) =>
+          right.rank - left.rank || left.value.length - right.value.length,
+      )
       .slice(0, 3);
   }
 
   private prepareSymbols(extracted: LuaExtraction): PreparedLuaSymbol[] {
     const values: Array<LuaSymbolMatch & { priority: number }> = [
-      ...extracted.functions.map((value) => ({ kind: 'function' as const, value, priority: 4 })),
+      ...extracted.functions.map((value) => ({
+        kind: 'function' as const,
+        value,
+        priority: 4,
+      })),
       ...extracted.returnKeys.map((value) => ({
         kind: 'return-key' as const,
         value,
@@ -307,7 +331,11 @@ export class LuaModuleIndex {
         value,
         priority: 2,
       })),
-      ...extracted.strings.map((value) => ({ kind: 'string' as const, value, priority: 1 })),
+      ...extracted.strings.map((value) => ({
+        kind: 'string' as const,
+        value,
+        priority: 1,
+      })),
     ];
     return values.map((candidate) => {
       const normalized = this.analyzer.normalize(candidate.value);
@@ -336,7 +364,9 @@ function isPreparedSymbolEntries(
           (symbol) =>
             symbol &&
             typeof symbol === 'object' &&
-            ['function', 'return-key', 'string', 'dependency'].includes(symbol.kind) &&
+            ['function', 'return-key', 'string', 'dependency'].includes(
+              symbol.kind,
+            ) &&
             typeof symbol.value === 'string' &&
             typeof symbol.priority === 'number' &&
             typeof symbol.normalized === 'string' &&

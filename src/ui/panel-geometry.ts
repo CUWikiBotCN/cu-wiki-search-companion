@@ -22,7 +22,8 @@ export class PanelGeometry {
     this.scheduleLayoutUpdate();
   };
   private readonly endDrag = (event: PointerEvent): void => {
-    if (event.pointerId === this.drag?.pointerId) this.finishDrag(event.type === 'pointercancel');
+    if (event.pointerId === this.drag?.pointerId)
+      this.finishDrag(event.type === 'pointercancel');
   };
 
   constructor(
@@ -35,23 +36,33 @@ export class PanelGeometry {
   ) {
     this.syncViewportBounds();
     window.addEventListener('resize', this.handleViewportResize);
-    window.visualViewport?.addEventListener('resize', this.handleViewportResize);
+    window.visualViewport?.addEventListener(
+      'resize',
+      this.handleViewportResize,
+    );
     this.dragHandle.addEventListener('keydown', this.handleDragHandleKeydown);
     this.dragHandle.addEventListener('pointerdown', this.startDrag);
     this.dragHandle.addEventListener('pointermove', this.moveDrag);
     this.dragHandle.addEventListener('pointerup', this.endDrag);
     this.dragHandle.addEventListener('pointercancel', this.endDrag);
     if (typeof ResizeObserver === 'function') {
-      this.resizeObserver = new ResizeObserver(() => this.scheduleLayoutUpdate());
+      this.resizeObserver = new ResizeObserver(() =>
+        this.scheduleLayoutUpdate(),
+      );
       this.resizeObserver.observe(this.panel);
       this.resizeObserver.observe(this.launcher);
     }
     if (typeof MutationObserver === 'function') {
-      this.dockChanges = new MutationObserver(() => this.scheduleLayoutUpdate());
+      this.dockChanges = new MutationObserver(() =>
+        this.scheduleLayoutUpdate(),
+      );
       this.dockDiscovery = new MutationObserver(() => {
         if (!this.dock?.isConnected) this.findDock();
       });
-      this.dockDiscovery.observe(document.body, { childList: true, subtree: true });
+      this.dockDiscovery.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
     }
     this.findDock();
     this.syncLauncherPosition();
@@ -67,7 +78,9 @@ export class PanelGeometry {
     if (dock) {
       this.resizeObserver?.observe(dock);
       this.dockChanges?.observe(dock, {
-        attributes: true, attributeFilter: ['class', 'style', 'hidden'], subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style', 'hidden'],
+        subtree: true,
       });
     }
     this.scheduleLayoutUpdate();
@@ -77,10 +90,16 @@ export class PanelGeometry {
     // Only the launcher avoids the skin dock; floating-panel coordinates stay independent.
     const width = document.documentElement.clientWidth || window.innerWidth;
     const rect = this.dock?.getBoundingClientRect();
-    const visible = this.dock && getComputedStyle(this.dock).visibility !== 'hidden';
-    const right = visible && rect && rect.width > 0 && rect.height > 0
-      ? Math.max(12, width - rect.left + 12) : 12;
-    const maxRight = Math.max(12, width - this.launcher.getBoundingClientRect().width - 12);
+    const visible =
+      this.dock && getComputedStyle(this.dock).visibility !== 'hidden';
+    const right =
+      visible && rect && rect.width > 0 && rect.height > 0
+        ? Math.max(12, width - rect.left + 12)
+        : 12;
+    const maxRight = Math.max(
+      12,
+      width - this.launcher.getBoundingClientRect().width - 12,
+    );
     const value = `${Math.min(right, maxRight)}px`;
     if (this.host.style.getPropertyValue('--cu-launcher-right') !== value) {
       this.host.style.setProperty('--cu-launcher-right', value);
@@ -89,7 +108,8 @@ export class PanelGeometry {
 
   scheduleLayoutUpdate(): void {
     if (this.destroyed) return;
-    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
+    if (this.layoutFrame !== undefined)
+      window.cancelAnimationFrame(this.layoutFrame);
     this.layoutFrame = window.requestAnimationFrame(() => {
       this.layoutFrame = undefined;
       if (!this.host.isConnected || this.destroyed) return;
@@ -104,8 +124,14 @@ export class PanelGeometry {
     if (this.destroyed) return;
     this.destroyed = true;
     window.removeEventListener('resize', this.handleViewportResize);
-    window.visualViewport?.removeEventListener('resize', this.handleViewportResize);
-    this.dragHandle.removeEventListener('keydown', this.handleDragHandleKeydown);
+    window.visualViewport?.removeEventListener(
+      'resize',
+      this.handleViewportResize,
+    );
+    this.dragHandle.removeEventListener(
+      'keydown',
+      this.handleDragHandleKeydown,
+    );
     this.dragHandle.removeEventListener('pointerdown', this.startDrag);
     this.dragHandle.removeEventListener('pointermove', this.moveDrag);
     this.dragHandle.removeEventListener('pointerup', this.endDrag);
@@ -113,7 +139,8 @@ export class PanelGeometry {
     this.resizeObserver?.disconnect();
     this.dockDiscovery?.disconnect();
     this.dockChanges?.disconnect();
-    if (this.layoutFrame !== undefined) window.cancelAnimationFrame(this.layoutFrame);
+    if (this.layoutFrame !== undefined)
+      window.cancelAnimationFrame(this.layoutFrame);
     this.layoutFrame = undefined;
     for (const frame of this.scrollFrames) window.cancelAnimationFrame(frame);
     this.scrollFrames.clear();
@@ -127,7 +154,8 @@ export class PanelGeometry {
       this.finishDrag(true);
       return;
     }
-    if (this.viewportBounds().width <= 640 || !event.key.startsWith('Arrow')) return;
+    if (this.viewportBounds().width <= 640 || !event.key.startsWith('Arrow'))
+      return;
     const directions: Record<string, [number, number]> = {
       ArrowLeft: [-1, 0],
       ArrowRight: [1, 0],
@@ -140,7 +168,10 @@ export class PanelGeometry {
     event.stopPropagation();
     const rect = this.panel.getBoundingClientRect();
     const step = event.shiftKey ? 1 : 10;
-    this.positionPanel(rect.left + direction[0] * step, rect.top + direction[1] * step);
+    this.positionPanel(
+      rect.left + direction[0] * step,
+      rect.top + direction[1] * step,
+    );
   };
 
   private readonly startDrag = (event: PointerEvent): void => {
@@ -211,20 +242,34 @@ export class PanelGeometry {
   }
 
   private viewportBounds(): { width: number; height: number } {
-    const layoutWidth = document.documentElement.clientWidth || window.innerWidth;
-    const layoutHeight = document.documentElement.clientHeight || window.innerHeight;
+    const layoutWidth =
+      document.documentElement.clientWidth || window.innerWidth;
+    const layoutHeight =
+      document.documentElement.clientHeight || window.innerHeight;
     return {
       width: Math.min(layoutWidth, window.visualViewport?.width ?? layoutWidth),
-      height: Math.min(layoutHeight, window.visualViewport?.height ?? layoutHeight),
+      height: Math.min(
+        layoutHeight,
+        window.visualViewport?.height ?? layoutHeight,
+      ),
     };
   }
 
   private syncViewportBounds(): void {
     const { width, height } = this.viewportBounds();
     this.host.style.setProperty('--cu-panel-fluid-width', `${width * 0.36}px`);
-    this.host.style.setProperty('--cu-panel-max-width', `${Math.max(0, width - 24)}px`);
-    this.host.style.setProperty('--cu-panel-max-height', `${Math.max(0, height - 84)}px`);
-    this.host.style.setProperty('--cu-panel-mobile-max-height', `${Math.max(0, height - 80)}px`);
+    this.host.style.setProperty(
+      '--cu-panel-max-width',
+      `${Math.max(0, width - 24)}px`,
+    );
+    this.host.style.setProperty(
+      '--cu-panel-max-height',
+      `${Math.max(0, height - 84)}px`,
+    );
+    this.host.style.setProperty(
+      '--cu-panel-mobile-max-height',
+      `${Math.max(0, height - 80)}px`,
+    );
     this.host.toggleAttribute('data-narrow', width <= 640);
   }
 
@@ -241,7 +286,8 @@ export class PanelGeometry {
     if (this.destroyed) return;
     const frame = window.requestAnimationFrame(() => {
       this.scrollFrames.delete(frame);
-      if (!this.destroyed && element.isConnected && !element.hidden) this.scrollBodyTo(element, block);
+      if (!this.destroyed && element.isConnected && !element.hidden)
+        this.scrollBodyTo(element, block);
     });
     this.scrollFrames.add(frame);
   }

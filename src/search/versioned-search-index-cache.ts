@@ -31,7 +31,9 @@ type SearchIndexFor<K extends SearchIndexKind> = K extends 'title'
 
 type SerializableSearchIndex = TitleIndex | ContentIndex | LuaModuleIndex;
 
-export interface SearchIndexHandle<K extends SearchIndexKind = SearchIndexKind> {
+export interface SearchIndexHandle<
+  K extends SearchIndexKind = SearchIndexKind,
+> {
   kind: K;
   index: SearchIndexFor<K>;
   throughLocalSeq: number;
@@ -132,7 +134,10 @@ export class VersionedSearchIndexCache {
   private readonly now: () => number;
   private readonly clock: () => number;
   private readonly publishDelayMs: number;
-  private readonly pendingPublishes = new Map<SearchIndexKind, PendingPublish>();
+  private readonly pendingPublishes = new Map<
+    SearchIndexKind,
+    PendingPublish
+  >();
   private readonly runtime = new Map<SearchIndexKind, RuntimeState>();
   private readonly observed = new Map<SearchIndexKind, SnapshotInspection>();
   private observationVersion = 0;
@@ -195,7 +200,8 @@ export class VersionedSearchIndexCache {
           runtimeStatus = changedPages.length ? 'replay-required' : 'available';
         } catch (error) {
           runtimeStatus = 'corrupt';
-          runtimeMessage = error instanceof Error ? error.message : String(error);
+          runtimeMessage =
+            error instanceof Error ? error.message : String(error);
           await this.deleteSnapshotIfUnchanged(
             bundle.snapshot,
             bundle.snapshotGeneration,
@@ -278,11 +284,14 @@ export class VersionedSearchIndexCache {
         const pages =
           currentSequence > handle.throughLocalSeq
             ? handle.kind === 'title'
-              ? await readPageHeadersAfter(this.database, handle.throughLocalSeq)
+              ? await readPageHeadersAfter(
+                  this.database,
+                  handle.throughLocalSeq,
+                )
               : await this.database.pages
-                .where('localSeq')
-                .above(handle.throughLocalSeq)
-                .toArray()
+                  .where('localSeq')
+                  .above(handle.throughLocalSeq)
+                  .toArray()
             : [];
         return { currentSequence, pages };
       },
@@ -419,7 +428,9 @@ export class VersionedSearchIndexCache {
     return result;
   }
 
-  schedulePublish<K extends SearchIndexKind>(handle: SearchIndexHandle<K>): void {
+  schedulePublish<K extends SearchIndexKind>(
+    handle: SearchIndexHandle<K>,
+  ): void {
     const pending = this.pendingPublishes.get(handle.kind);
     if (pending) clearTimeout(pending.timer);
     const request: PendingPublish = { handle };
@@ -429,13 +440,17 @@ export class VersionedSearchIndexCache {
         if (this.pendingPublishes.get(handle.kind) !== request) return;
         this.pendingPublishes.delete(handle.kind);
         const result = await this.publishOnce(handle);
-        if (result.status === 'skipped' && result.reason === 'sequence-changed') {
+        if (
+          result.status === 'skipped' &&
+          result.reason === 'sequence-changed'
+        ) {
           const previousSequence = handle.throughLocalSeq;
           await this.refresh(handle);
           if (
             handle.throughLocalSeq > previousSequence &&
             !this.pendingPublishes.has(handle.kind)
-          ) this.schedulePublish(handle);
+          )
+            this.schedulePublish(handle);
         }
       }).catch((error: unknown) => {
         console.warn('[CU Wiki Search] index snapshot publish failed', error);
@@ -450,8 +465,11 @@ export class VersionedSearchIndexCache {
       const snapshot = this.observed.get(kind);
       if (!snapshot) return { kind, status: 'not-started' };
       // The caller can lag a validated snapshot (e.g. sequence gaps from files).
-      const status = snapshot.status === 'available' && snapshot.throughLocalSeq! < currentSequence
-        ? 'replay-required' : snapshot.status;
+      const status =
+        snapshot.status === 'available' &&
+        snapshot.throughLocalSeq! < currentSequence
+          ? 'replay-required'
+          : snapshot.status;
       return { ...snapshot, status };
     });
   }
@@ -474,52 +492,61 @@ export class VersionedSearchIndexCache {
         currentSequence: await readLocalSequence(this.database),
       }),
     );
-    const inspections = await Promise.all((['title', 'content', 'lua'] as const).map(async (kind): Promise<SnapshotInspection> => {
-      const record = records.find((candidate) => candidate.key === snapshotKey(kind));
-      const runtime = this.runtime.get(kind);
-      if (!record) {
-        return {
-          kind,
-          status: runtime ? runtime.status : 'not-started',
-          restoreMs: runtime?.restoreMs,
-          message: runtime?.message,
-        };
-      }
-      let status: SnapshotInspectionStatus;
-      const matchesValidatedSnapshot = Boolean(
-        runtime?.validatedSnapshotFingerprint &&
-          hasFingerprint(record, runtime.validatedSnapshotFingerprint),
-      );
-      const hasValidCurrentPayload = await hasValidPayload(
-        record,
-        !matchesValidatedSnapshot,
-      );
-      const structurallyCorrupt =
-        record.key !== snapshotKey(kind) ||
-        record.kind !== kind ||
-        !isNonNegativeSafeInteger(record.throughLocalSeq) ||
-        record.throughLocalSeq > currentSequence ||
-        !isNonNegativeSafeInteger(record.documentCount) ||
-        !hasValidCurrentPayload;
-      if (structurallyCorrupt) status = 'corrupt';
-      else if (record.snapshotFormatVersion !== SNAPSHOT_FORMAT_VERSION) status = 'outdated';
-      else if (!runtime?.compatibilityKey) status = 'not-started';
-      else if (record.compatibilityKey !== runtime.compatibilityKey) status = 'outdated';
-      else if (record.throughLocalSeq > currentSequence) status = 'corrupt';
-      else if (record.throughLocalSeq < currentSequence) status = 'replay-required';
-      else status = 'available';
-      return {
-        kind,
-        status,
-        throughLocalSeq: record.throughLocalSeq,
-        documentCount: record.documentCount,
-        payloadBytes: record.payloadBytes,
-        createdAt: record.createdAt,
-        restoreMs: runtime?.restoreMs,
-        serializationMs: record.serializationMs,
-        message: runtime?.message,
-      };
-    }));
+    const inspections = await Promise.all(
+      (['title', 'content', 'lua'] as const).map(
+        async (kind): Promise<SnapshotInspection> => {
+          const record = records.find(
+            (candidate) => candidate.key === snapshotKey(kind),
+          );
+          const runtime = this.runtime.get(kind);
+          if (!record) {
+            return {
+              kind,
+              status: runtime ? runtime.status : 'not-started',
+              restoreMs: runtime?.restoreMs,
+              message: runtime?.message,
+            };
+          }
+          let status: SnapshotInspectionStatus;
+          const matchesValidatedSnapshot = Boolean(
+            runtime?.validatedSnapshotFingerprint &&
+            hasFingerprint(record, runtime.validatedSnapshotFingerprint),
+          );
+          const hasValidCurrentPayload = await hasValidPayload(
+            record,
+            !matchesValidatedSnapshot,
+          );
+          const structurallyCorrupt =
+            record.key !== snapshotKey(kind) ||
+            record.kind !== kind ||
+            !isNonNegativeSafeInteger(record.throughLocalSeq) ||
+            record.throughLocalSeq > currentSequence ||
+            !isNonNegativeSafeInteger(record.documentCount) ||
+            !hasValidCurrentPayload;
+          if (structurallyCorrupt) status = 'corrupt';
+          else if (record.snapshotFormatVersion !== SNAPSHOT_FORMAT_VERSION)
+            status = 'outdated';
+          else if (!runtime?.compatibilityKey) status = 'not-started';
+          else if (record.compatibilityKey !== runtime.compatibilityKey)
+            status = 'outdated';
+          else if (record.throughLocalSeq > currentSequence) status = 'corrupt';
+          else if (record.throughLocalSeq < currentSequence)
+            status = 'replay-required';
+          else status = 'available';
+          return {
+            kind,
+            status,
+            throughLocalSeq: record.throughLocalSeq,
+            documentCount: record.documentCount,
+            payloadBytes: record.payloadBytes,
+            createdAt: record.createdAt,
+            restoreMs: runtime?.restoreMs,
+            serializationMs: record.serializationMs,
+            message: runtime?.message,
+          };
+        },
+      ),
+    );
     // A diagnostic that started earlier must not overwrite a later local clear/publish.
     if (observationVersion === this.observationVersion) {
       for (const inspection of inspections) this.observe(inspection);
@@ -528,7 +555,8 @@ export class VersionedSearchIndexCache {
   }
 
   async clear(): Promise<void> {
-    for (const pending of this.pendingPublishes.values()) clearTimeout(pending.timer);
+    for (const pending of this.pendingPublishes.values())
+      clearTimeout(pending.timer);
     this.pendingPublishes.clear();
     this.publishingSuppressed = true;
     await this.database.transaction(
@@ -555,7 +583,11 @@ export class VersionedSearchIndexCache {
         status: 'missing',
         message: undefined,
       });
-      this.observe({ kind, status: 'missing', restoreMs: this.runtime.get(kind)?.restoreMs });
+      this.observe({
+        kind,
+        status: 'missing',
+        restoreMs: this.runtime.get(kind)?.restoreMs,
+      });
     }
   }
 
@@ -574,19 +606,23 @@ export class VersionedSearchIndexCache {
       this.database.pages,
       this.database.fileResources,
       async () => {
-        const [snapshot, currentSequence, snapshotGeneration] = await Promise.all([
-          this.database.indexSnapshots.get(snapshotKey(kind)),
-          readLocalSequence(this.database),
-          readSnapshotGeneration(this.database),
-        ]);
+        const [snapshot, currentSequence, snapshotGeneration] =
+          await Promise.all([
+            this.database.indexSnapshots.get(snapshotKey(kind)),
+            readLocalSequence(this.database),
+            readSnapshotGeneration(this.database),
+          ]);
         const pagesAreDelta = Boolean(
           snapshot &&
-            snapshot.compatibilityKey === compatibilityKey &&
-            snapshot.throughLocalSeq <= currentSequence,
+          snapshot.compatibilityKey === compatibilityKey &&
+          snapshot.throughLocalSeq <= currentSequence,
         );
         const pages = pagesAreDelta
           ? kind === 'title'
-            ? await readPageHeadersAfter(this.database, snapshot!.throughLocalSeq)
+            ? await readPageHeadersAfter(
+                this.database,
+                snapshot!.throughLocalSeq,
+              )
             : await this.database.pages
                 .where('localSeq')
                 .above(snapshot!.throughLocalSeq)
@@ -613,11 +649,12 @@ export class VersionedSearchIndexCache {
       this.database.pages,
       this.database.fileResources,
       async () => {
-        const [snapshot, currentSequence, snapshotGeneration] = await Promise.all([
-          this.database.indexSnapshots.get(snapshotKey(kind)),
-          readLocalSequence(this.database),
-          readSnapshotGeneration(this.database),
-        ]);
+        const [snapshot, currentSequence, snapshotGeneration] =
+          await Promise.all([
+            this.database.indexSnapshots.get(snapshotKey(kind)),
+            readLocalSequence(this.database),
+            readSnapshotGeneration(this.database),
+          ]);
         return {
           snapshot,
           currentSequence,
@@ -631,10 +668,14 @@ export class VersionedSearchIndexCache {
     if (!this.storage) return true;
     try {
       const estimate = await this.storage.estimate();
-      if (estimate.quota === undefined || estimate.usage === undefined) return true;
+      if (estimate.quota === undefined || estimate.usage === undefined)
+        return true;
       return estimate.quota - estimate.usage >= payloadBytes * 1.2;
     } catch (error) {
-      console.warn('[CU Wiki Search] storage quota estimate failed; assuming snapshots may be saved', error);
+      console.warn(
+        '[CU Wiki Search] storage quota estimate failed; assuming snapshots may be saved',
+        error,
+      );
       return true;
     }
   }
@@ -664,7 +705,9 @@ export class VersionedSearchIndexCache {
   }
 }
 
-function snapshotMetadata(record: IndexSnapshotRecord | undefined): Partial<SnapshotInspection> {
+function snapshotMetadata(
+  record: IndexSnapshotRecord | undefined,
+): Partial<SnapshotInspection> {
   if (!record) return {};
   return {
     throughLocalSeq: record.throughLocalSeq,
@@ -718,7 +761,8 @@ async function validateSnapshot(
     throw new Error('快照 SHA-256 校验失败');
   }
   const payload: unknown = JSON.parse(record.json);
-  if (!payload || typeof payload !== 'object') throw new Error('快照 JSON 结构无效');
+  if (!payload || typeof payload !== 'object')
+    throw new Error('快照 JSON 结构无效');
   if (!Number.isSafeInteger(record.documentCount) || record.documentCount < 0) {
     throw new Error('快照文档数量无效');
   }
@@ -808,7 +852,9 @@ function hasFingerprint(
   );
 }
 
-async function readSnapshotGeneration(database: WikiSearchDatabase): Promise<number> {
+async function readSnapshotGeneration(
+  database: WikiSearchDatabase,
+): Promise<number> {
   const record = await database.syncState.get(SNAPSHOT_GENERATION_KEY);
   if (record === undefined) return 0;
   if (isNonNegativeSafeInteger(record.value)) return record.value;

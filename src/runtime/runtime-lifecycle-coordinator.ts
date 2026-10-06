@@ -72,7 +72,8 @@ export class RuntimeLifecycleCoordinator {
       return result;
     });
     const tracked = request.finally(() => {
-      if (this.writerPromises.get(key) === tracked) this.writerPromises.delete(key);
+      if (this.writerPromises.get(key) === tracked)
+        this.writerPromises.delete(key);
     });
     this.writerPromises.set(key, tracked);
     return tracked;

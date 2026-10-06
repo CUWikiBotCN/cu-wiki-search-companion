@@ -5,7 +5,10 @@ import type {
   SearchIndexRebuildResult,
   SearchIndexRebuildWarning,
 } from '../maintenance/local-data-maintenance';
-import { CssSourceIndex, type CssSearchResult } from '../search/css-source-index';
+import {
+  CssSourceIndex,
+  type CssSearchResult,
+} from '../search/css-source-index';
 import type { ContentSyncScope } from '../sync/content-job-policy';
 import type { ContentSearchResult } from '../search/content-index';
 import type { LuaModuleSearchResult } from '../search/lua-module-index';
@@ -73,7 +76,10 @@ export interface PageSearchRuntimeOptions {
     analyzer: Analyzer,
     onBatch: (pages: PageRecord[]) => void,
   ): Promise<void>;
-  synchronizeContent(force: boolean, scope?: ContentSyncScope): Promise<ContentSyncProgress>;
+  synchronizeContent(
+    force: boolean,
+    scope?: ContentSyncScope,
+  ): Promise<ContentSyncProgress>;
   rebuildIndexes(analyzer: Analyzer): Promise<SearchIndexRebuildResult>;
   onStateChange?(state: PageSearchRuntimeState): void;
   onResultsChanged?(kinds: readonly PageSearchKind[]): void;
@@ -111,7 +117,12 @@ export class PageSearchRuntime {
   private mutableState: PageSearchRuntimeState = {
     initialized: false,
     engine: 'bootstrap',
-    readiness: { title: 'not-started', content: 'not-started', lua: 'not-started', css: 'not-started' },
+    readiness: {
+      title: 'not-started',
+      content: 'not-started',
+      lua: 'not-started',
+      css: 'not-started',
+    },
     indexedPages: 0,
     indexedContentPages: 0,
     indexedLuaModules: 0,
@@ -166,7 +177,11 @@ export class PageSearchRuntime {
       },
       settle: async () => {
         // CSS never needs a natural-language analyzer or a title snapshot.
-        await this.options.synchronizeTitles(false, this.bootstrapAnalyzer, () => undefined);
+        await this.options.synchronizeTitles(
+          false,
+          this.bootstrapAnalyzer,
+          () => undefined,
+        );
         await this.refresh();
         await this.cssSyncSession.run(false);
         this.setReadiness('css', 'ready');
@@ -174,12 +189,19 @@ export class PageSearchRuntime {
     });
     this.cssSyncSession = new ContentSyncSession({
       synchronize: (force) => this.performCssSynchronization(force),
-      reportFailure: (error) => this.status(`CSS 同步暂停，本地缓存仍可搜索：${errorMessage(error)}`, 'error'),
+      reportFailure: (error) =>
+        this.status(
+          `CSS 同步暂停，本地缓存仍可搜索：${errorMessage(error)}`,
+          'error',
+        ),
     });
     this.contentSyncSession = new ContentSyncSession({
       synchronize: (force) => this.performContentSynchronization(force),
       reportFailure: (error) => {
-        this.status(`正文同步暂停，本地已有正文仍可搜索：${errorMessage(error)}`, 'error');
+        this.status(
+          `正文同步暂停，本地已有正文仍可搜索：${errorMessage(error)}`,
+          'error',
+        );
       },
     });
   }
@@ -188,8 +210,12 @@ export class PageSearchRuntime {
     return {
       ...this.mutableState,
       readiness: { ...this.mutableState.readiness },
-      namespaces: this.mutableState.namespaces.map((namespace) => ({ ...namespace })),
-      snapshots: this.mutableState.snapshots.map((snapshot) => ({ ...snapshot })),
+      namespaces: this.mutableState.namespaces.map((namespace) => ({
+        ...namespace,
+      })),
+      snapshots: this.mutableState.snapshots.map((snapshot) => ({
+        ...snapshot,
+      })),
     };
   }
 
@@ -209,7 +235,8 @@ export class PageSearchRuntime {
       this.resultsChanged(['title']);
     })();
     const tracked = attempt.catch((error: unknown) => {
-      if (this.initializePromise === tracked) this.initializePromise = undefined;
+      if (this.initializePromise === tracked)
+        this.initializePromise = undefined;
       throw error;
     });
     this.initializePromise = tracked;
@@ -243,23 +270,33 @@ export class PageSearchRuntime {
   async synchronizeContent(force = false): Promise<void> {
     await this.initialize();
     const attempts: Promise<void>[] = [];
-    if (this.contentHandle || this.luaHandle || !this.cssIndex) attempts.push(this.contentSyncSession.run(force));
+    if (this.contentHandle || this.luaHandle || !this.cssIndex)
+      attempts.push(this.contentSyncSession.run(force));
     if (this.cssIndex) attempts.push(this.cssSyncSession.run(force));
     const outcomes = await Promise.allSettled(attempts);
-    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
+    for (const outcome of outcomes)
+      if (outcome.status === 'rejected') throw outcome.reason;
   }
 
   refresh(): Promise<void> {
     return this.queueRefresh();
   }
 
-  private queueRefresh(forceCss = false, rebuildContent = false): Promise<void> {
-    const refreshing = this.refreshQueue.then(() => this.refreshOnce(forceCss, rebuildContent));
+  private queueRefresh(
+    forceCss = false,
+    rebuildContent = false,
+  ): Promise<void> {
+    const refreshing = this.refreshQueue.then(() =>
+      this.refreshOnce(forceCss, rebuildContent),
+    );
     this.refreshQueue = refreshing.catch(() => undefined);
     return refreshing;
   }
 
-  private async refreshOnce(forceCss: boolean, rebuildContent: boolean): Promise<void> {
+  private async refreshOnce(
+    forceCss: boolean,
+    rebuildContent: boolean,
+  ): Promise<void> {
     await this.initialize();
     if (this.rebuildPromise) await settle(this.rebuildPromise);
     const generation = this.installGeneration;
@@ -277,7 +314,9 @@ export class PageSearchRuntime {
         }
       }
       while (true) {
-        const { pages, sequence } = await this.readBootstrap(this.bootstrapThroughLocalSeq);
+        const { pages, sequence } = await this.readBootstrap(
+          this.bootstrapThroughLocalSeq,
+        );
         if (stale()) return this.refreshOnce(forceCss, rebuildContent);
         const handles = this.handles();
         for (const handle of handles) {
@@ -288,19 +327,28 @@ export class PageSearchRuntime {
             this.indexCache.schedulePublish(handle);
           }
         }
-        if (await this.cssIndex?.refresh(this.database, forceCss)) changed.add('css');
+        if (await this.cssIndex?.refresh(this.database, forceCss))
+          changed.add('css');
         if (stale()) return this.refreshOnce(forceCss, rebuildContent);
         forceCss = false;
         if (pages.length) {
           this.bootstrapIndex!.update(pages);
-          this.mutableState.namespaces = this.bootstrapIndex!.namespaceSummary();
+          this.mutableState.namespaces =
+            this.bootstrapIndex!.namespaceSummary();
           changed.add('title');
         }
         this.bootstrapThroughLocalSeq = sequence;
-        this.mutableState.throughLocalSeq = Math.max(sequence, ...this.handles().map((handle) => handle.throughLocalSeq));
+        this.mutableState.throughLocalSeq = Math.max(
+          sequence,
+          ...this.handles().map((handle) => handle.throughLocalSeq),
+        );
         const latest = await readLocalSequence(this.database);
         if (stale()) return this.refreshOnce(forceCss, rebuildContent);
-        if (latest <= sequence && this.handles().every((handle) => handle.throughLocalSeq >= latest)) break;
+        if (
+          latest <= sequence &&
+          this.handles().every((handle) => handle.throughLocalSeq >= latest)
+        )
+          break;
       }
       this.updateCounts();
       await this.refreshSnapshotStatus();
@@ -316,11 +364,22 @@ export class PageSearchRuntime {
     }
   }
 
-  private readBootstrap(after?: number): Promise<{ pages: PageRecord[]; sequence: number }> {
-    return this.database.transaction('r', this.database.pages, this.database.fileResources, this.database.syncState, async () => ({
-      sequence: await readLocalSequence(this.database),
-      pages: after === undefined ? await readActivePageHeaders(this.database) : await readPageHeadersAfter(this.database, after),
-    }));
+  private readBootstrap(
+    after?: number,
+  ): Promise<{ pages: PageRecord[]; sequence: number }> {
+    return this.database.transaction(
+      'r',
+      this.database.pages,
+      this.database.fileResources,
+      this.database.syncState,
+      async () => ({
+        sequence: await readLocalSequence(this.database),
+        pages:
+          after === undefined
+            ? await readActivePageHeaders(this.database)
+            : await readPageHeadersAfter(this.database, after),
+      }),
+    );
   }
 
   rebuildIndexes(): Promise<SearchIndexRebuildWarning[]> {
@@ -335,7 +394,9 @@ export class PageSearchRuntime {
       await this.initialize();
       await activeLocalPreparations;
       const loadedAnalyzer = await this.analyzerPreparation.prepare();
-      const rebuilt = await this.options.rebuildIndexes(loadedAnalyzer.analyzer);
+      const rebuilt = await this.options.rebuildIndexes(
+        loadedAnalyzer.analyzer,
+      );
       const { pages, sequence } = await this.readBootstrap();
       const bootstrap = new LinearTitleIndex(this.bootstrapAnalyzer, pages);
 
@@ -345,7 +406,10 @@ export class PageSearchRuntime {
       this.luaHandle = rebuilt.lua;
       this.bootstrapIndex = bootstrap;
       this.bootstrapThroughLocalSeq = sequence;
-      this.searchBackend = new CombinedTitleIndex(rebuilt.title.index, bootstrap);
+      this.searchBackend = new CombinedTitleIndex(
+        rebuilt.title.index,
+        bootstrap,
+      );
       this.mutableState.readiness = {
         title: retainReady(this.mutableState.readiness.title),
         content: retainReady(this.mutableState.readiness.content),
@@ -361,7 +425,8 @@ export class PageSearchRuntime {
       );
       const changed: PageSearchKind[] = ['title', 'content', 'lua'];
       try {
-        if (await this.cssIndex?.refresh(this.database, true)) changed.push('css');
+        if (await this.cssIndex?.refresh(this.database, true))
+          changed.push('css');
         await this.refreshSnapshotStatus();
       } finally {
         // Installed indexes remain current even if CSS or diagnostics fail.
@@ -378,7 +443,11 @@ export class PageSearchRuntime {
   }
 
   async refreshSnapshotStatus(): Promise<void> {
-    this.patchState({ snapshots: this.indexCache.getObservedStatus(this.mutableState.throughLocalSeq) });
+    this.patchState({
+      snapshots: this.indexCache.getObservedStatus(
+        this.mutableState.throughLocalSeq,
+      ),
+    });
   }
 
   searchTitles(query: string, namespace?: number): TitleSearchResult[] {
@@ -435,7 +504,10 @@ export class PageSearchRuntime {
     }
     if (kind === 'content' && !this.contentHandle) {
       this.status('正在按需恢复正文索引…');
-      const restored = await this.indexCache.restoreOrRebuild('content', analyzer);
+      const restored = await this.indexCache.restoreOrRebuild(
+        'content',
+        analyzer,
+      );
       if (installGeneration === this.installGeneration || !this.contentHandle) {
         this.contentHandle = restored;
         this.resultsChanged(['content']);
@@ -461,9 +533,15 @@ export class PageSearchRuntime {
     if (snapshotWarning) return;
     const count = this.mutableState.indexedPages;
     if (this.analyzerResult?.warning) {
-      this.status(`jieba 加载失败，已用 Intl.Segmenter · ${count} 标题`, 'error');
+      this.status(
+        `jieba 加载失败，已用 Intl.Segmenter · ${count} 标题`,
+        'error',
+      );
     } else {
-      this.status(`标题索引已就绪 · ${count} 标题 · 正文与 Lua 按模式加载`, 'success');
+      this.status(
+        `标题索引已就绪 · ${count} 标题 · 正文与 Lua 按模式加载`,
+        'success',
+      );
     }
   }
 
@@ -481,11 +559,14 @@ export class PageSearchRuntime {
     await this.refreshSnapshotStatus();
   }
 
-  private synchronizePreparedTitles(force: boolean): Promise<string | undefined> {
+  private synchronizePreparedTitles(
+    force: boolean,
+  ): Promise<string | undefined> {
     if (this.titleSyncPromise) return this.titleSyncPromise;
     const handle = this.titleHandle;
     const analyzer = this.analyzerResult?.analyzer;
-    if (!handle || !analyzer) return Promise.reject(new Error('增强标题索引尚未就绪'));
+    if (!handle || !analyzer)
+      return Promise.reject(new Error('增强标题索引尚未就绪'));
 
     const attempt = (async () => {
       let synchronizationError: unknown;
@@ -510,9 +591,15 @@ export class PageSearchRuntime {
       const current = this.titleHandle;
       let warning: string | undefined;
       if (current) {
-        warning = snapshotPublishWarning(await this.indexCache.publish(current));
+        warning = snapshotPublishWarning(
+          await this.indexCache.publish(current),
+        );
         if (warning) this.status(warning, 'error');
-        else this.status(`标题同步完成 · ${this.mutableState.indexedPages} 页`, 'success');
+        else
+          this.status(
+            `标题同步完成 · ${this.mutableState.indexedPages} 页`,
+            'success',
+          );
       }
       await this.refreshSnapshotStatus();
       return warning;
@@ -529,13 +616,20 @@ export class PageSearchRuntime {
     let failure: unknown;
     try {
       progress = await this.options.synchronizeContent(force, 'css');
-    } catch (error) { failure = error; }
+    } catch (error) {
+      failure = error;
+    }
     try {
       await this.queueRefresh(force);
-    } catch (error) { failure ??= error; }
+    } catch (error) {
+      failure ??= error;
+    }
     if (failure) throw failure;
     this.updateCounts();
-    this.status(`CSS 同步完成 · ${progress!.done}/${progress!.total} 页 · ${this.cssIndex?.size ?? 0} 份源码`, progress!.failed ? 'error' : 'success');
+    this.status(
+      `CSS 同步完成 · ${progress!.done}/${progress!.total} 页 · ${this.cssIndex?.size ?? 0} 份源码`,
+      progress!.failed ? 'error' : 'success',
+    );
   }
 
   private async performContentSynchronization(force: boolean): Promise<void> {
@@ -548,7 +642,10 @@ export class PageSearchRuntime {
     }
 
     try {
-      await this.queueRefresh(false, synchronizationError === undefined && force);
+      await this.queueRefresh(
+        false,
+        synchronizationError === undefined && force,
+      );
     } catch (refreshError) {
       if (synchronizationError === undefined) throw refreshError;
     }
@@ -558,7 +655,12 @@ export class PageSearchRuntime {
     for (const handle of [this.contentHandle, this.luaHandle]) {
       if (!handle) continue;
       const replayed = await this.indexCache.refresh(handle);
-      if (replayed && handle === (handle.kind === 'content' ? this.contentHandle : this.luaHandle)) this.resultsChanged([handle.kind]);
+      if (
+        replayed &&
+        handle ===
+          (handle.kind === 'content' ? this.contentHandle : this.luaHandle)
+      )
+        this.resultsChanged([handle.kind]);
       warning ??= snapshotPublishWarning(await this.indexCache.publish(handle));
     }
     this.updateCounts();
@@ -567,7 +669,8 @@ export class PageSearchRuntime {
       ? ` · ${this.mutableState.indexedContentPages} 正文 / ${this.mutableState.indexedLuaModules} Lua`
       : ' · 正文与 Lua 索引将在切换模式时按需恢复';
     this.status(
-      warning ?? `正文同步完成 · ${progress!.done}/${progress!.total} 页${loaded}`,
+      warning ??
+        `正文同步完成 · ${progress!.done}/${progress!.total} 页${loaded}`,
       progress!.failed || warning ? 'error' : 'success',
     );
   }
@@ -586,8 +689,14 @@ export class PageSearchRuntime {
     this.emitState();
   }
 
-  private setReadiness(kind: PageSearchKind, readiness: PageSearchReadiness): void {
-    this.mutableState.readiness = { ...this.mutableState.readiness, [kind]: readiness };
+  private setReadiness(
+    kind: PageSearchKind,
+    readiness: PageSearchReadiness,
+  ): void {
+    this.mutableState.readiness = {
+      ...this.mutableState.readiness,
+      [kind]: readiness,
+    };
     this.emitState();
   }
 
@@ -620,8 +729,11 @@ function retainReady(readiness: PageSearchReadiness): PageSearchReadiness {
   return readiness === 'ready' ? 'ready' : 'local';
 }
 
-function snapshotPublishWarning(result: SnapshotPublishResult): string | undefined {
-  if (result.status === 'published' || result.reason === 'not-newer') return undefined;
+function snapshotPublishWarning(
+  result: SnapshotPublishResult,
+): string | undefined {
+  if (result.status === 'published' || result.reason === 'not-newer')
+    return undefined;
   if (result.reason === 'too-large') {
     return '索引快照超过 64 MiB，已跳过保存；当前搜索仍可正常使用';
   }

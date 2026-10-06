@@ -16,7 +16,10 @@ import {
   readCacheVersionContract,
   type CacheVersionContract,
 } from '../storage/version-contract';
-import { CONTENT_JOB_TYPE, isCssContentModel } from '../sync/content-job-policy';
+import {
+  CONTENT_JOB_TYPE,
+  isCssContentModel,
+} from '../sync/content-job-policy';
 import { prepareContentJobs } from '../sync/content-sync';
 import { readRecentChangeSyncState } from '../sync/recent-change-sync';
 import { readReconciliationSyncState } from '../sync/reconciliation-sync';
@@ -100,40 +103,59 @@ export class LocalDataMaintenance {
   }
 
   async inspect(): Promise<LocalDataDiagnostics> {
-    const counts = { pages: 0, files: 0, dataCodes: 0, contentSources: 0, luaSources: 0, cssSources: 0 };
+    const counts = {
+      pages: 0,
+      files: 0,
+      dataCodes: 0,
+      contentSources: 0,
+      luaSources: 0,
+      cssSources: 0,
+    };
     const cssIds = new Set<number>();
     const cssJobs = { done: 0, pending: 0, running: 0, failed: 0 };
     const jobs = { done: 0, pending: 0, running: 0, failed: 0 };
-    const [dataCodes, recentState, reconciliationState, versionState, snapshots] =
-      await Promise.all([
-        this.database.dataCodes.count(),
-        diagnosticState(() => readRecentChangeSyncState(this.database)),
-        diagnosticState(() => readReconciliationSyncState(this.database)),
-        diagnosticState(() => readCacheVersionContract(this.database)),
-        this.indexCache.inspect(),
-        this.database.pages.each((page) => {
-          if (page.deleted) return;
-          if (isCssContentModel(page.contentModel)) cssIds.add(page.id);
-          counts.pages += 1;
-          if (page.isRedirect || typeof page.content !== 'string') return;
-          const model = page.contentModel?.toLocaleLowerCase();
-          if (isCssContentModel(model)) counts.cssSources += 1;
-          else if (model === 'scribunto') counts.luaSources += 1;
-          else if (model === 'wikitext' || model === 'bson') counts.contentSources += 1;
+    const [
+      dataCodes,
+      recentState,
+      reconciliationState,
+      versionState,
+      snapshots,
+    ] = await Promise.all([
+      this.database.dataCodes.count(),
+      diagnosticState(() => readRecentChangeSyncState(this.database)),
+      diagnosticState(() => readReconciliationSyncState(this.database)),
+      diagnosticState(() => readCacheVersionContract(this.database)),
+      this.indexCache.inspect(),
+      this.database.pages.each((page) => {
+        if (page.deleted) return;
+        if (isCssContentModel(page.contentModel)) cssIds.add(page.id);
+        counts.pages += 1;
+        if (page.isRedirect || typeof page.content !== 'string') return;
+        const model = page.contentModel?.toLocaleLowerCase();
+        if (isCssContentModel(model)) counts.cssSources += 1;
+        else if (model === 'scribunto') counts.luaSources += 1;
+        else if (model === 'wikitext' || model === 'bson')
+          counts.contentSources += 1;
+      }),
+      this.database.fileResources.each((file) => {
+        if (!file.deleted) counts.files += 1;
+      }),
+      this.database.jobs
+        .where('type')
+        .equals(CONTENT_JOB_TYPE)
+        .each((job) => {
+          jobs[job.status] += 1;
         }),
-        this.database.fileResources.each((file) => {
-          if (!file.deleted) counts.files += 1;
-        }),
-        this.database.jobs
-          .where('type')
-          .equals(CONTENT_JOB_TYPE)
-          .each((job) => {
-            jobs[job.status] += 1;
-          }),
-      ]);
-    await this.database.jobs.where('type').equals(CONTENT_JOB_TYPE).each((job) => {
-      if (cssIds.has(job.pageId)) { cssJobs[job.status] += 1; jobs[job.status] -= 1; }
-    });
+    ]);
+    await this.database.jobs
+      .where('type')
+      .equals(CONTENT_JOB_TYPE)
+      .each((job) => {
+        if (cssIds.has(job.pageId)) {
+          cssJobs[job.status] += 1;
+          jobs[job.status] -= 1;
+        }
+      });
     counts.dataCodes = dataCodes;
     const storage = await this.inspectStorage();
     return {
@@ -145,13 +167,17 @@ export class LocalDataMaintenance {
       versionContract: versionState.value,
       snapshots,
       storage,
-      warnings: [recentState.warning, reconciliationState.warning, versionState.warning].filter(
-        (warning): warning is string => warning !== undefined,
-      ),
+      warnings: [
+        recentState.warning,
+        reconciliationState.warning,
+        versionState.warning,
+      ].filter((warning): warning is string => warning !== undefined),
     };
   }
 
-  async rebuildSearchIndexes(analyzer: Analyzer): Promise<SearchIndexRebuildResult> {
+  async rebuildSearchIndexes(
+    analyzer: Analyzer,
+  ): Promise<SearchIndexRebuildResult> {
     await this.indexCache.clear();
     this.indexCache.allowPublishing();
     const title = await this.indexCache.restoreOrRebuild('title', analyzer);
@@ -162,9 +188,11 @@ export class LocalDataMaintenance {
       content: await this.publishRebuiltHandle(content),
       lua: await this.publishRebuiltHandle(lua),
     };
-    const warnings = (Object.entries(publishResults) as Array<
-      ['title' | 'content' | 'lua', SnapshotPublishResult]
-    >).flatMap(([kind, result]) => publicationWarning(kind, result));
+    const warnings = (
+      Object.entries(publishResults) as Array<
+        ['title' | 'content' | 'lua', SnapshotPublishResult]
+      >
+    ).flatMap(([kind, result]) => publicationWarning(kind, result));
     return { title, content, lua, publishResults, warnings };
   }
 
@@ -263,5 +291,7 @@ function publicationWarning(
         : result.reason === 'sequence-changed'
           ? '页面事实序列持续变化'
           : '重建期间快照 generation 已变化';
-  return [{ kind, reason: result.reason, message: `${label}快照未保存：${detail}` }];
+  return [
+    { kind, reason: result.reason, message: `${label}快照未保存：${detail}` },
+  ];
 }

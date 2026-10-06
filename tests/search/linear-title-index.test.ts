@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 import { describe, expect, it } from 'vitest';
 
-import { Analyzer, createBootstrapSegmenter } from '../../src/analyzer/analyzer';
+import {
+  Analyzer,
+  createBootstrapSegmenter,
+} from '../../src/analyzer/analyzer';
 import type { PageRecord } from '../../src/types';
-import { CombinedTitleIndex, LinearTitleIndex, type TitleSearchBackend } from '../../src/search/title-index';
+import {
+  CombinedTitleIndex,
+  LinearTitleIndex,
+  type TitleSearchBackend,
+} from '../../src/search/title-index';
 
 const analyzer = new Analyzer(createBootstrapSegmenter());
 const pages: PageRecord[] = [
@@ -17,7 +24,10 @@ describe('LinearTitleIndex', () => {
   it('is immediately searchable by Chinese substring and ranks exact titles first', () => {
     const index = new LinearTitleIndex(analyzer, pages);
 
-    expect(index.search('鹿彈').map((result) => result.title)).toEqual(['鹿弹', '12号鹿弹']);
+    expect(index.search('鹿彈').map((result) => result.title)).toEqual([
+      '鹿弹',
+      '12号鹿弹',
+    ]);
   });
 
   it('supports Latin infixes and namespace filtering', () => {
@@ -30,7 +40,10 @@ describe('LinearTitleIndex', () => {
   });
 
   it('keeps direct fallback matches when the enhanced index misses', () => {
-    const emptyPrimary: TitleSearchBackend = { size: pages.length, search: () => [] };
+    const emptyPrimary: TitleSearchBackend = {
+      size: pages.length,
+      search: () => [],
+    };
     const index = new CombinedTitleIndex(
       emptyPrimary,
       new LinearTitleIndex(analyzer, pages),
@@ -82,7 +95,9 @@ describe('LinearTitleIndex', () => {
       { id: 0, name: '（主）' },
       { id: 10, name: '模板' },
     ]);
-    index.update([{ ...page(2, '模板:PopupNotice', 10, '模板'), deleted: true }]);
+    index.update([
+      { ...page(2, '模板:PopupNotice', 10, '模板'), deleted: true },
+    ]);
     expect(index.namespaceSummary()).toEqual([{ id: 0, name: '（主）' }]);
     index.update([
       { ...page(1, '12号鹿弹', 0, ''), deleted: true },
@@ -106,7 +121,9 @@ describe('LinearTitleIndex', () => {
     ]);
     index.update([{ ...page(1, '模块:移动新页', 828, '模块'), localSeq: 6 }]);
     expect(index.namespaceSummary()).toEqual([{ id: 828, name: '模块' }]);
-    expect(index.search('移动').every((result) => !('localSeq' in result))).toBe(true);
+    expect(
+      index.search('移动').every((result) => !('localSeq' in result)),
+    ).toBe(true);
   });
 
   it('uses a stable page-id tie-breaker for equal-sequence namespace names', () => {
@@ -122,7 +139,12 @@ describe('LinearTitleIndex', () => {
   });
 });
 
-function page(id: number, title: string, namespace: number, namespaceName: string): PageRecord {
+function page(
+  id: number,
+  title: string,
+  namespace: number,
+  namespaceName: string,
+): PageRecord {
   return {
     id,
     title,

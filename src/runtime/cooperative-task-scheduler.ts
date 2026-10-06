@@ -75,9 +75,11 @@ function browserVisibilityAdapter(): VisibilityAdapter | undefined {
 }
 
 async function browserYieldTask(): Promise<void> {
-  const taskScheduler = (globalThis as typeof globalThis & {
-    scheduler?: { yield?: () => Promise<void> };
-  }).scheduler;
+  const taskScheduler = (
+    globalThis as typeof globalThis & {
+      scheduler?: { yield?: () => Promise<void> };
+    }
+  ).scheduler;
   if (typeof taskScheduler?.yield === 'function') {
     try {
       await taskScheduler.yield();
@@ -119,7 +121,10 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw abortReason(signal);
 }
 
-function waitForAbortable(task: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
+function waitForAbortable(
+  task: Promise<void>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   if (!signal) return task;
   throwIfAborted(signal);
   return new Promise<void>((resolve, reject) => {

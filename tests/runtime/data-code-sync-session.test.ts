@@ -31,9 +31,18 @@ describe('DataCodeSyncSession', () => {
     await vi.waitFor(() => expect(order).toEqual(['A:start']));
     releaseFirst();
 
-    await expect(first).resolves.toEqual({ status: 'error', error: firstError });
+    await expect(first).resolves.toEqual({
+      status: 'error',
+      error: firstError,
+    });
     await expect(second).resolves.toEqual({ status: 'complete', value: 'B' });
-    expect(order).toEqual(['A:start', 'A:fail', 'B:start', 'B:complete', 'B:apply']);
+    expect(order).toEqual([
+      'A:start',
+      'A:fail',
+      'B:start',
+      'B:complete',
+      'B:apply',
+    ]);
   });
 
   it('applies successful queued saves in order so the last successful save wins', async () => {
@@ -102,7 +111,10 @@ describe('DataCodeSyncSession', () => {
     const refresh = session.refresh(false);
 
     await expect(save).resolves.toEqual({ status: 'error', error: applyError });
-    await expect(refresh).resolves.toEqual({ status: 'complete', value: 'refresh' });
+    await expect(refresh).resolves.toEqual({
+      status: 'complete',
+      value: 'refresh',
+    });
     expect(applied).toEqual(['save', 'refresh']);
   });
 

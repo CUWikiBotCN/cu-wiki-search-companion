@@ -13,7 +13,9 @@ export class ContentSyncSession {
 
   run(force: boolean): Promise<void> {
     if (this.active) return this.active;
-    const attempt = Promise.resolve().then(() => this.options.synchronize(force));
+    const attempt = Promise.resolve().then(() =>
+      this.options.synchronize(force),
+    );
     const reported = attempt.catch((error: unknown) => {
       try {
         this.options.reportFailure(error);

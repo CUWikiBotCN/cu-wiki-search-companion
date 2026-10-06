@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { Analyzer } from '../analyzer/analyzer';
-import { LinearTitleIndex, type TitleSearchResult } from '../search/title-index';
+import {
+  LinearTitleIndex,
+  type TitleSearchResult,
+} from '../search/title-index';
 import type { WikiSearchDatabase } from '../storage/database';
 import { syncFileResources } from '../sync/file-resource-sync';
 import type { ExclusiveSyncResult } from '../sync/incremental-sync-coordinator';
@@ -37,7 +40,10 @@ export class FileSearchRuntime {
   constructor(private readonly options: FileSearchRuntimeOptions) {}
 
   get state(): FileSearchRuntimeState {
-    return { loaded: this.index !== undefined, indexedFiles: this.index?.size ?? 0 };
+    return {
+      loaded: this.index !== undefined,
+      indexedFiles: this.index?.size ?? 0,
+    };
   }
 
   search(query: string): TitleSearchResult[] {
@@ -52,13 +58,15 @@ export class FileSearchRuntime {
         await this.loadIndex();
         this.options.onRestored(this.state.indexedFiles);
         await this.synchronize(force);
-      })().then(() => {
-        this.readySettled = true;
-      }).catch((error: unknown) => {
-        this.ready = undefined;
-        this.readySettled = false;
-        throw error;
-      });
+      })()
+        .then(() => {
+          this.readySettled = true;
+        })
+        .catch((error: unknown) => {
+          this.ready = undefined;
+          this.readySettled = false;
+          throw error;
+        });
       return this.ready;
     }
     return force && this.readySettled ? this.synchronize(true) : this.ready;
@@ -73,7 +81,8 @@ export class FileSearchRuntime {
 
   private async loadIndex(): Promise<void> {
     const files = await this.options.database.fileResources
-      .filter((file) => !file.deleted).toArray();
+      .filter((file) => !file.deleted)
+      .toArray();
     this.index = new LinearTitleIndex(this.options.analyzer, files);
     this.options.onStateChange(this.state);
     this.options.onResultsChanged?.();
@@ -86,7 +95,9 @@ export class FileSearchRuntime {
       let finalState: TitleSyncState | undefined;
       const coordinated = await this.options.runExclusive(async () => {
         finalState = await syncFileResources(
-          this.options.database, this.options.api, this.options.analyzer,
+          this.options.database,
+          this.options.api,
+          this.options.analyzer,
           {
             force,
             onBatch: (batch) => {
@@ -99,7 +110,9 @@ export class FileSearchRuntime {
         );
       });
       if (coordinated === 'lock-unavailable') {
-        throw new Error('无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试');
+        throw new Error(
+          '无法取得跨标签写入锁，请确认浏览器支持 Web Locks 后重试',
+        );
       }
       if (!finalState) throw new Error('文件资源同步未返回结果');
       await this.options.onCommitted(finalState);

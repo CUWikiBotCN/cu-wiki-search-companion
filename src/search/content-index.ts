@@ -65,8 +65,10 @@ export class ContentIndex {
 
   constructor(
     private readonly analyzer: Analyzer,
-    private readonly taskScheduler: Pick<CooperativeTaskScheduler, 'yield'> =
-      browserTaskScheduler,
+    private readonly taskScheduler: Pick<
+      CooperativeTaskScheduler,
+      'yield'
+    > = browserTaskScheduler,
   ) {}
 
   rebuild(pages: PageRecord[]): void {
@@ -90,10 +92,7 @@ export class ContentIndex {
     this.lifecycle.update(pages);
   }
 
-  private applyPages(
-    state: ContentIndexState,
-    pages: PageRecord[],
-  ): void {
+  private applyPages(state: ContentIndexState, pages: PageRecord[]): void {
     const { index, extractedById } = state;
     for (const page of pages) {
       this.removeNormalizedText(state, page.id);
@@ -173,7 +172,10 @@ export class ContentIndex {
     const { index, extractedById } = state;
     let results = index.search(normalizedQuery, options);
     if (!results.length && terms.length > 1) {
-      results = index.search(normalizedQuery, { ...options, combineWith: 'OR' });
+      results = index.search(normalizedQuery, {
+        ...options,
+        combineWith: 'OR',
+      });
     }
 
     const compactQuery = this.analyzer.compactNormalized(normalizedQuery);
@@ -244,7 +246,10 @@ export class ContentIndex {
       state.normalizedById.size >= MAX_NORMALIZED_TEXT_ENTRIES ||
       state.normalizedTextBytes + bytes > MAX_NORMALIZED_TEXT_BYTES
     ) {
-      this.removeNormalizedText(state, state.normalizedById.keys().next().value!);
+      this.removeNormalizedText(
+        state,
+        state.normalizedById.keys().next().value!,
+      );
     }
     state.normalizedById.set(id, normalized);
     state.normalizedTextBytes += bytes;
@@ -276,11 +281,7 @@ export class ContentIndex {
     page: PageRecord,
     extractedById: Map<number, string>,
   ): IndexedContent | undefined {
-    if (
-      page.deleted ||
-      page.isRedirect ||
-      typeof page.content !== 'string'
-    ) {
+    if (page.deleted || page.isRedirect || typeof page.content !== 'string') {
       return undefined;
     }
     const extracted = extractContent(page.contentModel, page.content);
@@ -336,7 +337,9 @@ function makeSnippet(
     directPosition >= 0 ? directPosition : (insensitiveMatch?.index ?? -1);
   if (originalPosition >= 0) {
     const matchLength =
-      directPosition >= 0 ? normalizedQuery.length : insensitiveMatch![0].length;
+      directPosition >= 0
+        ? normalizedQuery.length
+        : insensitiveMatch![0].length;
     const start = Math.max(0, originalPosition - SNIPPET_CONTEXT_BEFORE);
     const end = Math.min(
       compactText.length,
@@ -362,7 +365,9 @@ function makeSnippet(
       const at = displayText.indexOf(term);
       if (
         at >= 0 &&
-        (!anchor || at < anchor.start || (at === anchor.start && term.length > anchor.end - anchor.start))
+        (!anchor ||
+          at < anchor.start ||
+          (at === anchor.start && term.length > anchor.end - anchor.start))
       ) {
         anchor = { start: at, end: at + term.length };
       }
@@ -376,7 +381,12 @@ function makeSnippet(
   const prefixLength = start > 0 ? 1 : 0;
   const highlights =
     position >= 0
-      ? [{ start: prefixLength + position - start, end: prefixLength + position - start + normalizedQuery.length }]
+      ? [
+          {
+            start: prefixLength + position - start,
+            end: prefixLength + position - start + normalizedQuery.length,
+          },
+        ]
       : collectTermHighlights(displayText.slice(start, end), matchedTerms).map(
           (range) => ({
             start: range.start + prefixLength,
@@ -389,7 +399,10 @@ function makeSnippet(
   };
 }
 
-function titleHighlights(title: string, normalizedQuery: string): SearchTextHighlight[] {
+function titleHighlights(
+  title: string,
+  normalizedQuery: string,
+): SearchTextHighlight[] {
   // Titles must keep their original text, and normalization (NFKC/OpenCC) is not
   // an invertible mapping — so only a direct case-insensitive hit is highlighted.
   const match = new RegExp(escapeRegExp(normalizedQuery), 'iu').exec(title);
@@ -416,7 +429,9 @@ function collectTermHighlights(
 }
 
 function mergeRanges(ranges: SearchTextHighlight[]): SearchTextHighlight[] {
-  const sorted = [...ranges].sort((left, right) => left.start - right.start || left.end - right.end);
+  const sorted = [...ranges].sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  );
   const merged: SearchTextHighlight[] = [];
   for (const range of sorted) {
     const last = merged[merged.length - 1];

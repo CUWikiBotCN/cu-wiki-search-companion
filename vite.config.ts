@@ -4,9 +4,11 @@ import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 
 const environment =
-  (globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }).process?.env ?? {};
+  (
+    globalThis as typeof globalThis & {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process?.env ?? {};
 const buildId =
   environment.CU_WIKI_BUILD_ID ??
   environment.GITHUB_SHA ??

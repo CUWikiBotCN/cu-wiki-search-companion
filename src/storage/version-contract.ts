@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { WikiSearchDatabase } from './database';
-import {
-  isNonNegativeSafeInteger,
-  readValidatedSyncState,
-} from './sync-state';
+import { isNonNegativeSafeInteger, readValidatedSyncState } from './sync-state';
 
 export const CACHE_VERSION_CONTRACT_KEY = 'cache-version-contract';
 
@@ -134,9 +131,15 @@ async function evaluateVersionContract(
     stored.pageFacts < CURRENT_VERSION_CONTRACT.pageFacts ||
     stored.contentJobFormat < CURRENT_VERSION_CONTRACT.contentJobFormat;
   if (factsNeedMigration) {
-    if (!canMigrateFacts(stored)) return incompatible('本地页面事实版本过旧且没有安全迁移路径', stored);
+    if (!canMigrateFacts(stored))
+      return incompatible('本地页面事实版本过旧且没有安全迁移路径', stored);
     if (!allowWrites) {
-      return { status: 'compatible', contract: stored, registeredLegacy: false, migrated: false };
+      return {
+        status: 'compatible',
+        contract: stored,
+        registeredLegacy: false,
+        migrated: false,
+      };
     }
     await database.syncState.put({
       key: CACHE_VERSION_CONTRACT_KEY,
@@ -199,7 +202,9 @@ export function createCompatibilityKey(
   return JSON.stringify(shared);
 }
 
-export function isVersionContract(value: unknown): value is CacheVersionContract {
+export function isVersionContract(
+  value: unknown,
+): value is CacheVersionContract {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<CacheVersionContract>;
   return (

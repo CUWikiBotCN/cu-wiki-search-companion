@@ -92,14 +92,16 @@ CSS 模式按大小写原样匹配 class、选择器、属性和变量片段，�
 
 单元／集成测试统一放在 `tests/` 并按模块分类；真实浏览器安装、诊断和验收工具保留在 `scripts/`。新增测试请遵循[测试目录规范](ARCHITECTURE.md#131-测试文件归属与执行边界)。
 
-本地开发要求 Node.js `^20.19.0` 或 `>=22.12.0`，以及 npm：
+本地开发要求 Node.js `^20.19.0`、`^22.13.0` 或 `>=24`，以及 npm：
 
 ```bash
 npm ci
 npm test
-npm run typecheck
-npm run build
+npm run check
+# 单独运行：npm run lint / npm run format:check / npm test / npm run typecheck / npm run build
 ```
+
+`npm run format` 统一源码、测试、脚本及配置格式；历史文档、私密交接和生成物不在格式化范围内。lint 使用 ESLint、TypeScript 与 Vue essential 规则；`check` 依次运行 lint、格式检查、测试和构建。Playwright CLI 函数表达式文件只执行 lint，避免 formatter 添加语句分号破坏 run-code；Vue 模板使用严格空白策略以保留文本边界。
 
 界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。当前类型工具链固定 TypeScript 6.0.3，因为已验证的 `vue-tsc` 尚不能加载 TypeScript 7 的编译器入口；升级时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。文件与 Data 搜索运行态、浮窗几何和六模式展示规则各有独立模块，职责与验收约束见架构文档。
 

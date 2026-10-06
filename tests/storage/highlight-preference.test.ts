@@ -57,12 +57,18 @@ describe('highlightPreference', () => {
   });
 
   it('falls back to defaults for malformed payloads', async () => {
-    vi.stubGlobal('GM_getValue', vi.fn(() => '{not json'));
+    vi.stubGlobal(
+      'GM_getValue',
+      vi.fn(() => '{not json'),
+    );
     await expect(highlightPreference.get()).resolves.toEqual({
       ...DEFAULT_HIGHLIGHT_PREFERENCES,
     });
 
-    vi.stubGlobal('GM_getValue', vi.fn(() => 42));
+    vi.stubGlobal(
+      'GM_getValue',
+      vi.fn(() => 42),
+    );
     await expect(highlightPreference.get()).resolves.toEqual({
       ...DEFAULT_HIGHLIGHT_PREFERENCES,
     });

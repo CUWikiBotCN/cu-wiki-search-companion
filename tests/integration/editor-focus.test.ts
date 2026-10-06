@@ -3,25 +3,49 @@
 
 import { nextTick } from 'vue';
 import { insertAtEditorSelection } from '../../src/editor';
-import { SearchPanel, type SearchPanelCallbacks } from '../../src/ui/search-panel';
+import {
+  SearchPanel,
+  type SearchPanelCallbacks,
+} from '../../src/ui/search-panel';
 
 afterEach(() => {
-  document.querySelectorAll('#cu-wiki-search-host').forEach((host) => host.remove());
+  document
+    .querySelectorAll('#cu-wiki-search-host')
+    .forEach((host) => host.remove());
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
 
-const result = { id: 1, title: '页面', namespace: 0, namespaceName: '', score: 1 };
+const result = {
+  id: 1,
+  title: '页面',
+  namespace: 0,
+  namespaceName: '',
+  score: 1,
+};
 
 function mountPanel() {
   const callbacks: SearchPanelCallbacks = {
-    prepareSearch: vi.fn(), prepareFiles: vi.fn(),
-    search: () => [result], searchFiles: () => [], searchLua: () => [], searchCss: () => [],
-    searchContent: () => [], searchCodes: () => [],
-    insert: () => { insertAtEditorSelection('[[页面]]'); },
-    copyTitle: vi.fn(), copy: vi.fn(), copyCode: vi.fn(),
-    open: vi.fn(), openCode: vi.fn(), refresh: vi.fn(), refreshFiles: vi.fn(),
-    saveDataCodeRules: async () => undefined, saveHighlightPreferences: vi.fn(),
+    prepareSearch: vi.fn(),
+    prepareFiles: vi.fn(),
+    search: () => [result],
+    searchFiles: () => [],
+    searchLua: () => [],
+    searchCss: () => [],
+    searchContent: () => [],
+    searchCodes: () => [],
+    insert: () => {
+      insertAtEditorSelection('[[页面]]');
+    },
+    copyTitle: vi.fn(),
+    copy: vi.fn(),
+    copyCode: vi.fn(),
+    open: vi.fn(),
+    openCode: vi.fn(),
+    refresh: vi.fn(),
+    refreshFiles: vi.fn(),
+    saveDataCodeRules: async () => undefined,
+    saveHighlightPreferences: vi.fn(),
   };
   const panel = new SearchPanel(callbacks);
   const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
@@ -29,15 +53,20 @@ function mountPanel() {
 }
 
 function altK() {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', altKey: true }));
+  window.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'k', altKey: true }),
+  );
 }
 
 describe('search panel editor focus integration', () => {
   it.each(['Alt+K', 'Escape', 'close', 'insert-button', 'insert-keyboard'])(
-    'preserves the CodeMirror selection through %s', async (action) => {
-      document.body.innerHTML = '<textarea id="wpTextbox1">前中后</textarea>' +
+    'preserves the CodeMirror selection through %s',
+    async (action) => {
+      document.body.innerHTML =
+        '<textarea id="wpTextbox1">前中后</textarea>' +
         '<div class="CodeMirror"><div tabindex="0"></div></div>';
-      const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
+      const textarea =
+        document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
       const wrapper = document.querySelector<HTMLElement>('.CodeMirror')!;
       const input = wrapper.firstElementChild as HTMLElement;
       const nativeFocus = input.focus.bind(input);
@@ -46,14 +75,20 @@ describe('search panel editor focus integration', () => {
         textarea.setSelectionRange(0, 0);
         nativeFocus();
       });
-      Object.assign(wrapper, { CodeMirror: {
-        getTextArea: () => textarea,
-        focus: nativeFocus,
-        operation: (callback: () => void) => callback(),
-        replaceSelection: (text: string) => textarea.setRangeText(
-          text, textarea.selectionStart, textarea.selectionEnd, 'end',
-        ),
-      } });
+      Object.assign(wrapper, {
+        CodeMirror: {
+          getTextArea: () => textarea,
+          focus: nativeFocus,
+          operation: (callback: () => void) => callback(),
+          replaceSelection: (text: string) =>
+            textarea.setRangeText(
+              text,
+              textarea.selectionStart,
+              textarea.selectionEnd,
+              'end',
+            ),
+        },
+      });
       const { panel, root } = mountPanel();
       nativeFocus();
       textarea.setSelectionRange(1, 2);
@@ -64,14 +99,18 @@ describe('search panel editor focus integration', () => {
       await nextTick();
 
       if (action === 'Alt+K') altK();
-      else if (action === 'close') root.querySelector<HTMLButtonElement>('.close')!.click();
+      else if (action === 'close')
+        root.querySelector<HTMLButtonElement>('.close')!.click();
       else if (action === 'insert-button') {
         root.querySelector<HTMLButtonElement>('.insert-result')!.click();
       } else {
-        root.querySelector('.query')!.dispatchEvent(new KeyboardEvent('keydown', {
-          key: action === 'Escape' ? 'Escape' : 'Enter',
-          shiftKey: action === 'insert-keyboard', bubbles: true,
-        }));
+        root.querySelector('.query')!.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: action === 'Escape' ? 'Escape' : 'Enter',
+            shiftKey: action === 'insert-keyboard',
+            bubbles: true,
+          }),
+        );
       }
 
       await nextTick();
@@ -86,9 +125,12 @@ describe('search panel editor focus integration', () => {
   );
 
   it.each(['textarea', 'button', 'removed', 'disabled'])(
-    'restores a %s target or falls back to the search toggle', async (kind) => {
+    'restores a %s target or falls back to the search toggle',
+    async (kind) => {
       const { root } = mountPanel();
-      const target = document.createElement(kind === 'textarea' ? 'textarea' : 'button');
+      const target = document.createElement(
+        kind === 'textarea' ? 'textarea' : 'button',
+      );
       if (target instanceof HTMLTextAreaElement) {
         target.value = '前中后';
         target.setSelectionRange(1, 2);

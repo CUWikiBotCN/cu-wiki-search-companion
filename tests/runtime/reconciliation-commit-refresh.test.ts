@@ -6,7 +6,10 @@ describe('CommittedReconciliationRefresh', () => {
   it('exposes a committed Data invalidation for post-lock cache refresh', async () => {
     const refresh = new CommittedReconciliationRefresh({
       readState: async () =>
-        reconciliationState({ throughLocalSeq: 13, dataCodesInvalidated: true }),
+        reconciliationState({
+          throughLocalSeq: 13,
+          dataCodesInvalidated: true,
+        }),
       lastAppliedSequence: () => 10,
       refresh: async () => undefined,
       broadcast: vi.fn(),
@@ -22,7 +25,10 @@ describe('CommittedReconciliationRefresh', () => {
     const broadcast = vi.fn();
     const refresh = new CommittedReconciliationRefresh({
       readState: async () =>
-        reconciliationState({ throughLocalSeq: 13, dataCodesInvalidated: true }),
+        reconciliationState({
+          throughLocalSeq: 13,
+          dataCodesInvalidated: true,
+        }),
       lastAppliedSequence: () => 10,
       refresh: async () => undefined,
       broadcast,
@@ -56,7 +62,9 @@ describe('CommittedReconciliationRefresh', () => {
       broadcast,
     });
 
-    await expect(refresh.apply()).resolves.toMatchObject({ dataCodesInvalidated: true });
+    await expect(refresh.apply()).resolves.toMatchObject({
+      dataCodesInvalidated: true,
+    });
     await expect(refresh.apply()).resolves.toEqual({
       throughLocalSeq: 13,
       dataCodesInvalidated: true,
@@ -76,7 +84,9 @@ describe('CommittedReconciliationRefresh', () => {
         }),
       lastAppliedSequence: () => 10,
       refresh: async (invalidation) => {
-        order.push(`refresh:${String(invalidation.pages)}:${String(invalidation.files)}`);
+        order.push(
+          `refresh:${String(invalidation.pages)}:${String(invalidation.files)}`,
+        );
       },
       broadcast: (message) => {
         order.push(
@@ -199,27 +209,30 @@ describe('CommittedReconciliationRefresh', () => {
     ['NaN', Number.NaN],
     ['negative', -1],
     ['non-number', '12'],
-  ])('normalizes %s legacy throughLocalSeq before returning Data invalidation', async (_label, rawThrough) => {
-    const refreshStorage = vi.fn(async () => undefined);
-    const broadcast = vi.fn();
-    const persisted = {
-      ...reconciliationState({ dataCodesInvalidated: true }),
-      throughLocalSeq: rawThrough,
-    } as unknown as ReconciliationSyncState;
-    const refresh = new CommittedReconciliationRefresh({
-      readState: async () => persisted,
-      lastAppliedSequence: () => 10,
-      refresh: refreshStorage,
-      broadcast,
-    });
+  ])(
+    'normalizes %s legacy throughLocalSeq before returning Data invalidation',
+    async (_label, rawThrough) => {
+      const refreshStorage = vi.fn(async () => undefined);
+      const broadcast = vi.fn();
+      const persisted = {
+        ...reconciliationState({ dataCodesInvalidated: true }),
+        throughLocalSeq: rawThrough,
+      } as unknown as ReconciliationSyncState;
+      const refresh = new CommittedReconciliationRefresh({
+        readState: async () => persisted,
+        lastAppliedSequence: () => 10,
+        refresh: refreshStorage,
+        broadcast,
+      });
 
-    await expect(refresh.apply()).resolves.toEqual({
-      throughLocalSeq: 10,
-      dataCodesInvalidated: true,
-    });
-    expect(refreshStorage).not.toHaveBeenCalled();
-    expect(broadcast).not.toHaveBeenCalled();
-  });
+      await expect(refresh.apply()).resolves.toEqual({
+        throughLocalSeq: 10,
+        dataCodesInvalidated: true,
+      });
+      expect(refreshStorage).not.toHaveBeenCalled();
+      expect(broadcast).not.toHaveBeenCalled();
+    },
+  );
 });
 
 function reconciliationState(

@@ -2,25 +2,35 @@
 import { CommittedRecentChangeRefresh } from '../../src/runtime/recent-change-commit-refresh';
 
 describe('CommittedRecentChangeRefresh', () => {
-  it.each(['refresh', 'broadcast', 'both'])('preserves committed invalidation when %s fails', async (failure) => {
-    const refreshError = new Error('index refresh failed');
-    const broadcastError = new Error('broadcast failed');
-    const broadcast = vi.fn(() => {
-      if (failure !== 'refresh') throw broadcastError;
-    });
-    const refresh = new CommittedRecentChangeRefresh({
-      refresh: async () => {
-        if (failure !== 'broadcast') throw refreshError;
-      },
-      broadcast,
-    });
-    const committed = { throughLocalSeq: 13, filesChanged: true, dataCodesInvalidated: true };
-    await expect(refresh.apply(committed)).resolves.toEqual({
-      dataCodesInvalidated: true,
-      refreshError: failure === 'broadcast' ? broadcastError : refreshError,
-    });
-    expect(broadcast).toHaveBeenCalledExactlyOnceWith({ type: 'committed', ...committed });
-  });
+  it.each(['refresh', 'broadcast', 'both'])(
+    'preserves committed invalidation when %s fails',
+    async (failure) => {
+      const refreshError = new Error('index refresh failed');
+      const broadcastError = new Error('broadcast failed');
+      const broadcast = vi.fn(() => {
+        if (failure !== 'refresh') throw broadcastError;
+      });
+      const refresh = new CommittedRecentChangeRefresh({
+        refresh: async () => {
+          if (failure !== 'broadcast') throw refreshError;
+        },
+        broadcast,
+      });
+      const committed = {
+        throughLocalSeq: 13,
+        filesChanged: true,
+        dataCodesInvalidated: true,
+      };
+      await expect(refresh.apply(committed)).resolves.toEqual({
+        dataCodesInvalidated: true,
+        refreshError: failure === 'broadcast' ? broadcastError : refreshError,
+      });
+      expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+        type: 'committed',
+        ...committed,
+      });
+    },
+  );
 
   it('applies and broadcasts the durable RC sequence for every caller', async () => {
     const refreshed: unknown[] = [];

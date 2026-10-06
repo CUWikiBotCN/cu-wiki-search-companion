@@ -246,7 +246,7 @@ async page => {
         { polling: 100, timeout },
       );
     } catch (error) {
-      throw new Error(`${description}未完成：${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${description}未完成：${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
 

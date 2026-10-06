@@ -27,7 +27,9 @@ export class DataCodeIndex {
     this.entries = records.map((record) => ({
       record,
       compactSearchValues: (
-        record.normalizedSearchValues ?? [record.normalizedSearchText ?? record.normalizedName]
+        record.normalizedSearchValues ?? [
+          record.normalizedSearchText ?? record.normalizedName,
+        ]
       ).map((value) => analyzer.compactNormalized(value)),
       normalizedCode: record.code.normalize('NFKC').toLowerCase(),
     }));
@@ -39,7 +41,8 @@ export class DataCodeIndex {
     if (!compactQuery) return [];
 
     const matches: DataCodeSearchResult[] = [];
-    for (const { record, compactSearchValues, normalizedCode } of this.entries) {
+    for (const { record, compactSearchValues, normalizedCode } of this
+      .entries) {
       let fieldScore = 0;
       for (const compactValue of compactSearchValues) {
         const fieldPosition = compactValue.indexOf(compactQuery);
@@ -70,7 +73,10 @@ export class DataCodeIndex {
     }
 
     return matches
-      .sort((left, right) => right.score - left.score || left.code.localeCompare(right.code))
+      .sort(
+        (left, right) =>
+          right.score - left.score || left.code.localeCompare(right.code),
+      )
       .slice(0, limit);
   }
 
