@@ -1,6 +1,6 @@
 # CU Wiki Search Companion
 
-在[未知伤亡中文维基](https://casualtiesunknown.huijiwiki.com/)编辑页面中，快速查找页面、正文、文件、Lua 模块和 Data 代码。搜索数据保存在当前浏览器；点击结果即可复制标题或代码名，也可以打开页面或插入维基链接。
+在[未知伤亡中文维基](https://casualtiesunknown.huijiwiki.com/)编辑页面中，快速查找页面、正文、文件、Lua 模块、CSS 源码和 Data 代码。搜索数据保存在当前浏览器；点击结果即可复制标题或代码名，也可以打开页面或插入维基链接。
 
 脚本仅在本站的编辑／提交页面激活，不会替你保存或提交 Wiki 编辑。
 
@@ -86,7 +86,9 @@ CSS 模式按大小写原样匹配 class、选择器、属性和变量片段，�
 
 ## 开发与发布记录
 
-当前源码版本为 **0.3.11**。本版为维护性补丁：拆分同步状态展示逻辑、明确启动依赖，补齐 lint、格式与 PR 质量门禁，并统一开发和 CI 工具链；范围与验证边界见 [0.3.11 验收记录](docs/acceptance/0.3.11.md)。
+源码版本及声明依赖见 [package.json](package.json)，依赖的锁定版本见 [锁文件](package-lock.json)。本文维护使用和开发入口，[架构文档](ARCHITECTURE.md) 维护实现约束；版本验收与性能记录保留各自日期、源码范围和验证边界。
+
+0.3.11 为维护性补丁：拆分同步状态展示逻辑、明确启动依赖，补齐 lint、格式与 PR 质量门禁，并统一开发和 CI 工具链；范围与验证边界见 [0.3.11 验收记录](docs/acceptance/0.3.11.md)。
 
 0.3.10 调整面板视觉层级与入口，避让新版站点工具栏，并保留拖动位置、快捷键与编辑器回焦；验收范围见 [0.3.10 验收记录](docs/acceptance/0.3.10.md)。此前性能优化见 [0.3.9 验收记录](docs/acceptance/0.3.9.md)及[性能记录](docs/performance/0.3.9.md)，同步修复与模块拆分见 [0.3.8](docs/acceptance/0.3.8.md)，重定向目标与 CSS 搜索见 [0.3.7](docs/acceptance/0.3.7.md)，Vue 3 迁移见 [0.3.6](docs/acceptance/0.3.6.md)。
 
@@ -109,7 +111,7 @@ npm run check
 
 `npm run format` 统一源码、测试、脚本及配置格式；历史文档、私密交接和生成物不在格式化范围内。lint 使用 ESLint、TypeScript 与 Vue essential 规则；`check` 依次运行 lint、格式检查、测试和构建。Playwright CLI 函数表达式文件只执行 lint，避免 formatter 添加语句分号破坏 run-code；Vue 模板使用严格空白策略以保留文本边界。
 
-界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。当前类型工具链固定 TypeScript 6.0.3，因为已验证的 `vue-tsc` 尚不能加载 TypeScript 7 的编译器入口；升级时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。文件与 Data 搜索运行态、浮窗几何和六模式展示规则各有独立模块，职责与验收约束见架构文档。
+界面采用 Vue 3 SFC，模板在构建时编译，运行时随脚本打包；样式注入开放的 Shadow DOM。`npm run typecheck` 使用 `vue-tsc` 同时检查 TS 与 Vue 模板，`build` 已包含此检查。类型工具链曾遇到 TypeScript 编译器入口兼容问题；具体版本以 package 与锁文件为准，升级 TypeScript 和 `vue-tsc` 时需一起验证。组件边界见[界面架构](ARCHITECTURE.md#11-ui编辑器与维护)。文件与 Data 搜索运行态、浮窗几何和六模式展示规则各有独立模块，职责与验收约束见架构文档。
 
 `dist/` 中生成可安装的 `cu-wiki-local-search.user.js`、更新元数据和第三方许可清单；构建产物不进入 Git。
 

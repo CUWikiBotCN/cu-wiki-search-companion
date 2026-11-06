@@ -1,6 +1,6 @@
 # CU Wiki Search Companion 架构说明
 
-本文对应 0.3.10 架构，面向项目维护者与自动化开发工具。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
+本文说明仓库内实现，面向项目维护者与自动化开发工具；源码版本见 [package.json](package.json)，文档职责见 [README](README.md#开发与发布记录)。目标是让读者只依赖仓库内的公开材料，就能理解系统边界、数据所有权、启动时序、同步协议和修改时必须保持的不变量。
 
 ## 1. 系统目标与核心约束
 
@@ -85,6 +85,7 @@ sequenceDiagram
   participant Page as 编辑页
   participant Main as main.ts
   participant Runtime as PageSearchRuntime
+  participant DataRuntime as DataCodeRuntime
   participant DB as IndexedDB
   participant UI as SearchPanel
   participant BG as 后台协调器
@@ -96,7 +97,15 @@ sequenceDiagram
   Runtime->>DB: readActivePageHeaders
   DB-->>Runtime: 活动页面标题头
   Runtime-->>Main: bootstrap 标题搜索状态
-  Main->>Main: DataCodeIndex + sync states
+  par Data 本地初始化
+    Main->>DataRuntime: initialize()
+    DataRuntime->>DB: 读取 Data 缓存与字段规则副本
+    DB-->>DataRuntime: dataCodes + data-code-sync
+    DataRuntime-->>Main: 本地 Data 索引就绪
+  and 同步状态读取
+    Main->>DB: 读取 RC / 全量对账状态
+    DB-->>Main: 已持久化同步状态
+  end
   Main->>UI: ready，标题与 Data 可用
   Main->>BG: 页面可见且 idle 后检查 RC 与 Data freshness
   Note over Main,DB: initialize() 不读快照，不加载 WASM，不建正文/Lua/文件索引
@@ -376,15 +385,7 @@ CSS refresh 返回是否应用来源变化；没有增量且未强制刷新时�
 
 ## 9. 版本契约
 
-CURRENT_VERSION_CONTRACT 当前包含：
-
-- database schema 3。
-- page facts 2、content job format 1。
-- analyzer pipeline 2（CJK unigram + bigram）。
-- wikitext extractor 2、BSON extractor 1、Lua extractor 2。
-- title index 2，content/Lua index 各 1。
-- Data code format 2。
-- MiniSearch 7.2.0、jieba 2.4.0。
+实际版本值由 [version-contract.ts](src/storage/version-contract.ts) 的 `CURRENT_VERSION_CONTRACT` 维护。契约分别记录数据库 schema、页面事实与正文 job 格式、分析器管线、各抽取器、三类索引、Data 代码格式，以及参与快照兼容判断的 MiniSearch/jieba 版本；本节解释兼容规则，不另抄一份数值。依赖声明与安装版本分别见 [package.json](package.json) 和 [锁文件](package-lock.json)。
 
 规则：
 

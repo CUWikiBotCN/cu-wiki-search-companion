@@ -11,7 +11,9 @@ HANDOFF.md
 /handoff/
 bench/
 /data/
-docs/research/
+/docs/research/*
+# Sanitized public research; other research remains local-only.
+!/docs/research/huiji-platform-capabilities.md
 p0b.user.js
 
 # Credentials and machine-local logs must never become release inputs.
