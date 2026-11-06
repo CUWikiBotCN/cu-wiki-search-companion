@@ -69,6 +69,28 @@ describe('wikitext content search', () => {
     });
   });
 
+  it.each([
+    ['wikitext', ' \n prefix\t\t target  \n tail \t ', 'prefix target tail', 7],
+    [
+      'BSON',
+      JSON.stringify({ text: ' \n prefix\t\t target  \n tail \t ' }),
+      'text prefix target tail',
+      12,
+    ],
+  ])(
+    'preserves compact extracted text and highlights for %s whitespace',
+    (contentModel, content, expected, start) => {
+      expect(extractContent(contentModel, content)).toBe(expected);
+      const index = new ContentIndex(analyzer);
+      index.rebuild([{ ...page(1, '空白页面', content), contentModel }]);
+
+      expect(index.search('target')[0]).toMatchObject({
+        snippet: expected,
+        highlights: [{ start, end: start + 6 }],
+      });
+    },
+  );
+
   it('finds a single CJK character inside a multi-character body term', () => {
     const index = new ContentIndex(analyzer);
     index.rebuild([page(1, '医疗指导', '接受紧急治疗。')]);
@@ -308,13 +330,142 @@ describe('wikitext content search', () => {
       extractedById: Array<[number, string]>;
     };
     snapshot.extractedById = [[1, ' \n\t ＴＡＲＧＥＴ\t tail \n ']];
+    const originalSnapshot = structuredClone(snapshot);
     await index.importSnapshot(snapshot);
 
     const result = index.search('target')[0]!;
     expect(result.snippet).toBe('target tail');
     expect(result.highlights).toEqual([{ start: 0, end: 6 }]);
     expect(index.search('target')[0]).toEqual(result);
+    expect(snapshot).toEqual(originalSnapshot);
   });
+
+  it('compacts only returned snapshot pages once, leaving other pages until they are returned', async () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(1, '第一页', 'target first'),
+      page(2, '第二页', 'target second'),
+    ]);
+    const snapshot = index.exportSnapshot() as {
+      extractedById: Array<[number, string]>;
+    };
+    snapshot.extractedById = [
+      [1, ' \n target\t first  '],
+      [2, ' \t target\n second  '],
+    ];
+    const original = structuredClone(snapshot);
+
+    await index.importSnapshot(snapshot);
+    expect((index.exportSnapshot() as typeof snapshot).extractedById).toEqual(
+      snapshot.extractedById,
+    );
+
+    const first = index.search('target', undefined, 1);
+    expect(first.map(({ id }) => id)).toEqual([1]);
+    expect(first[0]?.snippet).toBe('target first');
+    expect((index.exportSnapshot() as typeof snapshot).extractedById).toEqual([
+      [1, 'target first'],
+      [2, ' \t target\n second  '],
+    ]);
+
+    const replace = vi.spyOn(String.prototype, 'replace');
+    try {
+      expect(index.search('target', undefined, 1)).toEqual(first);
+      expect(
+        replace.mock.calls.filter(
+          ([pattern], i) =>
+            pattern instanceof RegExp &&
+            pattern.source === '\\s+' &&
+            String(replace.mock.contexts[i]) === 'target first',
+        ),
+      ).toHaveLength(0);
+    } finally {
+      replace.mockRestore();
+    }
+
+    expect(index.search('target', undefined, 2).map(({ id }) => id)).toEqual([
+      1, 2,
+    ]);
+    expect((index.exportSnapshot() as typeof snapshot).extractedById).toEqual([
+      [1, 'target first'],
+      [2, 'target second'],
+    ]);
+    expect(snapshot).toEqual(original);
+  });
+
+  it('replays updates and deletes over unprocessed snapshot pages during import', async () => {
+    const index = new ContentIndex(analyzer);
+    const pages = [
+      page(1, '更新页面', 'target old'),
+      page(2, '删除页面', 'target deleted'),
+      page(3, '保留页面', 'target retained'),
+    ];
+    index.rebuild(pages);
+    const snapshot = structuredClone(index.exportSnapshot()) as {
+      extractedById: Array<[number, string]>;
+    };
+    snapshot.extractedById = [
+      [1, ' target\t old '],
+      [2, ' target\t deleted '],
+      [3, ' target\t retained '],
+    ];
+    const original = structuredClone(snapshot);
+
+    const importing = index.importSnapshot(snapshot);
+    index.update([
+      page(1, '更新页面', 'target updated'),
+      { ...pages[1]!, deleted: true },
+    ]);
+    await importing;
+
+    expect((index.exportSnapshot() as typeof snapshot).extractedById).toEqual([
+      [1, 'target updated'],
+      [3, ' target\t retained '],
+    ]);
+    const replace = vi.spyOn(String.prototype, 'replace');
+    try {
+      expect(index.search('target').map(({ id }) => id)).toEqual([1, 3]);
+      expect(
+        replace.mock.calls.filter(
+          ([pattern], i) =>
+            pattern instanceof RegExp &&
+            pattern.source === '\\s+' &&
+            String(replace.mock.contexts[i]) === 'target updated',
+        ),
+      ).toHaveLength(0);
+    } finally {
+      replace.mockRestore();
+    }
+    expect((index.exportSnapshot() as typeof snapshot).extractedById).toEqual([
+      [1, 'target updated'],
+      [3, 'target retained'],
+    ]);
+    expect(snapshot.extractedById).toEqual(original.extractedById);
+  });
+
+  it.each([
+    ['target', 'target', 'prefix target tail'],
+    ['TARGET', 'target', 'prefix TARGET tail'],
+  ])(
+    'preserves old snapshot whitespace and highlights for %s',
+    async (stored, query, snippet) => {
+      const index = new ContentIndex(analyzer);
+      index.rebuild([page(1, '旧快照', `prefix ${stored} tail`)]);
+      const snapshot = index.exportSnapshot() as {
+        extractedById: Array<[number, string]>;
+      };
+      snapshot.extractedById = [[1, ` \n prefix\t  ${stored}\n tail \t `]];
+      const originalSnapshot = structuredClone(snapshot);
+
+      await index.importSnapshot(snapshot);
+
+      expect(index.search(query)[0]).toMatchObject({
+        snippet,
+        highlights: [{ start: 7, end: 13 }],
+      });
+      expect(snapshot).toEqual(originalSnapshot);
+    },
+  );
 
   it('counts an empty normalized fallback as a cache hit', () => {
     const measuredAnalyzer = new Analyzer({

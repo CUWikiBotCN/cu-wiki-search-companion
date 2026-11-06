@@ -45,6 +45,7 @@ export interface ContentSearchResult {
 interface ContentIndexState {
   index: MiniSearch<IndexedContent>;
   extractedById: Map<number, string>;
+  pendingCompactIds: Set<number>;
   normalizedById: Map<number, string>;
   /** UTF-16 text payload estimate; excludes Map and other object overhead. */
   normalizedTextBytes: number;
@@ -96,6 +97,7 @@ export class ContentIndex {
     const { index, extractedById } = state;
     for (const page of pages) {
       this.removeNormalizedText(state, page.id);
+      state.pendingCompactIds.delete(page.id);
       const document = this.toDocument(page, extractedById);
       if (!document) {
         if (index.has(page.id)) index.discard(page.id);
@@ -149,6 +151,7 @@ export class ContentIndex {
       return {
         index: restored,
         extractedById: restoredExtractedById,
+        pendingCompactIds: new Set(restoredExtractedById.keys()),
         normalizedById: new Map<number, string>(),
         normalizedTextBytes: 0,
       };
@@ -163,7 +166,7 @@ export class ContentIndex {
     const options = {
       prefix: true,
       combineWith: 'AND' as const,
-      tokenize: (value: string): string[] => this.analyzer.queryTokens(value),
+      tokenize: (): string[] => terms,
       processTerm: (term: string): string => term,
       filter: (result: SearchResult): boolean =>
         namespace === undefined || result.namespace === namespace,
@@ -198,8 +201,13 @@ export class ContentIndex {
       .sort((left, right) => right.score - left.score || left.id - right.id)
       .slice(0, limit)
       .map((result) => {
+        let text = extractedById.get(result.id) ?? '';
+        if (state.pendingCompactIds.delete(result.id)) {
+          text = text.replace(/\s+/g, ' ').trim();
+          extractedById.set(result.id, text);
+        }
         const snippet = makeSnippet(
-          extractedById.get(result.id) ?? '',
+          text,
           normalizedQuery,
           (text) => this.normalizedTextFor(state, result.id, text),
           terms,
@@ -221,6 +229,7 @@ export class ContentIndex {
     return {
       index: this.createIndex(),
       extractedById: new Map<number, string>(),
+      pendingCompactIds: new Set<number>(),
       normalizedById: new Map<number, string>(),
       normalizedTextBytes: 0,
     };
@@ -321,12 +330,11 @@ const SNIPPET_CONTEXT_AFTER = 64;
 const MAX_HIGHLIGHT_RANGES = 6;
 
 function makeSnippet(
-  text: string,
+  compactText: string,
   normalizedQuery: string,
   normalizeText: (text: string) => string,
   matchedTerms: readonly string[],
 ): Snippet {
-  const compactText = text.replace(/\s+/g, ' ').trim();
   if (!compactText) return { text: '', highlights: [] };
   const directPosition = compactText.indexOf(normalizedQuery);
   const insensitiveMatch =

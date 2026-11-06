@@ -259,6 +259,151 @@ describe('Lua module search', () => {
     expect(scheduler.yield).toHaveBeenCalledTimes(2);
   });
 
+  it('batches only eligible Lua pages while preserving synchronous results', async () => {
+    const ordinary = Array.from({ length: 2_000 }, (_, id) =>
+      page(id + 1, `Page:${id}`, 'ordinary content', 'wikitext'),
+    );
+    const modules = Array.from({ length: 20 }, (_, id) =>
+      page(
+        3_000 + id,
+        `模块:${id}`,
+        `return { shared = 'value${id}' }`,
+        'Scribunto',
+      ),
+    );
+    const pages = [...ordinary, ...modules];
+    const scheduler = { yield: vi.fn(async () => undefined) };
+    const synchronous = new LuaModuleIndex(analyzer);
+    const asynchronous = new LuaModuleIndex(analyzer, scheduler);
+    synchronous.rebuild(pages);
+
+    await asynchronous.rebuildAsync(pages);
+
+    expect(scheduler.yield).toHaveBeenCalledTimes(10);
+    expect(asynchronous.size).toBe(20);
+    expect(asynchronous.search('shared')).toEqual(synchronous.search('shared'));
+    expect(asynchronous.exportSnapshot()).toEqual(synchronous.exportSnapshot());
+  });
+
+  it('keeps eligibility and extraction behavior for empty and excluded pages', async () => {
+    const scheduler = { yield: vi.fn(async () => undefined) };
+    const index = new LuaModuleIndex(analyzer, scheduler);
+    await index.rebuildAsync([]);
+    await index.rebuildAsync([page(1, 'Ordinary', 'text', 'wikitext')]);
+    expect(index.size).toBe(0);
+    expect(scheduler.yield).not.toHaveBeenCalled();
+
+    const pages: PageRecord[] = [
+      page(2, '模块:MixedCase', `return { visible = 'symbol' }`, 'sCrIbUnTo'),
+      page(3, '模块:Empty', '', 'Scribunto'),
+      page(4, '模块:NoSymbols', '-- only a comment', 'Scribunto'),
+      {
+        ...page(
+          5,
+          '模块:Deleted',
+          `return { deleted = 'hidden' }`,
+          'Scribunto',
+        ),
+        deleted: true,
+      },
+      {
+        ...page(
+          6,
+          '模块:Redirect',
+          `return { redirect = 'hidden' }`,
+          'Scribunto',
+        ),
+        isRedirect: true,
+      },
+      { ...page(7, '模块:Missing', '', 'Scribunto'), content: undefined },
+    ];
+    const synchronous = new LuaModuleIndex(analyzer);
+    synchronous.rebuild(pages);
+    await index.rebuildAsync(pages);
+
+    expect(scheduler.yield).toHaveBeenCalledTimes(2);
+    expect(index.size).toBe(1);
+    expect(index.search('visible')).toEqual(synchronous.search('visible'));
+    expect(index.exportSnapshot()).toEqual(synchronous.exportSnapshot());
+  });
+
+  it('replays additions, deletions and content model changes during a Lua batch', async () => {
+    const pages = [
+      page(1, '模块:Update', `return { oldupdate = true }`, 'Scribunto'),
+      page(2, '模块:Delete', `return { olddelete = true }`, 'Scribunto'),
+      page(3, '模块:ToText', `return { oldmodel = true }`, 'Scribunto'),
+      page(4, '模块:ToLua', 'ordinary', 'wikitext'),
+    ];
+    const updates = [
+      page(1, '模块:Update', `return { newupdate = true }`, 'Scribunto'),
+      { ...pages[1]!, deleted: true },
+      page(3, '模块:ToText', 'ordinary', 'wikitext'),
+      page(4, '模块:ToLua', `return { newmodel = true }`, 'Scribunto'),
+      page(5, '模块:Added', `return { added = true }`, 'Scribunto'),
+    ];
+    let index: LuaModuleIndex;
+    const scheduler = {
+      yield: vi.fn(async () => {
+        if (scheduler.yield.mock.calls.length === 1) index.update(updates);
+      }),
+    };
+    index = new LuaModuleIndex(analyzer, scheduler);
+    index.rebuild(pages);
+
+    await index.rebuildAsync(pages, 1);
+
+    const expected = new LuaModuleIndex(analyzer);
+    expected.rebuild(pages);
+    expected.update(updates);
+    for (const term of [
+      'oldupdate',
+      'olddelete',
+      'oldmodel',
+      'newupdate',
+      'newmodel',
+      'added',
+    ]) {
+      expect(index.search(term)).toEqual(expected.search(term));
+    }
+    expect(scheduler.yield).toHaveBeenCalledTimes(3);
+    expect(index.size).toBe(3);
+    expect(
+      index.search('oldupdate').flatMap(({ matches }) => matches),
+    ).not.toContainEqual({
+      kind: 'return-key',
+      value: 'oldupdate',
+    });
+    expect(index.search('olddelete').map(({ id }) => id)).not.toContain(2);
+    expect(index.search('oldmodel').map(({ id }) => id)).not.toContain(3);
+    expect(index.search('newupdate').map(({ id }) => id)).toEqual([1]);
+    expect(index.search('newmodel').map(({ id }) => id)).toEqual([4]);
+    expect(index.search('added').map(({ id }) => id)).toEqual([5]);
+
+    await index.updateAsync([
+      { ...updates[0]!, isRedirect: true },
+      page(4, '模块:ToLua', 'ordinary again', 'wikitext'),
+    ]);
+    expect(index.search('newupdate').map(({ id }) => id)).not.toContain(1);
+    expect(index.search('newmodel').map(({ id }) => id)).not.toContain(4);
+    expect(index.search('added').map(({ id }) => id)).toEqual([5]);
+  });
+
+  it('replays same-turn updates when all initial pages are excluded', async () => {
+    const scheduler = { yield: vi.fn(async () => undefined) };
+    const index = new LuaModuleIndex(analyzer, scheduler);
+    const rebuilding = index.rebuildAsync([
+      page(1, 'Ordinary', 'text', 'wikitext'),
+    ]);
+    index.update([
+      page(1, '模块:New', `return { newest = true }`, 'Scribunto'),
+    ]);
+
+    await rebuilding;
+
+    expect(scheduler.yield).not.toHaveBeenCalled();
+    expect(index.search('newest').map(({ id }) => id)).toEqual([1]);
+  });
+
   it('indexes the final entry in a large generated return table', () => {
     const generatedSource = `return { ${Array.from(
       { length: 3_000 },

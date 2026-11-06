@@ -83,11 +83,12 @@ export class LuaModuleIndex {
   async rebuildAsync(pages: PageRecord[], batchSize = 2): Promise<void> {
     await this.lifecycle.rebuildAsync(async () => {
       const nextState = this.createState();
-      for (let offset = 0; offset < pages.length; offset += batchSize) {
+      const eligiblePages = pages.filter(isEligibleLuaPage);
+      for (let offset = 0; offset < eligiblePages.length; offset += batchSize) {
         this.applyPages(
           nextState.index,
           nextState.symbolsById,
-          pages.slice(offset, offset + batchSize),
+          eligiblePages.slice(offset, offset + batchSize),
         );
         await this.taskScheduler.yield();
       }
@@ -176,7 +177,7 @@ export class LuaModuleIndex {
     const options = {
       prefix: true,
       combineWith: 'AND' as const,
-      tokenize: (value: string): string[] => this.analyzer.queryTokens(value),
+      tokenize: (): string[] => terms,
       processTerm: (term: string): string => term,
     };
     const { index, symbolsById } = this.lifecycle.current;
@@ -252,14 +253,7 @@ export class LuaModuleIndex {
     page: PageRecord,
     symbolsById: Map<number, PreparedLuaSymbol[]>,
   ): IndexedLuaModule | undefined {
-    if (
-      page.deleted ||
-      page.isRedirect ||
-      page.contentModel?.toLocaleLowerCase() !== 'scribunto' ||
-      typeof page.content !== 'string'
-    ) {
-      return undefined;
-    }
+    if (!isEligibleLuaPage(page)) return undefined;
     const extracted = extractLua(page.content);
     if (!extracted.searchableText) return undefined;
     symbolsById.set(page.id, this.prepareSymbols(extracted));
@@ -347,6 +341,17 @@ export class LuaModuleIndex {
       };
     });
   }
+}
+
+function isEligibleLuaPage(
+  page: PageRecord,
+): page is PageRecord & { content: string } {
+  return (
+    !page.deleted &&
+    !page.isRedirect &&
+    page.contentModel?.toLocaleLowerCase() === 'scribunto' &&
+    typeof page.content === 'string'
+  );
 }
 
 function isPreparedSymbolEntries(

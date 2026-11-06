@@ -282,7 +282,7 @@ export class TitleIndex implements TitleSearchBackend {
         return cjk ? (cjk.length >= 3 ? 1 : 0) : term.length >= 4 ? 1 : 0;
       },
       combineWith: 'AND' as const,
-      tokenize: (value: string): string[] => this.analyzer.queryTokens(value),
+      tokenize: (): string[] => terms,
       processTerm: (term: string): string => term,
       filter: (result: SearchResult): boolean =>
         namespace === undefined || result.namespace === namespace,

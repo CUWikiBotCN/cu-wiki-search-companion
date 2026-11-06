@@ -29,7 +29,7 @@ if (values.help) {
       '',
       '  --root PATH       Load production source/config from another checkout.',
       '  --output FILE     Write the JSON report to this file; otherwise use stdout.',
-      '  --suite NAMES     search, storage, bundle, or all (default: search,storage).',
+      '  --suite NAMES     search, optimizations, storage, bundle, or all (default: search,storage).',
       '  --smoke           Tiny correctness run; its timings are not performance evidence.',
       '  --help, -h        Show this help.',
       '',
@@ -45,14 +45,14 @@ if (values.help) {
   try {
     const requestedSuites =
       values.suite === 'all'
-        ? ['search', 'storage', 'bundle']
+        ? ['search', 'optimizations', 'storage', 'bundle']
         : values.suite.split(',');
     assert.ok(
       requestedSuites.length &&
         requestedSuites.every((suite) =>
-          ['search', 'storage', 'bundle'].includes(suite),
+          ['search', 'optimizations', 'storage', 'bundle'].includes(suite),
         ),
-      'Unknown suite; use search,storage,bundle or all',
+      'Unknown suite; use search,optimizations,storage,bundle or all',
     );
     const suites = new Set(requestedSuites);
     const packageInfo = JSON.parse(
@@ -78,7 +78,22 @@ if (values.help) {
         platform: process.platform,
         architecture: process.arch,
         cpu: cpus()[0]?.model,
+        sourceRoot: root,
         sourceRevision: git(['rev-parse', 'HEAD']),
+        trackedDiffHash: sha256(git(['diff', 'HEAD']) ?? ''),
+        driverHash: sha256(await readFile(fileURLToPath(import.meta.url))),
+        searchSourceHashes: Object.fromEntries(
+          await Promise.all(
+            ['content-index', 'title-index', 'lua-module-index'].map(
+              async (name) => [
+                name,
+                sha256(
+                  await readFile(resolve(root, 'src/search', name + '.ts')),
+                ),
+              ],
+            ),
+          ),
+        ),
         trackedSourceDirty: Boolean(
           git(['status', '--porcelain', '--untracked-files=no']),
         ),
@@ -91,14 +106,18 @@ if (values.help) {
         'Synthetic offline corpus using production TypeScript loaded through Vite SSR.',
         'No Wiki/API requests, real IndexedDB, browser timing, startup timing, or heap measurement.',
         'Storage reports calls and rows; fake-indexeddb latency is not browser disk latency.',
-        'Snapshot stages exclude SHA, quota checks, IndexedDB writes, and index restoration.',
+        'Snapshot serialization stages exclude SHA, quota checks, IndexedDB writes, and index restoration.',
         'Bundle bytes/gzip are paired in-memory builds; size reductions are not startup speedups.',
         'Bootstrap refresh, runtime publication scheduling, and UI/focus/IME use correctness tests.',
       ],
     };
     const { createServer, build, loadConfigFromFile } = await import('vite');
     if (suites.has('storage')) await import('fake-indexeddb/auto');
-    if (suites.has('search') || suites.has('storage')) {
+    if (
+      suites.has('search') ||
+      suites.has('optimizations') ||
+      suites.has('storage')
+    ) {
       const server = await createServer({
         root,
         configFile: false,
@@ -109,6 +128,8 @@ if (values.help) {
       try {
         if (suites.has('search'))
           report.search = await searchSuite(server, protocol);
+        if (suites.has('optimizations'))
+          report.optimizations = await optimizationSuite(server, protocol);
         if (suites.has('storage'))
           report.storage = await storageSuite(server, protocol);
       } finally {
@@ -131,6 +152,15 @@ if (values.help) {
 
 function git(args) {
   try {
+    const checkout = execFileSync(
+      'git',
+      ['-C', root, 'rev-parse', '--show-toplevel'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    ).trim();
+    if (resolve(checkout) !== root) return null;
     return execFileSync('git', ['-C', root, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -396,6 +426,318 @@ async function searchSuite(server, protocol) {
     });
   }
   return results;
+}
+
+async function optimizationSuite(server, protocol) {
+  const { cut, cut_for_search } = await import('jieba-wasm/node');
+  const [{ Analyzer }, { ContentIndex }, { TitleIndex }, { LuaModuleIndex }] =
+    await Promise.all([
+      server.ssrLoadModule('/src/analyzer/analyzer.ts'),
+      server.ssrLoadModule('/src/search/content-index.ts'),
+      server.ssrLoadModule('/src/search/title-index.ts'),
+      server.ssrLoadModule('/src/search/lua-module-index.ts'),
+    ]);
+  const analyzer = new Analyzer({ cut, cutForSearch: cut_for_search }, 'jieba');
+  const filler =
+    '這是一段用於評估搜尋效能的測試文字，包含藥物、治療與裝備資訊。';
+  const body =
+    ' \n directneedle\t MixedCaseNeedle  sleepQuality 高品質睡眠 ' +
+    filler.repeat(protocol.smoke ? 10 : 3_600) +
+    ' 恢復健康 tailneedle \t ';
+  const longPages = Array.from({ length: 20 }, (_, n) =>
+    page(analyzer, n + 1, '長篇資料' + n, body),
+  );
+  const shortPages = Array.from({ length: 20 }, (_, n) =>
+    page(analyzer, n + 101, '短篇資料' + n, 'shortneedle 短文對照'),
+  );
+  const content = new ContentIndex(analyzer);
+  content.rebuild([...longPages, ...shortPages]);
+  const snapshot = content.exportSnapshot();
+  const legacy = JSON.parse(JSON.stringify(snapshot));
+  legacy.extractedById = legacy.extractedById.map(([id, text]) => [
+    id,
+    ' \n\t ' + text.replaceAll(' ', '\n\t  ') + ' \t ',
+  ]);
+  const legacyJson = JSON.stringify(legacy);
+  const fullTexts = new Set([
+    ...snapshot.extractedById.map(([, text]) => text),
+    ...legacy.extractedById.map(([, text]) => text),
+  ]);
+  const contentCases = [
+    { category: 'direct', query: 'directneedle' },
+    { category: 'case-insensitive', query: 'mixedcaseneedle' },
+    { category: 'normalized-fallback', query: '恢复健康' },
+    { category: 'multi-term', query: '睡眠 健康' },
+    { category: 'long-tail', query: 'tailneedle' },
+    { category: 'short-control', query: '短文對照' },
+  ];
+  const output = {
+    engine: 'jieba-wasm/node',
+    corpus: {
+      longPages: longPages.length,
+      shortPages: shortPages.length,
+      longPageChars: body.length,
+      hash: resultHash([...longPages, ...shortPages]),
+    },
+    content: [],
+    snapshots: [],
+    lua: [],
+    queryTokens: [],
+    scope: [
+      'Query timing excludes restore, build, hashing and instrumentation.',
+      'Restore and restore-plus-first-query each time a fresh ContentIndex; payload is shared read-only.',
+      'Lua rebuild timing uses the production scheduler and a fresh index per sample, without snapshots.',
+      'Lua yield counts use a separate injected immediate scheduler, outside timed samples.',
+      'Whitespace counts match /\\s+/g replacement on exact extracted full-text receivers, including short controls.',
+      'Full results are preserved alongside hashes; snapshots retain their incoming JSON unchanged.',
+    ],
+  };
+  const ordinary = Array.from({ length: protocol.smoke ? 20 : 2_000 }, (_, n) =>
+    page(analyzer, n + 10_000, '普通資料' + n, 'ordinary text'),
+  );
+  const luaPages = Array.from({ length: 20 }, (_, n) => ({
+    ...page(
+      analyzer,
+      n + 20_000,
+      '模块:alpha beta ' + n,
+      'local p = {}; function p.alphaBeta() return "alpha beta" end; return p',
+    ),
+    namespace: 828,
+    namespaceName: '模块',
+    contentModel: 'Scribunto',
+  }));
+  const tokenPages = Array.from({ length: 20 }, (_, n) =>
+    page(analyzer, n + 30_000, 'alpha beta ' + n, 'alpha beta'),
+  );
+  for (let round = 1; round <= protocol.rounds; round += 1) {
+    for (const { category, query } of contentCases) {
+      const index = new ContentIndex(analyzer);
+      await index.importSnapshot(snapshot);
+      const cold = timedQuery(() => index.search(query));
+      assert.equal(cold.result.length, 20, category);
+      const hot = measure(() => index.search(query), protocol);
+      assert.deepEqual(hot.lastResult, cold.result);
+      const counted = new ContentIndex(analyzer);
+      await counted.importSnapshot(snapshot);
+      const coldCalls = await countOptimizationCalls(analyzer, fullTexts, () =>
+        counted.search(query),
+      );
+      const warmCalls = await countOptimizationCalls(analyzer, fullTexts, () =>
+        counted.search(query),
+      );
+      assert.deepEqual(coldCalls.results, cold.result);
+      assert.deepEqual(warmCalls.results, cold.result);
+      output.content.push({
+        round,
+        category,
+        query,
+        result: cold.result,
+        resultHash: resultHash(cold.result),
+        cold: { n: 1, ms: cold.ms },
+        hot: hot.timing,
+        coldCalls: coldCalls.counts,
+        warmCalls: warmCalls.counts,
+      });
+    }
+    for (const [category, payload] of [
+      ['current-format', snapshot],
+      ['legacy-whitespace', legacy],
+    ]) {
+      const restore = await measureFresh(
+        () => new ContentIndex(analyzer),
+        (index) => index.importSnapshot(payload),
+        protocol,
+      );
+      const restoreAndFirst = await measureFresh(
+        () => new ContentIndex(analyzer),
+        async (index) => {
+          await index.importSnapshot(payload);
+          return index.search('恢复健康');
+        },
+        protocol,
+      );
+      const counted = new ContentIndex(analyzer);
+      const restoreCalls = await countOptimizationCalls(
+        analyzer,
+        fullTexts,
+        () => counted.importSnapshot(payload),
+      );
+      const firstQueries = [];
+      for (const query of ['directneedle', 'mixedcaseneedle', '恢复健康']) {
+        const first = await countOptimizationCalls(analyzer, fullTexts, () =>
+          counted.search(query),
+        );
+        assert.deepEqual(
+          first.results,
+          output.content.find(
+            (row) => row.round === round && row.query === query,
+          ).result,
+        );
+        firstQueries.push({
+          query,
+          result: first.results,
+          resultHash: resultHash(first.results),
+          counts: first.counts,
+        });
+      }
+      assert.deepEqual(
+        restoreAndFirst.lastResult,
+        output.content.find(
+          (row) => row.round === round && row.query === '恢复健康',
+        ).result,
+      );
+      output.snapshots.push({
+        round,
+        category,
+        payloadBytes: Buffer.byteLength(JSON.stringify(payload)),
+        payloadHash: resultHash(payload),
+        restore: restore.timing,
+        coldRestore: restore.cold,
+        restoreAndFirst: restoreAndFirst.timing,
+        coldRestoreAndFirst: restoreAndFirst.cold,
+        firstResult: restoreAndFirst.lastResult,
+        firstResultHash: resultHash(restoreAndFirst.lastResult),
+        restoreCalls: restoreCalls.counts,
+        firstQueries,
+      });
+    }
+    assert.equal(
+      JSON.stringify(legacy),
+      legacyJson,
+      'Import mutated the legacy payload',
+    );
+    for (const [category, pages] of [
+      ['mixed', [...ordinary, ...luaPages]],
+      ['all-lua', luaPages],
+      ['all-non-lua', ordinary],
+    ]) {
+      const rebuilt = await measureFresh(
+        () => new LuaModuleIndex(analyzer),
+        (index) => index.rebuildAsync(pages),
+        protocol,
+      );
+      let yields = 0;
+      const counted = new LuaModuleIndex(analyzer, {
+        yield: async () => {
+          yields += 1;
+        },
+      });
+      await counted.rebuildAsync(pages);
+      const result = counted.search('alpha beta');
+      assert.equal(result.length, category === 'all-non-lua' ? 0 : 20);
+      assert.deepEqual(rebuilt.lastIndex.search('alpha beta'), result);
+      output.lua.push({
+        round,
+        category,
+        inputPages: pages.length,
+        corpusHash: resultHash(pages),
+        rebuild: rebuilt.timing,
+        coldRebuild: rebuilt.cold,
+        schedulerYields: yields,
+        result,
+        resultHash: resultHash(result),
+        snapshotHash: resultHash(counted.exportSnapshot()),
+      });
+    }
+    for (const [kind, Index, pages] of [
+      ['title', TitleIndex, tokenPages],
+      ['content', ContentIndex, tokenPages],
+      ['lua', LuaModuleIndex, luaPages],
+    ]) {
+      for (const [category, query] of [
+        ['and', 'alpha beta'],
+        ['or', 'alpha absentneedle'],
+      ]) {
+        const index = new Index(analyzer);
+        index.rebuild(pages);
+        const cold = timedQuery(() => index.search(query));
+        const hot = measure(() => index.search(query), protocol);
+        const counted = await countOptimizationCalls(analyzer, new Set(), () =>
+          index.search(query),
+        );
+        assert.ok(cold.result.length > 0);
+        assert.deepEqual(hot.lastResult, cold.result);
+        assert.deepEqual(counted.results, cold.result);
+        output.queryTokens.push({
+          round,
+          kind,
+          category,
+          query,
+          result: cold.result,
+          resultHash: resultHash(cold.result),
+          cold: { n: 1, ms: cold.ms },
+          hot: hot.timing,
+          counts: counted.counts,
+        });
+      }
+    }
+  }
+  output.legacyPayloadUnchanged = JSON.stringify(legacy) === legacyJson;
+  return output;
+}
+
+async function measureFresh(create, operation, protocol) {
+  const coldIndex = create();
+  const coldStart = performance.now();
+  await operation(coldIndex);
+  const cold = { n: 1, ms: performance.now() - coldStart };
+  for (let n = 0; n < protocol.warmups; n += 1) await operation(create());
+  const samplesMs = [];
+  let lastResult;
+  let lastIndex;
+  for (let n = 0; n < protocol.hotSamples; n += 1) {
+    const index = create();
+    const start = performance.now();
+    lastResult = await operation(index);
+    samplesMs.push(performance.now() - start);
+    lastIndex = index;
+  }
+  const sorted = [...samplesMs].sort((a, b) => a - b);
+  return {
+    timing: {
+      n: sorted.length,
+      p50Ms: sorted[Math.floor(sorted.length * 0.5)],
+      p95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1],
+      maxMs: sorted.at(-1),
+      samplesMs,
+    },
+    lastResult,
+    lastIndex,
+    cold,
+  };
+}
+
+async function countOptimizationCalls(analyzer, fullTexts, operation) {
+  const queryTokens = analyzer.queryTokens;
+  const replace = String.prototype.replace;
+  const counts = {
+    queryTokensCalls: 0,
+    fullTextWhitespaceReplaceCalls: 0,
+    fullTextWhitespaceReplaceChars: 0,
+  };
+  analyzer.queryTokens = function (value) {
+    counts.queryTokensCalls += 1;
+    return queryTokens.call(this, value);
+  };
+  String.prototype.replace = function (pattern, replacement) {
+    if (
+      pattern instanceof RegExp &&
+      pattern.source === '\\s+' &&
+      pattern.flags === 'g' &&
+      replacement === ' ' &&
+      fullTexts.has(String(this))
+    ) {
+      counts.fullTextWhitespaceReplaceCalls += 1;
+      counts.fullTextWhitespaceReplaceChars += String(this).length;
+    }
+    return replace.call(this, pattern, replacement);
+  };
+  try {
+    return { results: await operation(), counts };
+  } finally {
+    analyzer.queryTokens = queryTokens;
+    String.prototype.replace = replace;
+  }
 }
 
 async function storageSuite(server, protocol) {

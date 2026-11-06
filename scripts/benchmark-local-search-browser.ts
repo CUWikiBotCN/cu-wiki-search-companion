@@ -100,6 +100,7 @@ const api = {
   measureQueries,
   measureInputPaint,
   measureSnapshots,
+  measureOptimizations,
   uiChecks,
   cacheChecks,
   storageChecks,
@@ -549,6 +550,324 @@ async function measureSnapshots(smoke = false) {
     };
   } finally {
     observer?.disconnect();
+  }
+}
+
+async function measureOptimizations(smoke = false, stage = 'all') {
+  check(
+    ['all', 'content', 'snapshot', 'lua', 'tokens'].includes(stage),
+    'Unknown optimization stage',
+  );
+  const options = protocol(smoke);
+  const selected = (name) => stage === 'all' || stage === name;
+  const body =
+    ' \n directneedle\t MixedCaseNeedle  sleepQuality 高品質睡眠 ' +
+    filler.repeat(smoke ? 10 : 3_600) +
+    ' 恢復健康 tailneedle \t ';
+  const longPages = Array.from({ length: 20 }, (_, n) =>
+    page(n + 1, '長篇資料' + n, body),
+  );
+  const shortPages = Array.from({ length: 20 }, (_, n) =>
+    page(n + 101, '短篇資料' + n, 'shortneedle 短文對照'),
+  );
+  const local = new ContentIndex(analyzer);
+  if (selected('content') || selected('snapshot'))
+    local.rebuild([...longPages, ...shortPages]);
+  const snapshot = local.exportSnapshot();
+  const legacy = JSON.parse(JSON.stringify(snapshot));
+  legacy.extractedById = legacy.extractedById.map(([id, text]) => [
+    id,
+    ' \n\t ' + text.replaceAll(' ', '\n\t  ') + ' \t ',
+  ]);
+  const legacyJson = JSON.stringify(legacy);
+  const fullTexts = new Set([
+    ...snapshot.extractedById.map(([, text]) => text),
+    ...legacy.extractedById.map(([, text]) => text),
+  ]);
+  const contentCases = [
+    { category: 'direct', query: 'directneedle' },
+    { category: 'case-insensitive', query: 'mixedcaseneedle' },
+    { category: 'normalized-fallback', query: '恢复健康' },
+    { category: 'multi-term', query: '睡眠 健康' },
+    { category: 'long-tail', query: 'tailneedle' },
+    { category: 'short-control', query: '短文對照' },
+  ];
+  const ordinary = Array.from({ length: smoke ? 20 : 2_000 }, (_, n) =>
+    page(n + 10_000, '普通資料' + n, 'ordinary text'),
+  );
+  const luaPages = Array.from({ length: 20 }, (_, n) => ({
+    ...page(
+      n + 20_000,
+      '模块:alpha beta ' + n,
+      'local p = {}; function p.alphaBeta() return "alpha beta" end; return p',
+    ),
+    namespace: 828,
+    namespaceName: '模块',
+    contentModel: 'Scribunto',
+  }));
+  const tokenPages = Array.from({ length: 20 }, (_, n) =>
+    page(n + 30_000, 'alpha beta ' + n, 'alpha beta'),
+  );
+  const report = {
+    protocol: options,
+    stage,
+    engine: 'bootstrap; compare only with the paired bootstrap fixture',
+    corpus: {
+      longPages: 20,
+      shortPages: 20,
+      longPageChars: body.length,
+      hash: await hash([...longPages, ...shortPages]),
+    },
+    content: [],
+    snapshots: [],
+    lua: [],
+    queryTokens: [],
+    scope: [
+      'Independent stages; query timing excludes restoration, builds, hashing and instrumentation.',
+      'Restore and restore-plus-first-query use a fresh index each sample; incoming snapshot JSON stays unchanged.',
+      'Lua timing uses the production browser scheduler and fresh indexes, without snapshot restore.',
+      'Lua counts use an independent immediate scheduler; whitespace counts match exact extracted full-text receivers.',
+      'Full result fields and raw samples are preserved. Timing does not include report hashes.',
+    ],
+  };
+  for (let round = 1; round <= options.rounds; round += 1) {
+    if (selected('content'))
+      for (const { category, query } of contentCases) {
+        const index = new ContentIndex(analyzer);
+        await index.importSnapshot(snapshot);
+        const start = performance.now();
+        const result = index.search(query);
+        const cold = { n: 1, ms: performance.now() - start };
+        check(
+          result.length === 20,
+          'Unexpected optimization content result count: ' + category,
+        );
+        const hot = await measure(() => index.search(query), options);
+        equalOptimizationResults(hot.last, result);
+        const counted = new ContentIndex(analyzer);
+        await counted.importSnapshot(snapshot);
+        const coldCalls = await countOptimizationWork(fullTexts, () =>
+          counted.search(query),
+        );
+        const warmCalls = await countOptimizationWork(fullTexts, () =>
+          counted.search(query),
+        );
+        equalOptimizationResults(coldCalls.results, result);
+        equalOptimizationResults(warmCalls.results, result);
+        report.content.push({
+          round,
+          category,
+          query,
+          result,
+          resultHash: await hash(result),
+          cold,
+          hot: hot.timing,
+          coldCalls: coldCalls.counts,
+          warmCalls: warmCalls.counts,
+        });
+      }
+    if (selected('snapshot'))
+      for (const [category, payload] of [
+        ['current-format', snapshot],
+        ['legacy-whitespace', legacy],
+      ]) {
+        const restore = await measureFreshOptimization(
+          () => new ContentIndex(analyzer),
+          (index) => index.importSnapshot(payload),
+          options,
+        );
+        const restoredFirst = await measureFreshOptimization(
+          () => new ContentIndex(analyzer),
+          async (index) => {
+            await index.importSnapshot(payload);
+            return index.search('恢复健康');
+          },
+          options,
+        );
+        const counted = new ContentIndex(analyzer);
+        const restoreCalls = await countOptimizationWork(fullTexts, () =>
+          counted.importSnapshot(payload),
+        );
+        const firstQueries = [];
+        const reference = new ContentIndex(analyzer);
+        await reference.importSnapshot(snapshot);
+        for (const query of ['directneedle', 'mixedcaseneedle', '恢复健康']) {
+          const first = await countOptimizationWork(fullTexts, () =>
+            counted.search(query),
+          );
+          equalOptimizationResults(first.results, reference.search(query));
+          firstQueries.push({
+            query,
+            result: first.results,
+            resultHash: await hash(first.results),
+            counts: first.counts,
+          });
+        }
+        equalOptimizationResults(
+          restoredFirst.last,
+          reference.search('恢复健康'),
+        );
+        report.snapshots.push({
+          round,
+          category,
+          payloadHash: await hash(payload),
+          payloadBytes: new TextEncoder().encode(JSON.stringify(payload))
+            .length,
+          restore: restore.timing,
+          coldRestore: restore.cold,
+          restoreAndFirst: restoredFirst.timing,
+          coldRestoreAndFirst: restoredFirst.cold,
+          firstResult: restoredFirst.last,
+          firstResultHash: await hash(restoredFirst.last),
+          restoreCalls: restoreCalls.counts,
+          firstQueries,
+        });
+      }
+    check(
+      JSON.stringify(legacy) === legacyJson,
+      'Import mutated the legacy snapshot',
+    );
+    if (selected('lua'))
+      for (const [category, pages] of [
+        ['mixed', [...ordinary, ...luaPages]],
+        ['all-lua', luaPages],
+        ['all-non-lua', ordinary],
+      ]) {
+        const rebuilt = await measureFreshOptimization(
+          () => new LuaModuleIndex(analyzer),
+          (index) => index.rebuildAsync(pages),
+          options,
+        );
+        let yields = 0;
+        const counted = new LuaModuleIndex(analyzer, {
+          yield: async () => {
+            yields += 1;
+          },
+        });
+        await counted.rebuildAsync(pages);
+        const result = counted.search('alpha beta');
+        check(
+          result.length === (category === 'all-non-lua' ? 0 : 20),
+          'Unexpected rebuilt Lua result count',
+        );
+        equalOptimizationResults(
+          rebuilt.lastIndex.search('alpha beta'),
+          result,
+        );
+        report.lua.push({
+          round,
+          category,
+          inputPages: pages.length,
+          corpusHash: await hash(pages),
+          rebuild: rebuilt.timing,
+          coldRebuild: rebuilt.cold,
+          schedulerYields: yields,
+          result,
+          resultHash: await hash(result),
+          snapshotHash: await hash(counted.exportSnapshot()),
+        });
+      }
+    if (selected('tokens'))
+      for (const [kind, Index, pages] of [
+        ['title', TitleIndex, tokenPages],
+        ['content', ContentIndex, tokenPages],
+        ['lua', LuaModuleIndex, luaPages],
+      ]) {
+        for (const [category, query] of [
+          ['and', 'alpha beta'],
+          ['or', 'alpha absentneedle'],
+        ]) {
+          const index = new Index(analyzer);
+          index.rebuild(pages);
+          const start = performance.now();
+          const result = index.search(query);
+          const cold = { n: 1, ms: performance.now() - start };
+          const hot = await measure(() => index.search(query), options);
+          const counted = await countOptimizationWork(new Set(), () =>
+            index.search(query),
+          );
+          check(result.length > 0, 'Empty token optimization result');
+          equalOptimizationResults(hot.last, result);
+          equalOptimizationResults(counted.results, result);
+          report.queryTokens.push({
+            round,
+            kind,
+            category,
+            query,
+            result,
+            resultHash: await hash(result),
+            cold,
+            hot: hot.timing,
+            counts: counted.counts,
+          });
+        }
+      }
+  }
+  report.legacyPayloadUnchanged = JSON.stringify(legacy) === legacyJson;
+  return report;
+}
+
+function equalOptimizationResults(actual, expected) {
+  check(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    'Optimization full results changed',
+  );
+}
+
+async function measureFreshOptimization(create, operation, options) {
+  const coldIndex = create();
+  const coldStart = performance.now();
+  await operation(coldIndex);
+  const cold = { n: 1, ms: performance.now() - coldStart };
+  await delay();
+  for (let n = 0; n < options.warmups; n += 1) {
+    await operation(create());
+    await delay();
+  }
+  const samplesMs = [];
+  let last;
+  let lastIndex;
+  for (let n = 0; n < options.samples; n += 1) {
+    const index = create();
+    const start = performance.now();
+    last = await operation(index);
+    samplesMs.push(performance.now() - start);
+    lastIndex = index;
+    await delay();
+  }
+  return { timing: stats(samplesMs), cold, last, lastIndex };
+}
+
+async function countOptimizationWork(fullTexts, operation) {
+  const queryTokens = analyzer.queryTokens;
+  const replace = String.prototype.replace;
+  const counts = {
+    queryTokensCalls: 0,
+    fullTextWhitespaceReplaceCalls: 0,
+    fullTextWhitespaceReplaceChars: 0,
+  };
+  analyzer.queryTokens = function (value) {
+    counts.queryTokensCalls += 1;
+    return queryTokens.call(this, value);
+  };
+  String.prototype.replace = function (pattern, replacement) {
+    if (
+      pattern instanceof RegExp &&
+      pattern.source === '\\s+' &&
+      pattern.flags === 'g' &&
+      replacement === ' ' &&
+      fullTexts.has(String(this))
+    ) {
+      counts.fullTextWhitespaceReplaceCalls += 1;
+      counts.fullTextWhitespaceReplaceChars += String(this).length;
+    }
+    return replace.call(this, pattern, replacement);
+  };
+  try {
+    return { results: await operation(), counts };
+  } finally {
+    analyzer.queryTokens = queryTokens;
+    String.prototype.replace = replace;
   }
 }
 

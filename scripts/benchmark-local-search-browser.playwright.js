@@ -4,6 +4,7 @@
 // Configuration (only read when the Playwright realm exposes process.env):
 // CU_WIKI_BENCHMARK_URL, CU_WIKI_EXPECTED_VERSION, CU_WIKI_EXPECTED_MARKER,
 // CU_WIKI_BENCHMARK_PHASE=all or comma-separated heap,search,input,snapshot,ui,cache,storage,
+// optimizations, optimization-content, optimization-snapshot, optimization-lua, optimization-tokens.
 // CU_WIKI_BENCHMARK_SMOKE=1. Explicit defaults below also work without process.env.
 // The tested playwright-cli run-code VM does not expose process; environment
 // overrides are unavailable there. Copy this script into ignored .local/ and
@@ -23,7 +24,8 @@ async page => {
     throw new Error('The synthetic browser fixture must use loopback');
   }
   const phases = new Set(configuration.phase.split(',').map(phase => phase.trim()));
-  const known = ['all', 'heap', 'search', 'input', 'snapshot', 'ui', 'cache', 'storage'];
+  const known = ['all', 'heap', 'search', 'input', 'snapshot', 'ui', 'cache', 'storage',
+    'optimizations', 'optimization-content', 'optimization-snapshot', 'optimization-lua', 'optimization-tokens'];
   if ([...phases].some(phase => !known.includes(phase))) throw new Error('Unknown fixture benchmark phase');
   const selected = phase => phases.has('all') || phases.has(phase);
   const tab = await page.context().newPage();
@@ -68,6 +70,14 @@ async page => {
       smoke => window.__CU_WIKI_BENCHMARK__.measureInputPaint(smoke), configuration.smoke);
     if (selected('snapshot')) report.snapshots = await tab.evaluate(
       smoke => window.__CU_WIKI_BENCHMARK__.measureSnapshots(smoke), configuration.smoke);
+    for (const stage of ['content', 'snapshot', 'lua', 'tokens']) {
+      if (selected('optimizations') || phases.has('optimization-' + stage)) {
+        report.optimizations ??= {};
+        report.optimizations[stage] = await tab.evaluate(
+          ({ smoke, stage }) => window.__CU_WIKI_BENCHMARK__.measureOptimizations(smoke, stage),
+          { smoke: configuration.smoke, stage });
+      }
+    }
     if (selected('ui')) report.ui = await tab.evaluate(() => window.__CU_WIKI_BENCHMARK__.uiChecks());
     if (selected('cache')) report.cache = await tab.evaluate(() => window.__CU_WIKI_BENCHMARK__.cacheChecks());
     if (selected('storage')) report.storage = await tab.evaluate(() => window.__CU_WIKI_BENCHMARK__.storageChecks());
