@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 const BLOCK_TAGS = /<(script|style|gallery|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const REFERENCES = /<ref\b[^>]*>[\s\S]*?<\/ref\s*>|<ref\b[^>]*\/\s*>/gi;
+const REFERENCES =
+  /<ref\b(?:[^>"']|"[^"]*"|'[^']*')*\/\s*>|<ref\b[^>]*>[\s\S]*?<\/ref\s*>/gi;
 const HTML_ENTITIES = /&(?:nbsp|amp|lt|gt|quot|apos|#(?:\d+|x[0-9a-f]+));/gi;
 
 export function extractWikitext(source: string): string {

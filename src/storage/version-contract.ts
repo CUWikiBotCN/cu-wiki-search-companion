@@ -33,7 +33,7 @@ export const CURRENT_VERSION_CONTRACT: CacheVersionContract = Object.freeze({
   pageFacts: 2,
   contentJobFormat: 1,
   analyzerPipeline: 2,
-  extractors: Object.freeze({ wikitext: 2, bson: 1, lua: 2 }),
+  extractors: Object.freeze({ wikitext: 3, bson: 1, lua: 2 }),
   indexes: Object.freeze({ title: 2, content: 1, lua: 1 }),
   dataCodeFormat: 2,
   libraries: Object.freeze({ minisearch: '7.2.0', jieba: '2.4.0' }),

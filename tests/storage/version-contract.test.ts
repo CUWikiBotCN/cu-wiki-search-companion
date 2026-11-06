@@ -21,7 +21,7 @@ describe('cache version contract', () => {
       databaseSchema: 3,
       pageFacts: 2,
       contentJobFormat: 1,
-      extractors: { wikitext: 2, bson: 1, lua: 2 },
+      extractors: { wikitext: 3, bson: 1, lua: 2 },
       indexes: { title: 2, content: 1, lua: 1 },
     });
   });

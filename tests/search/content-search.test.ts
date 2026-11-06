@@ -31,6 +31,50 @@ describe('wikitext content search', () => {
     expect(extracted).not.toContain('隐藏来源文字');
   });
 
+  it.each([
+    '<ref name="reused"/>',
+    '<ref name="reused" group="参" />',
+    '<REF\nname="reused"\n/>',
+    '<ref name="first" /><ref name="second" />',
+    '<ref name="part/>name" />',
+    "<ref name='part/>name' />",
+  ])(
+    'preserves visible text after a self-closing reference: %s',
+    (reference) => {
+      expect(
+        extractWikitext(
+          `前文${reference}\n=== 生血晶等七种晶体 ===\n正文<ref name="source">隐藏来源</ref>后文`,
+        ),
+      ).toBe('前文 生血晶等七种晶体 正文 后文');
+    },
+  );
+
+  it.each(['"part/>name"', "'part/>name'"])(
+    'does not treat a slash inside a quoted reference name as a self-closing tag: %s',
+    (name) => {
+      expect(extractWikitext(`前文<ref name=${name}>隐藏来源</ref>后文`)).toBe(
+        '前文 后文',
+      );
+    },
+  );
+
+  it('finds a heading between a reused reference and the next reference body', () => {
+    const index = new ContentIndex(analyzer);
+    index.rebuild([
+      page(
+        1,
+        '世界生成',
+        '<ref name="env-distribute" group="参" />\n=== 生血晶等七种晶体 ===\n晶体生成说明。<ref group="参">隐藏来源</ref>',
+      ),
+    ]);
+
+    expect(index.search('生血晶等七种晶体')[0]).toMatchObject({
+      title: '世界生成',
+      snippet: expect.stringContaining('生血晶等七种晶体'),
+    });
+    expect(index.search('隐藏来源')).toEqual([]);
+  });
+
   it('decodes supported entities exactly once while preserving unknown entities as text', () => {
     expect(
       extractWikitext(

@@ -9,6 +9,10 @@ import {
   VersionedSearchIndexCache,
 } from '../../src/search/versioned-search-index-cache';
 import { WikiSearchDatabase } from '../../src/storage/database';
+import {
+  createCompatibilityKey,
+  CURRENT_VERSION_CONTRACT,
+} from '../../src/storage/version-contract';
 import type { IndexSnapshotRecord, PageRecord } from '../../src/types';
 
 const analyzer = new Analyzer(
@@ -17,6 +21,59 @@ const analyzer = new Analyzer(
 );
 
 describe('VersionedSearchIndexCache', () => {
+  it('rebuilds a v2 wikitext snapshot from unchanged local facts to recover swallowed headings', async () => {
+    const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
+    await database.open();
+    const cache = new VersionedSearchIndexCache(database, {
+      storage: unlimitedStorage(),
+    });
+    const record = page(
+      1,
+      '世界生成',
+      '前文<ref name="reused" />\n=== 生血晶等七种晶体 ===\n正文<ref>隐藏来源</ref>',
+      'wikitext',
+      1,
+    );
+    try {
+      await database.pages.put(record);
+      await database.syncState.put({ key: 'local-sequence', value: 1 });
+      const old = await cache.restoreOrRebuild('content', analyzer);
+      // Model the old extractor's missing text without changing stored page facts.
+      old.index.rebuild([{ ...record, content: '前文' }]);
+      old.compatibilityKey = createCompatibilityKey(
+        'content',
+        analyzer.compatibilityEngine,
+        {
+          ...CURRENT_VERSION_CONTRACT,
+          extractors: { ...CURRENT_VERSION_CONTRACT.extractors, wikitext: 2 },
+        },
+      );
+      expect((await cache.publish(old)).status).toBe('published');
+
+      const reader = new VersionedSearchIndexCache(database, {
+        storage: unlimitedStorage(),
+      });
+      const rebuilt = await reader.restoreOrRebuild('content', analyzer);
+      expect(rebuilt.source).toBe('rebuild');
+      expect(rebuilt.index.search('生血晶等七种晶体')[0]).toMatchObject({
+        title: '世界生成',
+        snippet: expect.stringContaining('生血晶等七种晶体'),
+      });
+      expect(await database.pages.get(record.id)).toEqual(record);
+      expect(await database.syncState.get('local-sequence')).toEqual({
+        key: 'local-sequence',
+        value: 1,
+      });
+      expect((await reader.publish(rebuilt)).status).toBe('published');
+      expect((await reader.restoreOrRebuild('content', analyzer)).source).toBe(
+        'snapshot',
+      );
+    } finally {
+      database.close();
+      await database.delete();
+    }
+  });
+
   it('returns detached last-observed metadata without IO and refreshes it only through explicit observation', async () => {
     const database = new WikiSearchDatabase(`test-${crypto.randomUUID()}`);
     await database.open();
