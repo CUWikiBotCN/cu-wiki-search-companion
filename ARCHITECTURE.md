@@ -44,6 +44,7 @@ flowchart LR
   DataSync --> DB
 
   DB --> CssIndex[CssSourceIndex / 按需源码]
+  DB --> SectionIndex[SectionTitleIndex / 按需小节]
   DB --> Cache[VersionedSearchIndexCache]
   Cache --> TitleIndex[TitleIndex]
   Cache --> ContentIndex[ContentIndex]
@@ -54,6 +55,7 @@ flowchart LR
   DB --> DataRuntime --> DataIndex[DataCodeIndex]
 
   CssIndex --> UI
+  SectionIndex --> UI
   TitleIndex --> UI
   ContentIndex --> UI
   LuaIndex --> UI
@@ -69,7 +71,7 @@ src/main.ts 是组合根。它负责生命周期、依赖装配和 UI 回调，�
 
 入口只在 wgAction 或 URL action 为 edit / submit 时启动。阅读页不打开数据库、不注入面板，也不做后台同步。
 
-结果主动作始终复制纯标题或代码名。页面 content model 只决定是否允许额外的插入动作：
+结果主动作复制纯标题、代码名或已就绪的 `页面#锚点`。页面 content model 只决定是否允许额外的插入动作：
 
 - wikitext 或未知模型：普通页面结果可通过插入按钮或 Shift+Enter，把 Wiki 链接插入 CodeMirror 5 或 textarea 当前选择处；Data/Lua 不提供插入。
 - 其他模型：隐藏插入按钮，插入快捷键提示不支持；复制和打开仍可用。
@@ -375,6 +377,16 @@ CSS 在同一只读事务内读取自己的序列和增量记录，删除及模�
 
 CSS refresh 返回是否应用来源变化；没有增量且未强制刷新时，只推进序列，不复制 sources Map 或通知结果失效。
 
+### 8.3.1 可选小节标题
+
+小节是标题模式的可选范围，不进入 `TitleIndex` 或正文索引。`SectionSearchRuntime` 按需创建 `SectionTitleIndex`；从未开启时不读取正文、不解析小节、不发起相关网络请求。索引只接受活动、非重定向、修订有效且 `contentRevisionId === revisionId` 的 wikitext 源码。首次读取和后续 localSeq 增量在事务外分批解析，让步后以 generation 栅栏安装；内存仅保留标题、层级和源码范围，不复制正文或持久化小节快照。缺失与过期源码保留轻量页面元数据供覆盖统计及获取；覆盖只说明已知页面的源码，不代表模板生成标题全部可检索。
+
+`parseSections()` 在原始 JS 字符串 UTF-16 坐标中记录标题、直接正文与子树范围，并跳过注释、引用、nowiki、pre、syntaxhighlight、source 等不可产生标题的区域及未展开模板。本站的 `<code>` 内等号标题可以产生小节，因此不能将它整块遮罩。无法可靠解释的标题仍作为层级边界，不能把其子标题错误归入前一个父级；这些范围尚未与正文索引的摘要坐标关联。查询先在原始输入按首个 ASCII `#` 分割，再对两侧分别归一；页面和小节条件先同时筛选，再排序截断，不使用标题索引的前 20 页作为候选上限。手动范围默认关闭，`#` 临时开启不改手动状态；页面绑定使用 page ID，修改左侧或越过命名空间时清除。
+
+首次开启只读取本地缓存。明确绑定页面时，缺失或过期源码可自动请求该页；输入完整规范名称且标题基线就绪、唯一匹配时，稳定 500 ms 后也可触发。片段查询不自动批量获取；用户可主动获取单页或更新共享正文缓存。同步复用正文任务与写锁，单页意图在等待期间可撤销，已发出的共享请求可完成。自动尝试按页面与修订去重，面板会话最多 64 个目标。
+
+纯文本直接标题仅在整页结构和字符满足保守规则时计算本地锚点，并按整页已占锚点集合处理重复。其他结果保留待核对状态，由 `section-links.ts` 按用户动作请求固定修订的章节元数据；响应需匹配页面、修订和源码位置，才能安装原始 fragment。结果与核对缓存还携带页面事实的 localSeq，防止同一远端修订的本地源码修复后沿用旧目标。本站实测章节 `byteoffset` 为 Unicode code-point 偏移，适配器转换为 UTF-16 后再关联，不能按字节猜测。核对缓存仅在内存中保留，最多 64 页、5 分钟；事实或运行态失效时清除。核对不自动触发复制、打开或插入，也不保证修订号覆盖外部模板依赖的未来变化。
+
 ### 8.4 内容抽取
 
 - wikitext：去除注释、ref、模板/链接标记等高噪结构，保留面向搜索的文本和语言变体。
@@ -478,6 +490,7 @@ SearchPanel 挂在开放 Shadow DOM 中，隔离站点样式规则，并通过�
 结果主动作统一为复制，剪贴板、页面 URL 和编辑器仍由 main.ts 的回调接线，SearchPanel 不直接调用 GM API：
 
 - 页面标题、正文、文件、Lua：`copyTitle(result)` 复制原始完整标题，不添加维基语法或替换为查询词；Data 复用 `copyCode(result)` 复制代码名。
+- 已就绪的小节复制 `页面#锚点`，链接显示文本使用完整小节标题；待核对时仅提供核对与打开所属页面，核对完成后仍需用户单独执行目标动作。
 - 普通页面结果的小按钮依次为打开、复制插入内容、插入。原 `copy(result, query)` 专门复制维基插入内容；它与插入复用 `wikiLink`，不与纯标题复制混用。
 - 标题和文件以查询词作为链接显示文本，正文使用页面标题；Category/File namespace 仍加前导冒号，避免添加分类或嵌入文件。
 - Data/Lua 仅保留打开来源/模块的次要按钮，不提供新的插入表达；不再保留与复制重复的 `selectCode` 回调。

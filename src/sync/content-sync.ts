@@ -33,6 +33,7 @@ interface ContentResponse {
 export interface ContentSyncOptions {
   force?: boolean;
   scope?: ContentSyncScope;
+  pageIds?: readonly number[];
   requestIntervalMs?: number;
   onBatch?: (pages: PageRecord[]) => void | Promise<void>;
   onProgress?: (progress: ContentSyncProgress) => void;
@@ -48,6 +49,7 @@ export async function syncContent(
     database,
     options.force ?? false,
     scope,
+    options.pageIds,
   );
   let currentProgress = await progress(database, selectedIds);
   reportProgress(currentProgress, options.onProgress);
@@ -160,6 +162,8 @@ export async function syncContent(
             const nextContentModel =
               slot.contentmodel ?? stored.contentModel ?? 'wikitext';
             const searchableFactChanged =
+              stored.contentRevisionId !== revision.revid ||
+              stored.revisionId !== revision.revid ||
               stored.content !== slot.content ||
               stored.contentModel?.toLocaleLowerCase() !==
                 nextContentModel.toLocaleLowerCase();
@@ -238,7 +242,9 @@ async function prepareContentJobsInScope(
   database: WikiSearchDatabase,
   force: boolean,
   scope?: ContentSyncScope,
+  pageIds?: readonly number[],
 ): Promise<Set<number>> {
+  const requestedIds = pageIds === undefined ? undefined : new Set(pageIds);
   return database.transaction('rw', database.pages, database.jobs, async () => {
     const existingJobs = await database.jobs
       .where('type')
@@ -254,7 +260,10 @@ async function prepareContentJobsInScope(
     await database.pages.each((page) => {
       if (!isContentJobEligible(page)) return;
       eligiblePageIds.add(page.id);
-      const selected = !scope || matchesContentScope(page.contentModel, scope);
+      const selected =
+        (!requestedIds || requestedIds.has(page.id)) &&
+        (!scope || matchesContentScope(page.contentModel, scope));
+      if (requestedIds && !selected) return;
       if (selected) selectedIds.add(page.id);
       const existing = existingByPage.get(page.id);
       const projection = projectContentJob(page, force && selected);
@@ -265,7 +274,12 @@ async function prepareContentJobsInScope(
       }
     });
     const staleJobIds = existingJobs
-      .filter((job) => !eligiblePageIds.has(job.pageId) && job.id !== undefined)
+      .filter(
+        (job) =>
+          (!requestedIds || requestedIds.has(job.pageId)) &&
+          !eligiblePageIds.has(job.pageId) &&
+          job.id !== undefined,
+      )
       .map((job) => job.id as number);
     if (staleJobIds.length) await database.jobs.bulkDelete(staleJobIds);
     if (jobsToPut.length) await database.jobs.bulkPut(jobsToPut);

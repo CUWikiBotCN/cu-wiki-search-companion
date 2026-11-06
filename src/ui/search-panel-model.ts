@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+import type { SectionSearchResult } from '../search/section-title-index';
 import type { ContentSearchResult } from '../search/content-index';
 import type { CssSearchResult } from '../search/css-source-index';
 import type { DataCodeSearchResult } from '../search/data-code-index';
@@ -83,18 +84,48 @@ export type WikiPageSearchResult =
   | TitleSearchResult
   | ContentSearchResult
   | LuaModuleSearchResult
-  | CssSearchResult;
+  | CssSearchResult
+  | SectionSearchResult;
 export type SearchPanelResult = WikiPageSearchResult | DataCodeSearchResult;
 
 /** Both Wiki-link copying and insertion are limited to title/file/content results. */
 export function canInsertResult(
   result: SearchPanelResult,
-): result is TitleSearchResult | ContentSearchResult {
-  return !('kind' in result) || result.kind === 'content';
+): result is TitleSearchResult | ContentSearchResult | SectionSearchResult {
+  return (
+    !('kind' in result) ||
+    result.kind === 'content' ||
+    (result.kind === 'section' &&
+      !result.needsResolution &&
+      Boolean(result.fragment))
+  );
 }
 
 export function isDataCodeResult(
   result: SearchPanelResult,
 ): result is DataCodeSearchResult {
   return 'kind' in result && result.kind === 'data-code';
+}
+
+export function isSectionResult(
+  result: SearchPanelResult,
+): result is SectionSearchResult {
+  return 'kind' in result && result.kind === 'section';
+}
+
+export function searchResultIdentity(
+  mode: SearchMode,
+  result: SearchPanelResult,
+): string {
+  return isDataCodeResult(result)
+    ? JSON.stringify([result.source, result.code])
+    : isSectionResult(result)
+      ? JSON.stringify([
+          mode,
+          result.id,
+          result.revisionId,
+          result.sourceSequence,
+          result.sectionId,
+        ])
+      : `${mode}:${result.id}`;
 }

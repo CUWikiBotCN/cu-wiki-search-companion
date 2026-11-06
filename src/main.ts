@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
+import { SectionLinkResolver } from './sync/section-links';
+import { isSectionResult } from './ui/search-panel-model';
 import { Analyzer, createBootstrapSegmenter } from './analyzer/analyzer';
 import { loadAnalyzer, type AnalyzerLoadResult } from './analyzer/load-jieba';
 import { DEFAULT_DATA_CODE_RULES } from './data/data-field-rules';
-import { insertAtEditorSelection, wikiLink } from './editor';
+import { insertAtEditorSelection, wikiLink, sectionWikiLink } from './editor';
 import { LocalDataMaintenance } from './maintenance/local-data-maintenance';
 import { changeBroadcastEffect } from './runtime/change-broadcast';
 import { browserTaskScheduler } from './runtime/cooperative-task-scheduler';
@@ -213,6 +215,22 @@ async function start(): Promise<void> {
     },
     search: (query, namespace) =>
       pageSearchRuntime?.searchTitles(query, namespace) ?? [],
+    sectionIntent: (intent) => {
+      if (pageSearchRuntime) pageSearchRuntime.sections.setIntent(intent);
+    },
+    searchSections: (query, namespace, pageId) =>
+      pageSearchRuntime?.sections.search(query, namespace, pageId) ?? [],
+    sectionInfo: (query, namespace, pageId) =>
+      pageSearchRuntime?.sections.describe(query, namespace, pageId),
+    fetchSectionPage: async (pageId) =>
+      (await pageSearchRuntimeReady).sections.fetchPage(pageId),
+    sectionCurrent: (result) =>
+      pageSearchRuntime?.sections.current(result) ?? false,
+    resolveSection: async (result) =>
+      (await pageSearchRuntimeReady).sections.resolve(result),
+    openSectionPage: (result) => {
+      GM_openInTab(pageUrl(result.title), { active: true });
+    },
     searchFiles: (query) => fileSearchRuntime?.search(query) ?? [],
     searchLua: (query) => pageSearchRuntime?.searchLua(query) ?? [],
     searchCss: (query) => pageSearchRuntime?.searchCss(query) ?? [],
@@ -224,11 +242,27 @@ async function start(): Promise<void> {
         panel.setStatus(`当前为 ${contentModel}，不支持插入维基链接`, 'error');
         return;
       }
-      const link = wikiLink(
-        result.title,
-        'kind' in result ? result.title : query,
-        result.namespace,
-      );
+      if (
+        isSectionResult(result) &&
+        (!pageSearchRuntime?.sections.current(result) ||
+          result.needsResolution ||
+          !result.fragment)
+      ) {
+        panel.setStatus('小节目标已失效或需要核对，请重新选择。', 'error');
+        return;
+      }
+      const link = isSectionResult(result)
+        ? sectionWikiLink(
+            result.title,
+            result.fragment,
+            result.sectionTitle,
+            result.namespace,
+          )
+        : wikiLink(
+            result.title,
+            'kind' in result ? result.title : query,
+            result.namespace,
+          );
       const editor = insertAtEditorSelection(link);
       panel.setStatus(
         `已插入 ${link} · ${editor === 'codemirror' ? 'CodeMirror' : '文本框'}`,
@@ -236,21 +270,60 @@ async function start(): Promise<void> {
       );
     },
     copy: (result, query) => {
-      const link = wikiLink(
-        result.title,
-        'kind' in result ? result.title : query,
-        result.namespace,
-      );
+      if (
+        isSectionResult(result) &&
+        (!pageSearchRuntime?.sections.current(result) ||
+          result.needsResolution ||
+          !result.fragment)
+      ) {
+        panel.setStatus('小节目标已失效或需要核对，请重新选择。', 'error');
+        return;
+      }
+      const link = isSectionResult(result)
+        ? sectionWikiLink(
+            result.title,
+            result.fragment,
+            result.sectionTitle,
+            result.namespace,
+          )
+        : wikiLink(
+            result.title,
+            'kind' in result ? result.title : query,
+            result.namespace,
+          );
       GM_setClipboard(link, 'text');
       panel.setStatus(`已复制 ${link}`, 'success');
     },
     redirectUrl: (target) => pageUrl(target.title, target.fragment),
     open: (result) => {
-      GM_openInTab(pageUrl(result.title), { active: true });
+      if (
+        isSectionResult(result) &&
+        (!pageSearchRuntime?.sections.current(result) ||
+          result.needsResolution ||
+          !result.fragment)
+      )
+        return;
+      GM_openInTab(
+        pageUrl(
+          result.title,
+          isSectionResult(result) ? result.fragment : undefined,
+        ),
+        { active: true },
+      );
     },
     copyTitle: (result) => {
-      GM_setClipboard(result.title, 'text');
-      panel.setStatus(`已复制标题：${result.title}`, 'success');
+      if (
+        isSectionResult(result) &&
+        (!pageSearchRuntime?.sections.current(result) ||
+          result.needsResolution ||
+          !result.fragment)
+      )
+        return;
+      const target = isSectionResult(result)
+        ? `${result.title}#${result.fragment}`
+        : result.title;
+      GM_setClipboard(target, 'text');
+      panel.setStatus(`已复制目标：${target}`, 'success');
     },
     copyCode: (result) => {
       GM_setClipboard(result.code, 'text');
@@ -385,16 +458,56 @@ async function start(): Promise<void> {
       if (coordinated === 'lock-unavailable')
         throw writerLockUnavailableError();
     },
-    synchronizeContent: async (force, scope = 'content') => {
+    sectionLinks: new SectionLinkResolver(database, api),
+    synchronizeContent: async (
+      force,
+      scope = 'content',
+      pageIds,
+      shouldRun,
+      onStarted,
+    ) => {
+      if (!ensureWritesAllowed()) throw new Error('本地数据版本不兼容');
       let progress: Awaited<ReturnType<typeof syncContent>> | undefined;
       const coordinated = await lifecycle.runWriter(
         `content:${scope}`,
         async () => {
+          if (shouldRun && !shouldRun()) {
+            progress = { total: 0, done: 0, pending: 0, failed: 0 };
+            return;
+          }
+          const selectedPages =
+            pageIds === undefined
+              ? undefined
+              : (await database.pages.bulkGet([...pageIds])).flatMap((page) =>
+                  page &&
+                  !page.deleted &&
+                  !page.isRedirect &&
+                  page.contentModel === 'wikitext'
+                    ? [page.id]
+                    : [],
+                );
+          if (shouldRun && !shouldRun()) {
+            progress = { total: 0, done: 0, pending: 0, failed: 0 };
+            return;
+          }
+          onStarted?.();
           progress = await syncContent(database, api, {
             force,
             scope,
+            pageIds: selectedPages,
             onBatch: () => {
               incrementalChannel?.postMessage({ type: 'content-committed' });
+              const sections = pageSearchRuntime?.sections;
+              if (sections) {
+                // Disable old actions immediately. Cooperative work must not hold
+                // the writer lock while waiting for a hidden tab to become visible.
+                sections.invalidateActions();
+                observeRuntimeTask(
+                  sections.refresh(),
+                  'section batch refresh',
+                  '小节更新暂停，请重新检索',
+                );
+              }
             },
             onProgress: (current) => {
               panel.setStatus(
@@ -416,6 +529,10 @@ async function start(): Promise<void> {
     onStatus: ({ message, tone }) => panel.setStatus(message, tone),
     startedAt: bootStartedAt,
   });
+  const sectionRuntime = pageSearchRuntime.sections;
+  window.addEventListener('pagehide', () =>
+    sectionRuntime.setIntent({ active: false, query: '' }),
+  );
   resolvePageSearchRuntimeReady(pageSearchRuntime);
   await pageSearchRuntime.initialize();
   fileSearchRuntime = new FileSearchRuntime({
@@ -763,6 +880,7 @@ async function start(): Promise<void> {
   async function applyStorageInvalidation(
     invalidation: StorageInvalidation,
   ): Promise<void> {
+    if (invalidation.pages) pageSearchRuntime?.sections.invalidateActions();
     const incrementalState =
       invalidation.pages || invalidation.files
         ? await readRecentChangeSyncState(database)

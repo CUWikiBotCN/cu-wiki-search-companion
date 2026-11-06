@@ -167,7 +167,7 @@ describe('SearchPanel result actions', () => {
       [...root.querySelectorAll<HTMLElement>('.result .action')].map(
         (action) => action.textContent,
       ),
-    ).toEqual(['打开', '复制插入内容', '插入']);
+    ).toEqual(['查看小节', '打开', '复制插入内容', '插入']);
 
     const primary = root.querySelector<HTMLButtonElement>(
       '.insert.result-primary',
@@ -921,7 +921,9 @@ describe('SearchPanel keyboard lifecycle', () => {
       handle.dispatchEvent(backward);
       await nextTick();
       expect(backward.defaultPrevented).toBe(true);
-      expect(root.activeElement).toBe(mode);
+      const sectionToggle =
+        root.querySelector<HTMLInputElement>('.include-sections')!;
+      expect(root.activeElement).toBe(sectionToggle);
 
       const forward = new KeyboardEvent('keydown', {
         key: 'Tab',
@@ -929,7 +931,7 @@ describe('SearchPanel keyboard lifecycle', () => {
         composed: true,
         cancelable: true,
       });
-      mode.dispatchEvent(forward);
+      sectionToggle.dispatchEvent(forward);
       await nextTick();
       expect(forward.defaultPrevented).toBe(true);
       expect(root.activeElement).toBe(handle);

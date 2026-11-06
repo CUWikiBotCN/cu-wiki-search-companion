@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
+import {
+  SectionSearchRuntime,
+  type SectionLinkLookup,
+} from './section-search-runtime';
 import type { Analyzer } from '../analyzer/analyzer';
 import type { AnalyzerLoadResult } from '../analyzer/load-jieba';
 import type {
@@ -79,7 +83,11 @@ export interface PageSearchRuntimeOptions {
   synchronizeContent(
     force: boolean,
     scope?: ContentSyncScope,
+    pageIds?: readonly number[],
+    shouldRun?: () => boolean,
+    onStarted?: () => void,
   ): Promise<ContentSyncProgress>;
+  sectionLinks?: SectionLinkLookup;
   rebuildIndexes(analyzer: Analyzer): Promise<SearchIndexRebuildResult>;
   onStateChange?(state: PageSearchRuntimeState): void;
   onResultsChanged?(kinds: readonly PageSearchKind[]): void;
@@ -89,6 +97,7 @@ export interface PageSearchRuntimeOptions {
 }
 
 export class PageSearchRuntime {
+  readonly sections: SectionSearchRuntime;
   private readonly database: WikiSearchDatabase;
   private readonly indexCache: VersionedSearchIndexCache;
   private readonly bootstrapAnalyzer: Analyzer;
@@ -136,6 +145,15 @@ export class PageSearchRuntime {
   };
 
   constructor(private readonly options: PageSearchRuntimeOptions) {
+    this.sections = new SectionSearchRuntime({
+      database: options.database,
+      analyzer: options.bootstrapAnalyzer,
+      links: options.sectionLinks,
+      synchronize: (pageIds, shouldRun, onStarted) =>
+        this.contentSyncSession.run(false, pageIds, shouldRun, onStarted),
+      titleBaselineReady: () => this.mutableState.readiness.title === 'ready',
+      changed: () => this.resultsChanged(['title']),
+    });
     this.database = options.database;
     this.indexCache = options.indexCache;
     this.bootstrapAnalyzer = options.bootstrapAnalyzer;
@@ -196,7 +214,13 @@ export class PageSearchRuntime {
         ),
     });
     this.contentSyncSession = new ContentSyncSession({
-      synchronize: (force) => this.performContentSynchronization(force),
+      synchronize: (force, pageIds, shouldRun, onStarted) =>
+        this.performContentSynchronization(
+          force,
+          pageIds,
+          shouldRun,
+          onStarted,
+        ),
       reportFailure: (error) => {
         this.status(
           `正文同步暂停，本地已有正文仍可搜索：${errorMessage(error)}`,
@@ -279,6 +303,7 @@ export class PageSearchRuntime {
   }
 
   refresh(): Promise<void> {
+    this.sections.invalidateActions();
     return this.queueRefresh();
   }
 
@@ -327,6 +352,7 @@ export class PageSearchRuntime {
             this.indexCache.schedulePublish(handle);
           }
         }
+        await this.sections.refresh(forceCss);
         if (await this.cssIndex?.refresh(this.database, forceCss))
           changed.add('css');
         if (stale()) return this.refreshOnce(forceCss, rebuildContent);
@@ -425,6 +451,7 @@ export class PageSearchRuntime {
       );
       const changed: PageSearchKind[] = ['title', 'content', 'lua'];
       try {
+        await this.sections.refresh(true);
         if (await this.cssIndex?.refresh(this.database, true))
           changed.push('css');
         await this.refreshSnapshotStatus();
@@ -530,6 +557,7 @@ export class PageSearchRuntime {
     this.status('正在同步标题…');
     const snapshotWarning = await this.synchronizePreparedTitles(false);
     this.setReadiness('title', 'ready');
+    this.sections.titleBaselineChanged();
     if (snapshotWarning) return;
     const count = this.mutableState.indexedPages;
     if (this.analyzerResult?.warning) {
@@ -632,11 +660,25 @@ export class PageSearchRuntime {
     );
   }
 
-  private async performContentSynchronization(force: boolean): Promise<void> {
+  private async performContentSynchronization(
+    force: boolean,
+    pageIds?: readonly number[],
+    shouldRun?: () => boolean,
+    onStarted?: () => void,
+  ): Promise<void> {
     let progress: ContentSyncProgress | undefined;
     let synchronizationError: unknown;
     try {
-      progress = await this.options.synchronizeContent(force);
+      progress =
+        pageIds === undefined && shouldRun === undefined
+          ? await this.options.synchronizeContent(force)
+          : await this.options.synchronizeContent(
+              force,
+              'content',
+              pageIds,
+              shouldRun,
+              onStarted,
+            );
     } catch (error) {
       synchronizationError = error;
     }
@@ -650,6 +692,8 @@ export class PageSearchRuntime {
       if (synchronizationError === undefined) throw refreshError;
     }
     if (synchronizationError !== undefined) throw synchronizationError;
+    if (pageIds !== undefined && progress?.failed)
+      throw new Error('页面正文获取失败，请重试');
 
     let warning: string | undefined;
     for (const handle of [this.contentHandle, this.luaHandle]) {

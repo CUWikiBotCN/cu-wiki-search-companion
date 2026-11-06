@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
+import { parseSectionQuery } from '../search/section-query';
+import type { SectionSearchResult } from '../search/section-title-index';
+import type {
+  SectionSearchIntent,
+  SectionSearchRuntime,
+} from '../runtime/section-search-runtime';
 import { createApp, nextTick, reactive, shallowReactive, type App } from 'vue';
 import SearchPanelView from './SearchPanelView.vue';
 import styles from './search-panel.css?inline';
@@ -21,6 +27,8 @@ import {
   SEARCH_MODES,
   canInsertResult,
   isDataCodeResult,
+  isSectionResult,
+  searchResultIdentity,
   type SearchMode,
   type SearchPanelResult,
   type SearchPreparationKind,
@@ -41,6 +49,21 @@ export interface SearchPanelCallbacks {
   prepareSearch(kind: SearchPreparationKind): void;
   prepareFiles(): void;
   search(query: string, namespace?: number): TitleSearchResult[];
+  sectionIntent?(intent: SectionSearchIntent): void;
+  searchSections?(
+    query: string,
+    namespace?: number,
+    pageId?: number,
+  ): SectionSearchResult[];
+  sectionInfo?(
+    query: string,
+    namespace?: number,
+    pageId?: number,
+  ): ReturnType<SectionSearchRuntime['describe']> | undefined;
+  fetchSectionPage?(pageId?: number): Promise<void>;
+  resolveSection?(result: SectionSearchResult): Promise<void>;
+  sectionCurrent?(result: SectionSearchResult): boolean;
+  openSectionPage?(result: SectionSearchResult): void;
   searchFiles(query: string): TitleSearchResult[];
   searchLua(query: string): LuaModuleSearchResult[];
   searchCss(query: string): CssSearchResult[];
@@ -84,6 +107,15 @@ export class SearchPanel {
     visible: false,
     mode: 'title' as SearchMode,
     query: '',
+    manualIncludeSections: false,
+    includeSections: false,
+    sectionSyntax: false,
+    sectionPageId: undefined as number | undefined,
+    sectionPageTitle: '',
+    sectionPageNamespace: undefined as number | undefined,
+    sectionInfo: undefined as
+      ReturnType<SectionSearchRuntime['describe']> | undefined,
+    resolvingSections: [] as string[],
     namespace: '',
     namespaces: [] as NamespaceInfo[],
     results: [] as SearchPanelResult[],
@@ -119,7 +151,13 @@ export class SearchPanel {
   private readonly dirtyModes = new Set<SearchMode>(
     Object.keys(SEARCH_MODES) as SearchMode[],
   );
-  private lastSearch?: { query: string; mode: SearchMode; namespace: string };
+  private lastSearch?: {
+    query: string;
+    mode: SearchMode;
+    namespace: string;
+    includeSections: boolean;
+    pageId?: number;
+  };
   private returnFocus?: HTMLElement;
   private disconnectObserver?: MutationObserver;
 
@@ -224,6 +262,7 @@ export class SearchPanel {
     if (!this.state.visible)
       this.returnFocus = returnFocus ?? this.currentReturnFocus();
     this.state.visible = true;
+    this.syncSectionScope();
     if (!this.startupFailed) this.prepareCurrentMode();
     if (this.dirtyModes.has(this.state.mode) || !this.sameSearchConditions())
       this.performSearch();
@@ -241,6 +280,7 @@ export class SearchPanel {
     if (!this.state.visible) return;
     this.geometry.finishDrag(false);
     this.state.visible = false;
+    this.callbacks.sectionIntent?.({ active: false, query: this.state.query });
     // Reveal the expanded-state-hidden launcher before synchronous focus return.
     this.toggle.setAttribute('aria-expanded', 'false');
     const returnFocus = this.returnFocus;
@@ -378,10 +418,42 @@ export class SearchPanel {
         this.scheduleSearch(0);
     },
     input: () => {
+      if (!this.composing) this.syncSectionScope();
       this.dirtyModes.add(this.state.mode);
       if (!this.composing) this.scheduleSearch(120);
     },
     search: () => this.refreshResults(),
+    toggleSections: () => this.toggleSections(),
+    showSections: (result: SearchPanelResult) => {
+      if ('kind' in result || this.state.mode !== 'title' || result.isRedirect)
+        return;
+      this.state.sectionPageId = result.id;
+      this.state.sectionPageNamespace = result.namespace;
+      this.state.sectionPageTitle = result.title;
+      this.state.query = `${result.title}#`;
+      this.input.value = this.state.query;
+      this.refreshResults();
+      this.input.focus();
+      this.input.setSelectionRange(
+        this.input.value.length,
+        this.input.value.length,
+      );
+    },
+    fetchSectionPage: (pageId?: number) => {
+      void this.callbacks.fetchSectionPage?.(pageId);
+    },
+    resolveSection: (result: SectionSearchResult) => {
+      void this.resolveSection(result);
+    },
+    openSectionPage: (result: SectionSearchResult) =>
+      this.callbacks.openSectionPage?.(result),
+    jumpSections: () => {
+      const first = this.state.results.findIndex(isSectionResult);
+      if (first >= 0) {
+        this.state.selectedIndex = first;
+        this.updateSelection();
+      }
+    },
     mode: () => {
       if (!this.startupFailed) this.prepareCurrentMode();
       if (this.state.mode !== 'data-code') this.state.settingsOpen = false;
@@ -397,7 +469,7 @@ export class SearchPanel {
       this.callbacks.redirectUrl?.(target),
     open: (result: SearchPanelResult) => this.openResult(result),
     copyLink: (result: SearchPanelResult) => {
-      if (canInsertResult(result))
+      if (canInsertResult(result) && this.sectionActionReady(result))
         this.callbacks.copy(result, this.input.value);
     },
     insert: (result: SearchPanelResult) => this.insert(result),
@@ -434,7 +506,9 @@ export class SearchPanel {
     return (
       this.lastSearch?.query === this.input.value &&
       this.lastSearch.mode === this.state.mode &&
-      this.lastSearch.namespace === this.searchNamespace()
+      this.lastSearch.namespace === this.searchNamespace() &&
+      this.lastSearch.includeSections === this.state.includeSections &&
+      this.lastSearch.pageId === this.state.sectionPageId
     );
   }
 
@@ -466,11 +540,12 @@ export class SearchPanel {
   private performSearch(): void {
     this.cancelSearch();
     if (this.destroyed || !this.state.visible || this.composing) return;
+    this.syncSectionScope();
     const selected = this.sameSearchConditions()
       ? this.state.results[this.state.selectedIndex]
       : undefined;
     const identity = selected
-      ? resultIdentity(this.state.mode, selected)
+      ? searchResultIdentity(this.state.mode, selected)
       : undefined;
     const focused = this.root.activeElement;
     const query = this.input.value;
@@ -480,9 +555,27 @@ export class SearchPanel {
       : undefined;
     const mode = this.state.mode;
     switch (mode) {
-      case 'title':
-        this.state.results = this.callbacks.search(query, namespace);
+      case 'title': {
+        const pages = this.state.sectionSyntax
+          ? []
+          : this.callbacks.search(query, namespace);
+        const sections = this.state.includeSections
+          ? (this.callbacks.searchSections?.(
+              query,
+              namespace,
+              this.state.sectionPageId,
+            ) ?? [])
+          : [];
+        this.state.results = [...pages, ...sections];
+        this.state.sectionInfo = this.state.includeSections
+          ? this.callbacks.sectionInfo?.(
+              query,
+              namespace,
+              this.state.sectionPageId,
+            )
+          : undefined;
         break;
+      }
       case 'content':
         this.state.results = this.callbacks.searchContent(query, namespace);
         break;
@@ -505,11 +598,17 @@ export class SearchPanel {
       identity === undefined
         ? -1
         : this.state.results.findIndex(
-            (result) => resultIdentity(mode, result) === identity,
+            (result) => searchResultIdentity(mode, result) === identity,
           );
     this.state.selectedIndex =
       retained >= 0 ? retained : this.state.results.length ? 0 : -1;
-    this.lastSearch = { query, mode, namespace: this.searchNamespace() };
+    this.lastSearch = {
+      query,
+      mode,
+      namespace: this.searchNamespace(),
+      includeSections: this.state.includeSections,
+      pageId: this.state.sectionPageId,
+    };
     this.dirtyModes.delete(mode);
     if (focused && this.resultList.contains(focused)) {
       let focusMoved = false;
@@ -538,6 +637,21 @@ export class SearchPanel {
 
   private handleKeydown(event: KeyboardEvent): void {
     if (!this.state.visible || this.composing || event.isComposing) return;
+    if (
+      event.key.toLowerCase() === 's' &&
+      event.altKey &&
+      event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      !event.repeat &&
+      !event.getModifierState('AltGraph') &&
+      this.state.mode === 'title'
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.toggleSections();
+      return;
+    }
     if (
       event.key === 'Tab' &&
       !event.altKey &&
@@ -648,17 +762,98 @@ export class SearchPanel {
     else this.close();
   }
 
+  private syncSectionScope(): void {
+    const parsed = parseSectionQuery(this.input.value);
+    if (
+      this.state.sectionPageId !== undefined &&
+      (parsed.pageQuery !== this.state.sectionPageTitle ||
+        (this.state.namespace !== '' &&
+          Number(this.state.namespace) !== this.state.sectionPageNamespace))
+    ) {
+      this.state.sectionPageId = undefined;
+      this.state.sectionPageTitle = '';
+    }
+    this.state.sectionSyntax =
+      this.state.mode === 'title' && parsed.hasSeparator;
+    this.state.includeSections =
+      this.state.mode === 'title' &&
+      (this.state.manualIncludeSections || parsed.hasSeparator);
+    this.callbacks.sectionIntent?.({
+      active: this.state.visible && this.state.includeSections,
+      query: this.input.value,
+      namespace: this.state.namespace
+        ? Number(this.state.namespace)
+        : undefined,
+      pageId: this.state.sectionPageId,
+    });
+  }
+
+  private toggleSections(): void {
+    if (this.state.mode !== 'title' || this.composing) return;
+    const enabled = !this.state.includeSections;
+    this.state.manualIncludeSections = enabled;
+    if (!enabled && this.state.sectionSyntax) {
+      this.state.query = parseSectionQuery(this.input.value).pageQuery;
+      this.input.value = this.state.query;
+      this.state.sectionPageId = undefined;
+      this.state.sectionPageTitle = '';
+    }
+    this.refreshResults();
+  }
+
+  private sectionActionReady(result: SearchPanelResult): boolean {
+    if (!isSectionResult(result)) return true;
+    if (
+      this.callbacks.sectionCurrent &&
+      !this.callbacks.sectionCurrent(result)
+    ) {
+      this.refreshResults();
+      this.setStatus(
+        '小节目标已更新或核对已过期，请重新选择或核对链接。',
+        'error',
+      );
+      return false;
+    }
+    if (!result.needsResolution && result.fragment) return true;
+    this.setStatus('请先核对小节链接，再执行复制、打开或插入。');
+    return false;
+  }
+
+  private async resolveSection(result: SectionSearchResult): Promise<void> {
+    const key = searchResultIdentity('title', result);
+    if (this.state.resolvingSections.includes(key)) return;
+    this.state.resolvingSections = [...this.state.resolvingSections, key];
+    try {
+      if (!this.callbacks.resolveSection) throw new Error('核对功能尚未就绪');
+      await this.callbacks.resolveSection(result);
+      if (!this.destroyed) this.invalidateResults(['title']);
+    } catch (error) {
+      if (!this.destroyed)
+        this.setStatus(
+          `链接核对失败：${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+    } finally {
+      this.state.resolvingSections = this.state.resolvingSections.filter(
+        (value) => value !== key,
+      );
+    }
+  }
+
   private copyResult(result: SearchPanelResult): void {
+    if (!this.sectionActionReady(result)) return;
     if (isDataCodeResult(result)) this.callbacks.copyCode(result);
     else this.callbacks.copyTitle(result);
   }
 
   private openResult(result: SearchPanelResult): void {
+    if (!this.sectionActionReady(result)) return;
     if (isDataCodeResult(result)) this.callbacks.openCode(result);
     else this.callbacks.open(result);
   }
 
   private insert(result: SearchPanelResult): void {
+    if (!this.sectionActionReady(result)) return;
     if (!this.state.insertMode || !canInsertResult(result)) {
       this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
       return;
@@ -813,12 +1008,6 @@ export class SearchPanel {
     if (!element) throw new Error(`Search panel is missing ${selector}`);
     return element;
   }
-}
-
-function resultIdentity(mode: SearchMode, result: SearchPanelResult): string {
-  return isDataCodeResult(result)
-    ? JSON.stringify([result.source, result.code])
-    : `${mode}:${result.id}`;
 }
 
 function unreachableMode(mode: never): never {

@@ -655,3 +655,39 @@ kbd {
     background: var(--cu-panel);
   }
 }
+
+.section-controls,
+.section-coverage {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.section-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+}
+.section-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.section-controls span {
+  color: #aaa;
+}
+.section-coverage p {
+  margin: 4px 0;
+}
+.section-coverage details {
+  max-height: 160px;
+  overflow: auto;
+}
+.missing-section-page {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.result-group {
+  list-style: none;
+  padding: 8px 12px;
+  font-weight: 600;
+}

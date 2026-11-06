@@ -73,3 +73,21 @@ export function wikiLink(
   }
   return `[[${target}|${label}]]`;
 }
+
+/** Section labels and fragments are data, never executable wikitext. */
+export function sectionWikiLink(
+  title: string,
+  fragment: string | undefined,
+  label: string,
+  namespace?: number,
+): string {
+  if (!fragment) throw new Error('小节锚点尚未就绪');
+  const escape = (value: string): string =>
+    value.replace(
+      /[&<>[\]|{}'\r\n]/g,
+      (character) => `&#${character.charCodeAt(0)};`,
+    );
+  const target =
+    namespace === 6 || namespace === 14 ? `:${title.replace(/^:/, '')}` : title;
+  return `[[${escape(target)}#${escape(fragment)}|${escape(label)}]]`;
+}

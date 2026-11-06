@@ -4,7 +4,7 @@ import { computed } from 'vue';
 import type { SearchPanel } from './search-panel';
 import PanelResults from './PanelResults.vue';
 import PanelMaintenance from './PanelMaintenance.vue';
-import { SEARCH_MODES } from './search-panel-model';
+import { SEARCH_MODES, isSectionResult } from './search-panel-model';
 const MIRROR_REFRESH_HELP =
   '重新同步本地数据（需要联网）：执行全量页面对账，刷新 Data 代码缓存，并修复或续传正文、Lua 与已加载的 CSS 队列；不会清空本地镜像，也不会修改 wiki 页面。';
 const FILE_REFRESH_HELP =
@@ -131,7 +131,81 @@ const refreshHelp = computed(() =>
         ></select
       >
     </div>
+    <div v-if="state.mode === 'title'" class="section-controls">
+      <label
+        ><input
+          class="include-sections"
+          type="checkbox"
+          :checked="state.includeSections"
+          @change="actions.toggleSections"
+          aria-describedby="cu-section-hint"
+        />包含小节</label
+      >
+      <span id="cu-section-hint"
+        >{{
+          state.sectionSyntax && !state.manualIncludeSections
+            ? '由 # 临时启用 · '
+            : ''
+        }}Ctrl+Alt+S 切换；例：地形 #你知</span
+      >
+    </div>
     <div class="panel-body">
+      <section
+        v-if="state.mode === 'title' && state.includeSections"
+        class="section-coverage"
+        aria-label="小节搜索范围"
+      >
+        <p v-if="state.sectionPageId !== undefined"
+          >仅此页：{{ state.sectionPageTitle }}</p
+        >
+        <p v-else-if="state.sectionSyntax && state.query.split('#')[0]?.trim()"
+          >页面筛选：{{ state.query.split('#')[0]?.trim() }}</p
+        >
+        <p role="status"
+          >{{
+            state.sectionInfo?.ready
+              ? `已覆盖 ${state.sectionInfo.covered}/${state.sectionInfo.known} 个${state.sectionInfo.baselineReady ? '' : '已知'}页面`
+              : '正在准备本地小节…'
+          }}<template v-if="state.sectionInfo?.uncertainPages">
+            · {{ state.sectionInfo.uncertainPages }} 页链接待核对</template
+          ></p
+        >
+        <p v-if="state.sectionInfo?.message">{{ state.sectionInfo.message }}</p>
+        <details v-if="state.sectionInfo?.missingPages.length">
+          <summary
+            >{{
+              state.sectionInfo.missingPages.length
+            }}
+            页正文待获取或更新</summary
+          >
+          <div
+            v-for="page in state.sectionInfo.missingPages.slice(0, 20)"
+            :key="page.id"
+            class="missing-section-page"
+            >{{ page.title }}
+            <button
+              type="button"
+              class="action fetch-section-page"
+              @click="actions.fetchSectionPage(page.id)"
+              >获取/更新此页正文</button
+            ></div
+          >
+        </details>
+        <button
+          class="action fetch-section-content"
+          type="button"
+          title="联网更新共享正文缓存，包含 wikitext、BSON 和 Lua 页面，不限当前筛选范围"
+          @click="actions.fetchSectionPage()"
+          >下载/更新共享正文源码</button
+        >
+        <button
+          v-if="!state.sectionSyntax && state.results.some(isSectionResult)"
+          class="action jump-sections"
+          type="button"
+          @click="actions.jumpSections"
+          >跳至小节结果</button
+        >
+      </section>
       <p v-if="state.mode === 'css'" class="css-search-help"
         >搜索站内 CSS
         源码，包含注释；行号对应本地缓存，不代表当前页面生效样式。</p
@@ -218,6 +292,8 @@ const refreshHelp = computed(() =>
         :selected-index="state.selectedIndex"
         :insert-mode="state.insertMode"
         :highlights="state.highlights"
+        :include-sections="state.includeSections"
+        :resolving-sections="state.resolvingSections"
         :actions="actions"
       />
       <pre

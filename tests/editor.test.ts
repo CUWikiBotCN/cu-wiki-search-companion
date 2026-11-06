@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // @vitest-environment jsdom
 
-import { insertAtEditorSelection, wikiLink } from '../src/editor';
+import {
+  insertAtEditorSelection,
+  wikiLink,
+  sectionWikiLink,
+} from '../src/editor';
 
 describe('editor integration', () => {
   beforeEach(() => {
@@ -17,6 +21,18 @@ describe('editor integration', () => {
     expect(wikiLink('分类:武器', '武器', 14)).toBe('[[:分类:武器|武器]]');
     expect(wikiLink('文件:Item morphine.png', 'morphine', 6)).toBe(
       '[[:文件:Item morphine.png|morphine]]',
+    );
+  });
+
+  it('constructs section targets from canonical names and escapes wikitext separately from URLs', () => {
+    expect(sectionWikiLink('地形扫描仪', '你知道吗', '你知道吗')).toBe(
+      '[[地形扫描仪#你知道吗|你知道吗]]',
+    );
+    expect(sectionWikiLink('分类:测试', 'A_&_B_%20_#问?', 'A & B', 14)).toBe(
+      '[[:分类:测试#A_&#38;_B_%20_#问?|A &#38; B]]',
+    );
+    expect(sectionWikiLink('文件:示例', 'x]|{{模板}}', "''标签''", 6)).toBe(
+      '[[:文件:示例#x&#93;&#124;&#123;&#123;模板&#125;&#125;|&#39;&#39;标签&#39;&#39;]]',
     );
   });
 
