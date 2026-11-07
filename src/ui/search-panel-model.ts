@@ -95,9 +95,7 @@ export function canInsertResult(
   return (
     !('kind' in result) ||
     result.kind === 'content' ||
-    (result.kind === 'section' &&
-      !result.needsResolution &&
-      Boolean(result.fragment))
+    result.kind === 'section'
   );
 }
 

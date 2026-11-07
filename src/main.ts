@@ -228,6 +228,8 @@ async function start(): Promise<void> {
       pageSearchRuntime?.sections.current(result) ?? false,
     resolveSection: async (result) =>
       (await pageSearchRuntimeReady).sections.resolve(result),
+    prefetchSectionLinks: (results, preferred) =>
+      pageSearchRuntime?.sections.prefetch(results, preferred),
     openSectionPage: (result) => {
       GM_openInTab(pageUrl(result.title), { active: true });
     },

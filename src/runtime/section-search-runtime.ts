@@ -6,6 +6,7 @@ import {
 } from '../search/section-title-index';
 import { parseSectionQuery } from '../search/section-query';
 import type { WikiSearchDatabase } from '../storage/database';
+import { SectionLinkPreparation } from './section-link-preparation';
 
 export interface SectionSearchIntent {
   active: boolean;
@@ -17,6 +18,7 @@ export interface SectionSearchIntent {
 export interface SectionLinkLookup {
   resolve(result: SectionSearchResult): Promise<ReadonlyMap<string, string>>;
   getFragment(result: SectionSearchResult): string | undefined;
+  needsRefresh?(result: SectionSearchResult): boolean;
   invalidate(): void;
 }
 
@@ -50,8 +52,43 @@ export class SectionSearchRuntime {
   private destroyed = false;
   private message = '';
   private messageVersion = 0;
+  private readonly linkPreparation?: SectionLinkPreparation;
 
-  constructor(private readonly options: SectionSearchRuntimeOptions) {}
+  constructor(private readonly options: SectionSearchRuntimeOptions) {
+    if (options.links)
+      this.linkPreparation = new SectionLinkPreparation({
+        links: options.links,
+        current: (result) => this.sourceCurrent(result),
+        needed: (result) =>
+          Boolean(
+            this.index
+              ?.getPage(result.id)
+              ?.sections.find((section) => section.localId === result.sectionId)
+              ?.needsResolution,
+          ) &&
+          (options.links!.needsRefresh?.(result) ??
+            !options.links!.getFragment(result)),
+        changed: () => {
+          if (!this.destroyed) options.changed();
+        },
+      });
+  }
+
+  prefetch(
+    results: SectionSearchResult[],
+    preferred?: SectionSearchResult,
+  ): void {
+    if (this.destroyed || !this.intent.active) return;
+    const parsed = parseSectionQuery(this.intent.query);
+    const exact =
+      this.intent.pageId !== undefined ||
+      (parsed.hasSeparator &&
+        this.options.titleBaselineReady() &&
+        Boolean(
+          this.index?.findExactPage(parsed.pageQuery, this.intent.namespace),
+        ));
+    this.linkPreparation?.update(results, preferred, exact);
+  }
 
   prepare(): Promise<void> {
     if (this.destroyed) return Promise.resolve();
@@ -77,6 +114,7 @@ export class SectionSearchRuntime {
     if (!this.index) return;
     this.actionsValid = false;
     this.refreshGeneration += 1;
+    this.linkPreparation?.clear();
   }
 
   async refresh(force = false): Promise<void> {
@@ -139,6 +177,7 @@ export class SectionSearchRuntime {
       previous.hasSeparator === next.hasSeparator &&
       previous.pageQuery === next.pageQuery;
     this.intentKey = key;
+    this.linkPreparation?.clear();
     this.intent = { ...intent };
     this.generation += 1;
     clearTimeout(this.timer);
@@ -257,12 +296,20 @@ export class SectionSearchRuntime {
     }
   }
 
-  async resolve(result: SectionSearchResult): Promise<void> {
-    if (!this.current(result)) throw new Error('小节已更新，请重新选择');
-    if (!this.options.links) throw new Error('小节链接核对暂不可用');
-    await this.options.links.resolve(result);
-    if (!this.current(result)) throw new Error('小节已更新，请重新选择');
-    this.options.changed();
+  async resolve(result: SectionSearchResult): Promise<SectionSearchResult> {
+    if (!this.sourceCurrent(result)) throw new Error('小节已更新，请重新选择');
+    if (!this.options.links || !this.linkPreparation)
+      throw new Error('小节链接准备暂不可用');
+    if (!this.options.links.getFragment(result))
+      await this.linkPreparation.request(result);
+    if (!this.sourceCurrent(result)) throw new Error('小节已更新，请重新选择');
+    const fragment = this.options.links.getFragment(result);
+    if (!fragment) throw new Error('无法确定此小节链接，可重试或打开所属页面');
+    return { ...result, fragment, needsResolution: false };
+  }
+
+  private sourceCurrent(result: SectionSearchResult): boolean {
+    return this.current({ ...result, fragment: undefined });
   }
 
   current(result: SectionSearchResult): boolean {
@@ -294,6 +341,7 @@ export class SectionSearchRuntime {
 
   destroy(): void {
     this.destroyed = true;
+    this.linkPreparation?.destroy();
     this.generation += 1;
     clearTimeout(this.timer);
     this.index?.invalidate();

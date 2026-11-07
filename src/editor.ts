@@ -3,6 +3,10 @@ interface CodeMirrorEditor {
   focus(): void;
   getTextArea(): HTMLTextAreaElement;
   operation(callback: () => void): void;
+  getValue?(): string;
+  listSelections?(): unknown;
+  on?(event: string, callback: () => void): void;
+  off?(event: string, callback: () => void): void;
   replaceSelection(
     text: string,
     collapse?: 'around' | 'start' | 'end',
@@ -11,6 +15,57 @@ interface CodeMirrorEditor {
 }
 
 type CodeMirrorElement = HTMLElement & { CodeMirror?: CodeMirrorEditor };
+
+/** Capture without moving focus; discard an async insertion after any editor change. */
+export function captureEditorSelection(): {
+  current(): boolean;
+  dispose(): void;
+} {
+  const textarea = document.querySelector<HTMLTextAreaElement>('#wpTextbox1');
+  const findEditor = () =>
+    [...document.querySelectorAll<CodeMirrorElement>('.CodeMirror')]
+      .map((element) => element.CodeMirror)
+      .find((editor) => editor?.getTextArea() === textarea);
+  const editor = findEditor();
+  const readable = Boolean(
+    textarea &&
+    (!editor ||
+      (editor.getValue && editor.listSelections && editor.on && editor.off)),
+  );
+  const snapshot = () =>
+    editor
+      ? JSON.stringify([editor.getValue?.(), editor.listSelections?.()])
+      : JSON.stringify([
+          textarea?.value,
+          textarea?.selectionStart,
+          textarea?.selectionEnd,
+          textarea?.selectionDirection,
+        ]);
+  const initial = snapshot();
+  let changed = false;
+  const invalidate = () => {
+    changed = true;
+  };
+  textarea?.addEventListener('input', invalidate);
+  textarea?.addEventListener('select', invalidate);
+  editor?.on?.('change', invalidate);
+  editor?.on?.('cursorActivity', invalidate);
+  return {
+    current: () =>
+      readable &&
+      !changed &&
+      Boolean(textarea?.isConnected) &&
+      document.querySelector('#wpTextbox1') === textarea &&
+      findEditor() === editor &&
+      snapshot() === initial,
+    dispose: () => {
+      textarea?.removeEventListener('input', invalidate);
+      textarea?.removeEventListener('select', invalidate);
+      editor?.off?.('change', invalidate);
+      editor?.off?.('cursorActivity', invalidate);
+    },
+  };
+}
 
 export function focusEditorElement(element: HTMLElement): void {
   const codeMirror =

@@ -161,15 +161,11 @@ const refreshHelp = computed(() =>
         <p v-else-if="state.sectionSyntax && state.query.split('#')[0]?.trim()"
           >页面筛选：{{ state.query.split('#')[0]?.trim() }}</p
         >
-        <p role="status"
-          >{{
-            state.sectionInfo?.ready
-              ? `已覆盖 ${state.sectionInfo.covered}/${state.sectionInfo.known} 个${state.sectionInfo.baselineReady ? '' : '已知'}页面`
-              : '正在准备本地小节…'
-          }}<template v-if="state.sectionInfo?.uncertainPages">
-            · {{ state.sectionInfo.uncertainPages }} 页链接待核对</template
-          ></p
-        >
+        <p role="status">{{
+          state.sectionInfo?.ready
+            ? `已覆盖 ${state.sectionInfo.covered}/${state.sectionInfo.known} 个${state.sectionInfo.baselineReady ? '' : '已知'}页面`
+            : '正在准备本地小节…'
+        }}</p>
         <p v-if="state.sectionInfo?.message">{{ state.sectionInfo.message }}</p>
         <details v-if="state.sectionInfo?.missingPages.length">
           <summary
@@ -294,6 +290,7 @@ const refreshHelp = computed(() =>
         :highlights="state.highlights"
         :include-sections="state.includeSections"
         :resolving-sections="state.resolvingSections"
+        :failed-sections="state.failedSections"
         :actions="actions"
       />
       <pre

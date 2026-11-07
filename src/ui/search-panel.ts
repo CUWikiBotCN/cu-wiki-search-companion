@@ -9,7 +9,7 @@ import { createApp, nextTick, reactive, shallowReactive, type App } from 'vue';
 import SearchPanelView from './SearchPanelView.vue';
 import styles from './search-panel.css?inline';
 import { PanelGeometry } from './panel-geometry';
-import { focusEditorElement } from '../editor';
+import { focusEditorElement, captureEditorSelection } from '../editor';
 import type { CssSearchResult } from '../search/css-source-index';
 import type { NamespaceInfo, RedirectTarget } from '../types';
 import type { ContentSearchResult } from '../search/content-index';
@@ -61,7 +61,13 @@ export interface SearchPanelCallbacks {
     pageId?: number,
   ): ReturnType<SectionSearchRuntime['describe']> | undefined;
   fetchSectionPage?(pageId?: number): Promise<void>;
-  resolveSection?(result: SectionSearchResult): Promise<void>;
+  resolveSection?(
+    result: SectionSearchResult,
+  ): Promise<SectionSearchResult | void>;
+  prefetchSectionLinks?(
+    results: SectionSearchResult[],
+    preferred?: SectionSearchResult,
+  ): void;
   sectionCurrent?(result: SectionSearchResult): boolean;
   openSectionPage?(result: SectionSearchResult): void;
   searchFiles(query: string): TitleSearchResult[];
@@ -88,6 +94,8 @@ export interface SearchPanelCallbacks {
   requestPersistence?(): Promise<PersistenceRequestResult>;
   resetLocalMirror?(resetDataRules: boolean): Promise<void>;
 }
+
+type SectionAction = 'copyTitle' | 'copyLink' | 'open' | 'insert';
 
 export class SearchPanel {
   private static shortcutOwner?: WeakRef<SearchPanel>;
@@ -116,6 +124,7 @@ export class SearchPanel {
     sectionInfo: undefined as
       ReturnType<SectionSearchRuntime['describe']> | undefined,
     resolvingSections: [] as string[],
+    failedSections: [] as string[],
     namespace: '',
     namespaces: [] as NamespaceInfo[],
     results: [] as SearchPanelResult[],
@@ -160,6 +169,12 @@ export class SearchPanel {
   };
   private returnFocus?: HTMLElement;
   private disconnectObserver?: MutationObserver;
+  private pendingAction?: {
+    key: string;
+    action: SectionAction;
+    cancel(): void;
+  };
+  private readonly failedActions = new Map<string, SectionAction>();
 
   constructor(private readonly callbacks: SearchPanelCallbacks) {
     this.host = document.createElement('div');
@@ -276,6 +291,7 @@ export class SearchPanel {
   }
 
   close(): void {
+    this.cancelSectionAction();
     this.cancelSearch();
     if (!this.state.visible) return;
     this.geometry.finishDrag(false);
@@ -405,6 +421,7 @@ export class SearchPanel {
         this.callbacks.resetLocalMirror?.(this.state.resetDataRules),
       ),
     compositionStart: () => {
+      this.cancelSectionAction();
       this.composing = true;
       this.cancelSearch();
     },
@@ -418,13 +435,18 @@ export class SearchPanel {
         this.scheduleSearch(0);
     },
     input: () => {
+      this.cancelSectionAction();
       if (!this.composing) this.syncSectionScope();
       this.dirtyModes.add(this.state.mode);
       if (!this.composing) this.scheduleSearch(120);
     },
-    search: () => this.refreshResults(),
+    search: () => {
+      this.cancelSectionAction();
+      this.refreshResults();
+    },
     toggleSections: () => this.toggleSections(),
     showSections: (result: SearchPanelResult) => {
+      this.cancelSectionAction();
       if ('kind' in result || this.state.mode !== 'title' || result.isRedirect)
         return;
       this.state.sectionPageId = result.id;
@@ -442,11 +464,17 @@ export class SearchPanel {
     fetchSectionPage: (pageId?: number) => {
       void this.callbacks.fetchSectionPage?.(pageId);
     },
-    resolveSection: (result: SectionSearchResult) => {
-      void this.resolveSection(result);
+    retrySection: (result: SectionSearchResult) => {
+      this.runResultAction(
+        result,
+        this.failedActions.get(searchResultIdentity('title', result)) ??
+          'copyTitle',
+      );
     },
-    openSectionPage: (result: SectionSearchResult) =>
-      this.callbacks.openSectionPage?.(result),
+    openSectionPage: (result: SectionSearchResult) => {
+      this.cancelSectionAction();
+      this.callbacks.openSectionPage?.(result);
+    },
     jumpSections: () => {
       const first = this.state.results.findIndex(isSectionResult);
       if (first >= 0) {
@@ -455,12 +483,14 @@ export class SearchPanel {
       }
     },
     mode: () => {
+      this.cancelSectionAction();
       if (!this.startupFailed) this.prepareCurrentMode();
       if (this.state.mode !== 'data-code') this.state.settingsOpen = false;
       this.refreshResults();
     },
     keydown: (event: KeyboardEvent) => this.handleKeydown(event),
     select: (index: number) => {
+      if (index !== this.state.selectedIndex) this.cancelSectionAction();
       this.state.selectedIndex = index;
       this.updateSelection();
     },
@@ -469,8 +499,7 @@ export class SearchPanel {
       this.callbacks.redirectUrl?.(target),
     open: (result: SearchPanelResult) => this.openResult(result),
     copyLink: (result: SearchPanelResult) => {
-      if (canInsertResult(result) && this.sectionActionReady(result))
-        this.callbacks.copy(result, this.input.value);
+      if (canInsertResult(result)) this.runResultAction(result, 'copyLink');
     },
     insert: (result: SearchPanelResult) => this.insert(result),
   };
@@ -610,6 +639,27 @@ export class SearchPanel {
       pageId: this.state.sectionPageId,
     };
     this.dirtyModes.delete(mode);
+    const liveKeys = new Set(
+      this.state.results.map((result) => searchResultIdentity(mode, result)),
+    );
+    if (this.pendingAction && !liveKeys.has(this.pendingAction.key))
+      this.cancelSectionAction();
+    for (const key of this.failedActions.keys())
+      if (!liveKeys.has(key)) this.failedActions.delete(key);
+    for (const result of this.state.results) {
+      if (
+        isSectionResult(result) &&
+        !result.needsResolution &&
+        result.fragment &&
+        (this.callbacks.sectionCurrent?.(result) ?? true)
+      )
+        this.failedActions.delete(searchResultIdentity(mode, result));
+    }
+    this.state.failedSections = [...this.failedActions.keys()];
+    if (mode === 'title' && this.state.includeSections)
+      this.callbacks.prefetchSectionLinks?.(
+        this.state.results.filter(isSectionResult),
+      );
     if (focused && this.resultList.contains(focused)) {
       let focusMoved = false;
       const observeFocus = (): void => {
@@ -682,6 +732,8 @@ export class SearchPanel {
         (event.shiftKey && (event.ctrlKey || event.metaKey))
       )
         return;
+      if (event.target === this.input && !this.sameSearchConditions())
+        this.performSearch();
       const result =
         this.state.results[
           primary ? Number(primary.dataset.index) : this.state.selectedIndex
@@ -789,6 +841,7 @@ export class SearchPanel {
   }
 
   private toggleSections(): void {
+    this.cancelSectionAction();
     if (this.state.mode !== 'title' || this.composing) return;
     const enabled = !this.state.includeSections;
     this.state.manualIncludeSections = enabled;
@@ -801,68 +854,189 @@ export class SearchPanel {
     this.refreshResults();
   }
 
-  private sectionActionReady(result: SearchPanelResult): boolean {
-    if (!isSectionResult(result)) return true;
-    if (
-      this.callbacks.sectionCurrent &&
-      !this.callbacks.sectionCurrent(result)
-    ) {
-      this.refreshResults();
-      this.setStatus(
-        '小节目标已更新或核对已过期，请重新选择或核对链接。',
-        'error',
-      );
-      return false;
-    }
-    if (!result.needsResolution && result.fragment) return true;
-    this.setStatus('请先核对小节链接，再执行复制、打开或插入。');
-    return false;
+  private cancelSectionAction(): void {
+    this.pendingAction?.cancel();
+    this.pendingAction = undefined;
+    this.state.resolvingSections = [];
   }
 
-  private async resolveSection(result: SectionSearchResult): Promise<void> {
+  private runResultAction(
+    result: SearchPanelResult,
+    action: SectionAction,
+  ): void {
+    if (!isSectionResult(result)) {
+      this.cancelSectionAction();
+      this.executeResultAction(result, action);
+      return;
+    }
+    if (!this.sameSearchConditions()) {
+      this.refreshResults();
+      return;
+    }
     const key = searchResultIdentity('title', result);
-    if (this.state.resolvingSections.includes(key)) return;
-    this.state.resolvingSections = [...this.state.resolvingSections, key];
+    if (this.pendingAction?.key === key && this.pendingAction.action === action)
+      return;
+    this.cancelSectionAction();
+    this.callbacks.prefetchSectionLinks?.(
+      this.state.results.filter(isSectionResult),
+      result,
+    );
+    if (
+      !result.needsResolution &&
+      result.fragment &&
+      (this.callbacks.sectionCurrent?.(result) ?? true)
+    ) {
+      this.failedActions.delete(key);
+      this.state.failedSections = [...this.failedActions.keys()];
+      this.executeResultAction(result, action);
+      return;
+    }
+    void this.completeSectionAction(result, action, key);
+  }
+
+  private async completeSectionAction(
+    result: SectionSearchResult,
+    action: SectionAction,
+    key: string,
+  ): Promise<void> {
+    const query = this.input.value;
+    const namespace = this.state.namespace;
+    const pageId = this.state.sectionPageId;
+    const selected = this.state.results[this.state.selectedIndex];
+    const selectedKey =
+      selected && searchResultIdentity(this.state.mode, selected);
+    const editor = action === 'insert' ? captureEditorSelection() : undefined;
+    const token = {
+      key,
+      action,
+      cancel: () => {
+        editor?.dispose();
+        document.removeEventListener('focusin', onFocus, true);
+        document.removeEventListener('visibilitychange', onVisibility);
+      },
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (
+        event.target !== this.host &&
+        event.target instanceof Node &&
+        !this.root.contains(event.target)
+      )
+        this.cancelSectionAction();
+    };
+    const onVisibility = () => {
+      if (document.hidden) this.cancelSectionAction();
+    };
+    document.addEventListener('focusin', onFocus, true);
+    document.addEventListener('visibilitychange', onVisibility);
+    this.pendingAction = token;
+    this.state.resolvingSections = [key];
+    this.failedActions.delete(key);
+    this.state.failedSections = [...this.failedActions.keys()];
+    const valid = () =>
+      this.pendingAction === token &&
+      !this.destroyed &&
+      this.state.visible &&
+      this.state.mode === 'title' &&
+      this.state.includeSections &&
+      this.input.value === query &&
+      this.state.namespace === namespace &&
+      this.state.sectionPageId === pageId &&
+      (action !== 'insert' || this.state.insertMode) &&
+      selectedKey ===
+        (this.state.results[this.state.selectedIndex] &&
+          searchResultIdentity(
+            'title',
+            this.state.results[this.state.selectedIndex]!,
+          ));
+    let executing = false;
     try {
-      if (!this.callbacks.resolveSection) throw new Error('核对功能尚未就绪');
-      await this.callbacks.resolveSection(result);
-      if (!this.destroyed) this.invalidateResults(['title']);
-    } catch (error) {
-      if (!this.destroyed)
+      if (!this.callbacks.resolveSection) throw new Error('链接准备暂不可用');
+      const resolved = await this.callbacks.resolveSection(result);
+      if (!valid()) return;
+      if (editor && !editor.current()) {
         this.setStatus(
-          `链接核对失败：${error instanceof Error ? error.message : String(error)}`,
-          'error',
+          '编辑器内容或插入位置已变化，已取消插入；请重新选择插入位置。',
         );
+        return;
+      }
+      if (
+        !resolved ||
+        resolved.needsResolution ||
+        !resolved.fragment ||
+        searchResultIdentity('title', resolved) !== key ||
+        !(this.callbacks.sectionCurrent?.(resolved) ?? true)
+      ) {
+        throw new Error('小节目标已变化或暂时无法确定');
+      }
+      // Remove cancellation listeners before close() restores focus for insertion.
+      this.cancelSectionAction();
+      executing = true;
+      this.executeResultAction(resolved, action);
+      this.invalidateResults(['title']);
+    } catch (error) {
+      if (executing || valid()) {
+        this.failedActions.set(key, action);
+        this.state.failedSections = [...this.failedActions.keys()];
+        this.setStatus(
+          `链接准备失败，可重试或打开所属页面：${error instanceof Error ? error.message : '未知错误'}`,
+        );
+      }
     } finally {
-      this.state.resolvingSections = this.state.resolvingSections.filter(
-        (value) => value !== key,
-      );
+      token.cancel();
+      if (this.pendingAction === token) this.cancelSectionAction();
+    }
+  }
+
+  private executeResultAction(
+    result: SearchPanelResult,
+    action: SectionAction,
+  ): void {
+    if (action === 'copyTitle') {
+      if (isDataCodeResult(result)) this.callbacks.copyCode(result);
+      else this.callbacks.copyTitle(result);
+    } else if (action === 'open') {
+      if (isDataCodeResult(result)) this.callbacks.openCode(result);
+      else this.callbacks.open(result);
+    } else if (action === 'copyLink') {
+      if (canInsertResult(result))
+        this.callbacks.copy(result, this.input.value);
+    } else {
+      this.close();
+      if (canInsertResult(result))
+        this.callbacks.insert(result, this.input.value);
     }
   }
 
   private copyResult(result: SearchPanelResult): void {
-    if (!this.sectionActionReady(result)) return;
-    if (isDataCodeResult(result)) this.callbacks.copyCode(result);
-    else this.callbacks.copyTitle(result);
+    this.runResultAction(result, 'copyTitle');
   }
 
   private openResult(result: SearchPanelResult): void {
-    if (!this.sectionActionReady(result)) return;
-    if (isDataCodeResult(result)) this.callbacks.openCode(result);
-    else this.callbacks.open(result);
+    this.runResultAction(result, 'open');
   }
 
   private insert(result: SearchPanelResult): void {
-    if (!this.sectionActionReady(result)) return;
     if (!this.state.insertMode || !canInsertResult(result)) {
       this.setStatus('当前结果或编辑页不支持插入；可复制内容或打开来源。');
       return;
     }
-    this.close();
-    this.callbacks.insert(result, this.input.value);
+    this.runResultAction(result, 'insert');
   }
 
   private updateSelection(): void {
+    const result = this.state.results[this.state.selectedIndex];
+    if (
+      this.pendingAction &&
+      (!result ||
+        searchResultIdentity(this.state.mode, result) !==
+          this.pendingAction.key)
+    )
+      this.cancelSectionAction();
+    if (result && isSectionResult(result))
+      this.callbacks.prefetchSectionLinks?.(
+        this.state.results.filter(isSectionResult),
+        result,
+      );
     void nextTick(() => {
       if (!this.host.isConnected || !this.state.visible) return;
       const selected = this.resultList.querySelector<HTMLElement>(

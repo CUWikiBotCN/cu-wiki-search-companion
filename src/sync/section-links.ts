@@ -25,10 +25,11 @@ interface CachedLinks {
   revision: number;
   localSeq: number;
   expires: number;
+  refreshAfter: number;
   links: ReadonlyMap<string, string>;
 }
 
-/** Revision-bound, in-memory confirmations; a confirmation never performs a result action. */
+/** Revision-bound confirmations with a short stale-while-revalidate window. */
 export class SectionLinkResolver {
   private readonly cache = new Map<number, CachedLinks>();
   private readonly pending = new Map<
@@ -57,6 +58,18 @@ export class SectionLinkResolver {
       : undefined;
   }
 
+  needsRefresh(result: SectionSearchResult): boolean {
+    const entry = this.cache.get(result.id);
+    return (
+      !entry ||
+      entry.refreshAfter <= Date.now() ||
+      entry.revision !== result.revisionId ||
+      entry.title !== result.title ||
+      (result.sourceSequence !== undefined &&
+        entry.localSeq !== result.sourceSequence)
+    );
+  }
+
   invalidate(): void {
     this.generation += 1;
     this.cache.clear();
@@ -64,7 +77,12 @@ export class SectionLinkResolver {
   }
 
   resolve(result: SectionSearchResult): Promise<ReadonlyMap<string, string>> {
-    const key = `${result.id}:${result.revisionId}:${result.title}`;
+    const key = JSON.stringify([
+      result.id,
+      result.revisionId,
+      result.sourceSequence,
+      result.title,
+    ]);
     const existing = this.pending.get(key);
     if (existing) return this.forSection(existing, result.sectionId);
     const generation = this.generation;
@@ -99,7 +117,7 @@ export class SectionLinkResolver {
       cached?.revision === result.revisionId &&
       cached.title === result.title &&
       cached.localSeq === page.localSeq &&
-      cached.expires > Date.now()
+      cached.refreshAfter > Date.now()
     ) {
       return cached.links;
     }
@@ -108,6 +126,9 @@ export class SectionLinkResolver {
       oldid: result.revisionId,
       prop: 'sections|revid',
     });
+    // A completed response supersedes old evidence, including when it reveals
+    // ambiguity. Only transport failure may keep a confirmation in its grace period.
+    if (this.cache.get(result.id) === cached) this.cache.delete(result.id);
     const parsed = response.parse;
     if (
       parsed?.pageid !== result.id ||
@@ -131,7 +152,8 @@ export class SectionLinkResolver {
       title: result.title,
       revision: result.revisionId,
       localSeq: page.localSeq,
-      expires: Date.now() + 5 * 60_000,
+      refreshAfter: Date.now() + 5 * 60_000,
+      expires: Date.now() + 15 * 60_000,
       links,
     });
     while (this.cache.size > 64)

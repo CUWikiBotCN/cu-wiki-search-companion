@@ -29,6 +29,7 @@ const props = defineProps<{
   highlights: HighlightPreferences;
   includeSections?: boolean;
   resolvingSections?: string[];
+  failedSections?: string[];
   actions: SearchPanel['actions'];
 }>();
 const message = computed(() =>
@@ -73,7 +74,7 @@ function label(result: SearchPanelResult): string {
     ? `复制代码名：${result.code}（Enter）`
     : isSectionResult(result)
       ? result.needsResolution
-        ? `小节链接待核对：${result.title} › ${result.sectionTitle}`
+        ? `复制小节目标：${result.title} › ${result.sectionTitle}（Enter）`
         : `复制小节目标：${result.title}#${result.fragment}（Enter）`
       : isLua(result)
         ? `复制模块标题：${result.title}（Enter）`
@@ -149,7 +150,15 @@ function label(result: SearchPanelResult): string {
                   >
                   ·
                   {{
-                    result.needsResolution ? '链接待核对' : '小节链接'
+                    resolvingSections?.includes(
+                      searchResultIdentity(mode, result),
+                    )
+                      ? '正在准备链接…'
+                      : failedSections?.includes(
+                            searchResultIdentity(mode, result),
+                          )
+                        ? '链接暂不可用'
+                        : '小节链接'
                   }}</template
                 ><template v-else-if="isCss(result)">{{
                   result.namespaceName
@@ -229,23 +238,17 @@ function label(result: SearchPanelResult): string {
               @click.stop="actions.showSections(result)"
               >查看小节</button
             >
-            <template v-if="isSectionResult(result) && result.needsResolution">
+            <template
+              v-if="
+                isSectionResult(result) &&
+                failedSections?.includes(searchResultIdentity(mode, result))
+              "
+            >
               <button
-                class="action resolve-section"
+                class="action retry-section"
                 type="button"
-                :disabled="
-                  resolvingSections?.includes(
-                    searchResultIdentity(mode, result),
-                  )
-                "
-                @click.stop="actions.resolveSection(result)"
-                >{{
-                  resolvingSections?.includes(
-                    searchResultIdentity(mode, result),
-                  )
-                    ? '正在核对…'
-                    : '核对链接'
-                }}</button
+                @click.stop="actions.retrySection(result)"
+                >重试</button
               >
               <button
                 class="action open-section-page"
@@ -255,7 +258,6 @@ function label(result: SearchPanelResult): string {
               >
             </template>
             <button
-              v-if="!isSectionResult(result) || !result.needsResolution"
               class="action open-result"
               type="button"
               :title="

@@ -65,3 +65,53 @@ describe('editor integration', () => {
     expect(replaceSelection).toHaveBeenCalledWith('[[鹿弹]]', 'end', '+input');
   });
 });
+
+describe('delayed insertion guard', () => {
+  it('detects native content and selection changes and editor replacement', async () => {
+    const { captureEditorSelection } = await import('../src/editor');
+    document.body.innerHTML = '<textarea id="wpTextbox1">原文</textarea>';
+    const textarea =
+      document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
+    const first = captureEditorSelection();
+    expect(first.current()).toBe(true);
+    textarea.value = '已改';
+    expect(first.current()).toBe(false);
+    first.dispose();
+    const second = captureEditorSelection();
+    textarea.setSelectionRange(0, 1);
+    expect(second.current()).toBe(false);
+    second.dispose();
+    const third = captureEditorSelection();
+    textarea.replaceWith(textarea.cloneNode(true));
+    expect(third.current()).toBe(false);
+    third.dispose();
+  });
+
+  it('uses CodeMirror state and detects edits even when undone before completion', async () => {
+    const { captureEditorSelection } = await import('../src/editor');
+    document.body.innerHTML =
+      '<textarea id="wpTextbox1"></textarea><div class="CodeMirror"></div>';
+    const listeners = new Map<string, () => void>();
+    const host = document.querySelector('.CodeMirror') as HTMLElement & {
+      CodeMirror: unknown;
+    };
+    let selection = [{ anchor: { line: 0, ch: 1 }, head: { line: 0, ch: 1 } }];
+    host.CodeMirror = {
+      getTextArea: () => document.querySelector('#wpTextbox1'),
+      getValue: () => '原文',
+      listSelections: () => selection,
+      on: (event: string, fn: () => void) => listeners.set(event, fn),
+      off: (event: string) => listeners.delete(event),
+    };
+    const first = captureEditorSelection();
+    expect(first.current()).toBe(true);
+    listeners.get('change')!();
+    expect(first.current()).toBe(false);
+    first.dispose();
+    expect(listeners.size).toBe(0);
+    const second = captureEditorSelection();
+    selection = [{ anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 1 } }];
+    expect(second.current()).toBe(false);
+    second.dispose();
+  });
+});

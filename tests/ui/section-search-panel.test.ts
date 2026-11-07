@@ -38,7 +38,12 @@ function mount() {
     search: vi.fn(() => [page]),
     sectionIntent: vi.fn(),
     searchSections: vi.fn(() => [first, second]),
-    resolveSection: vi.fn(async (_result: SectionSearchResult) => undefined),
+    resolveSection: vi.fn(async (result: SectionSearchResult) => ({
+      ...result,
+      needsResolution: false,
+      fragment: '你知道吗',
+    })),
+    prefetchSectionLinks: vi.fn(),
     sectionCurrent: vi.fn((_result: SectionSearchResult) => true),
     searchFiles: vi.fn(() => []),
     searchLua: vi.fn(() => []),
@@ -158,26 +163,28 @@ it('keeps same-page sections distinct through background refresh and invalidates
   panel.destroy();
 });
 
-it('blocks unresolved actions and does not perform an action after explicit resolution', async () => {
+it('completes the requested copy after preparing once and ignores duplicate activation', async () => {
   const { panel, callbacks, input } = mount();
+  let finish!: () => void;
+  callbacks.resolveSection.mockImplementation(async (result) => {
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return { ...result, needsResolution: false, fragment: '你知道吗' };
+  });
   await type(input, '#你知');
-  for (const options of [{}, { ctrlKey: true }, { shiftKey: true }]) {
-    input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, ...options }),
-    );
-  }
-  panel.actions.copyLink(first);
-  expect(callbacks.copyTitle).not.toHaveBeenCalled();
-  expect(callbacks.open).not.toHaveBeenCalled();
-  expect(callbacks.insert).not.toHaveBeenCalled();
-  expect(callbacks.copy).not.toHaveBeenCalled();
-  panel.actions.resolveSection(first);
-  await Promise.resolve();
-  await nextTick();
+  panel.actions.copy(first);
+  panel.actions.copy(first);
   expect(callbacks.resolveSection).toHaveBeenCalledOnce();
   expect(callbacks.copyTitle).not.toHaveBeenCalled();
-  expect(callbacks.open).not.toHaveBeenCalled();
-  expect(callbacks.insert).not.toHaveBeenCalled();
+  finish();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.copyTitle).toHaveBeenCalledExactlyOnceWith({
+    ...first,
+    needsResolution: false,
+    fragment: '你知道吗',
+  });
+  expect(panel.state.resolvingSections).toEqual([]);
   panel.destroy();
 });
 
@@ -236,7 +243,7 @@ it('renders independently counted page and section groups and binds the clicked 
   expect(root.querySelectorAll('.result')).toHaveLength(3);
   expect(root.querySelector('.results')?.textContent).toContain('页面 · 1');
   expect(root.querySelector('.results')?.textContent).toContain('小节 · 2');
-  expect(root.querySelectorAll('.resolve-section')).toHaveLength(2);
+  expect(root.querySelectorAll('.resolve-section')).toHaveLength(0);
   root.querySelector<HTMLButtonElement>('.view-sections')!.click();
   await nextTick();
   expect(input.value).toBe('地形扫描仪#');
@@ -256,41 +263,41 @@ it('renders independently counted page and section groups and binds the clicked 
   panel.destroy();
 });
 
-it('exposes explicit resolution and leaves unresolved target actions unavailable', async () => {
+it('keeps normal actions available while preparing and offers retry only after a failure', async () => {
   const { panel, root, input, callbacks } = mount();
+  callbacks.resolveSection.mockRejectedValueOnce(new Error('offline'));
   await type(input, '#你知');
-  expect(root.querySelectorAll('.resolve-section')).toHaveLength(2);
-  expect(root.querySelectorAll('.open-section-page')).toHaveLength(2);
+  expect(root.querySelector('.resolve-section')).toBeNull();
+  expect(root.querySelector('.open-section-page')).toBeNull();
   expect(
     root.querySelectorAll('.open-result, .copy-result, .insert-result'),
-  ).toHaveLength(0);
-  root.querySelector<HTMLButtonElement>('.resolve-section')!.click();
-  await Promise.resolve();
-  await nextTick();
-  expect(callbacks.resolveSection).toHaveBeenCalledWith(first);
-  expect(callbacks.copyTitle).not.toHaveBeenCalled();
-  expect(callbacks.open).not.toHaveBeenCalled();
-  expect(callbacks.insert).not.toHaveBeenCalled();
+  ).toHaveLength(6);
+  root.querySelector<HTMLButtonElement>('.copy-result')!.click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.copy).not.toHaveBeenCalled();
+  expect(root.querySelector('.result')?.textContent).toContain('链接暂不可用');
+  expect(root.querySelector('.open-section-page')).not.toBeNull();
+  root.querySelector<HTMLButtonElement>('.retry-section')!.click();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.copy).toHaveBeenCalledOnce();
+  expect(root.querySelector('.retry-section')).toBeNull();
   panel.destroy();
 });
 
-it('requires a separate user action after resolution before copying the resolved section', async () => {
-  const { panel, root, input, callbacks } = mount();
-  const resolved = { ...first, needsResolution: false, fragment: '你知道吗' };
-  callbacks.resolveSection.mockImplementation(async () => {
-    callbacks.searchSections.mockReturnValue([resolved, second]);
-  });
+it('sends results and explicit selection to prefetch without executing actions', async () => {
+  const { panel, input, callbacks } = mount();
   await type(input, '#你知');
-  root.querySelector<HTMLButtonElement>('.resolve-section')!.click();
-  await Promise.resolve();
-  await vi.advanceTimersByTimeAsync(0);
-  await nextTick();
+  expect(callbacks.prefetchSectionLinks).toHaveBeenLastCalledWith([
+    first,
+    second,
+  ]);
+  panel.actions.select(1);
+  expect(callbacks.prefetchSectionLinks).toHaveBeenLastCalledWith(
+    [first, second],
+    second,
+  );
+  expect(callbacks.resolveSection).not.toHaveBeenCalled();
   expect(callbacks.copyTitle).not.toHaveBeenCalled();
-  expect(callbacks.open).not.toHaveBeenCalled();
-  expect(callbacks.insert).not.toHaveBeenCalled();
-  const primary = root.querySelector<HTMLButtonElement>('.result-primary')!;
-  primary.click();
-  expect(callbacks.copyTitle).toHaveBeenCalledWith(resolved);
   panel.destroy();
 });
 
@@ -389,7 +396,7 @@ it('renders the occurrence number for repeated section titles and omits it for u
 });
 
 it.each(['Shift+Enter', '复制插入内容', '打开', 'Enter'] as const)(
-  'refuses %s when the resolved target has expired, refreshes the row and keeps the panel open',
+  'refuses %s when the source changed during preparation',
   async (action) => {
     const { panel, callbacks, root, input } = mount();
     const resolved = {
@@ -402,6 +409,7 @@ it.each(['Shift+Enter', '复制插入内容', '打开', 'Enter'] as const)(
     await type(input, '#你知');
     expect(root.querySelector('.resolve-section')).toBeNull();
     callbacks.sectionCurrent.mockReturnValue(false);
+    callbacks.resolveSection.mockRejectedValue(new Error('小节已更新'));
     callbacks.searchSections.mockReturnValue([{ ...first, sourceSequence: 6 }]);
     if (action === 'Shift+Enter' || action === 'Enter') {
       input.dispatchEvent(
@@ -418,7 +426,7 @@ it.each(['Shift+Enter', '复制插入内容', '打开', 'Enter'] as const)(
         )!
         .click();
     }
-    await nextTick();
+    await vi.advanceTimersByTimeAsync(0);
     expect(callbacks.sectionCurrent).toHaveBeenCalledWith(resolved);
     expect(callbacks.searchSections).toHaveBeenLastCalledWith(
       '#你知',
@@ -430,9 +438,113 @@ it.each(['Shift+Enter', '复制插入内容', '打开', 'Enter'] as const)(
     expect(callbacks.copyTitle).not.toHaveBeenCalled();
     expect(callbacks.open).not.toHaveBeenCalled();
     expect(panel.state.visible).toBe(true);
-    expect(panel.state.status).toContain('过期');
-    expect(root.querySelector('.resolve-section')).not.toBeNull();
-    expect(root.querySelector('.result')?.textContent).toContain('链接待核对');
+    expect(panel.state.status).toContain('小节已更新');
+    expect(root.querySelector('.retry-section')).not.toBeNull();
     panel.destroy();
   },
 );
+
+it.each(['query', 'close', 'selection', 'mode', 'source'] as const)(
+  'cancels a deferred action after %s changes',
+  async (change) => {
+    const { panel, input, callbacks } = mount();
+    let finish!: () => void;
+    callbacks.resolveSection.mockImplementation(async (result) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { ...result, needsResolution: false, fragment: '你知道吗' };
+    });
+    await type(input, '#你知');
+    panel.actions.copy(first);
+    if (change === 'query') {
+      await type(input, '#其他');
+      await type(input, '#你知');
+    }
+    if (change === 'close') {
+      panel.close();
+      panel.open();
+    }
+    if (change === 'selection') {
+      panel.actions.select(1);
+      panel.actions.select(0);
+    }
+    if (change === 'mode') {
+      panel.state.mode = 'content';
+      panel.actions.mode();
+    }
+    if (change === 'source') {
+      callbacks.searchSections.mockReturnValue([{ ...first, revisionId: 12 }]);
+      panel.refreshResults();
+    }
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callbacks.copyTitle).not.toHaveBeenCalled();
+    expect(panel.state.failedSections).toEqual([]);
+    panel.destroy();
+  },
+);
+
+it.each(['unchanged', 'text', 'selection'] as const)(
+  'checks the editor before delayed insertion: %s',
+  async (change) => {
+    document.body.innerHTML = '<textarea id="wpTextbox1">原文</textarea>';
+    const { panel, input, callbacks } = mount();
+    const editor = document.querySelector<HTMLTextAreaElement>('#wpTextbox1')!;
+    let finish!: () => void;
+    callbacks.resolveSection.mockImplementation(async (result) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { ...result, needsResolution: false, fragment: '你知道吗' };
+    });
+    await type(input, '#你知');
+    panel.actions.insert(first);
+    if (change === 'text') {
+      editor.value = '新文';
+      editor.dispatchEvent(new Event('input'));
+      editor.value = '原文';
+    }
+    if (change === 'selection') editor.setSelectionRange(0, 1);
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callbacks.insert).toHaveBeenCalledTimes(
+      change === 'unchanged' ? 1 : 0,
+    );
+    expect(panel.state.visible).toBe(change !== 'unchanged');
+    panel.destroy();
+    editor.remove();
+  },
+);
+
+it('searches the latest input before accepting Enter while debounce is pending', async () => {
+  const { panel, input, callbacks } = mount();
+  await type(input, '#你知');
+  callbacks.searchSections.mockReturnValue([second]);
+  input.value = '#新的';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.resolveSection).toHaveBeenCalledExactlyOnceWith(second);
+  expect(callbacks.copyTitle).toHaveBeenCalledExactlyOnceWith({
+    ...second,
+    needsResolution: false,
+    fragment: '你知道吗',
+  });
+  panel.destroy();
+});
+
+it('does not act on an old row clicked before the query debounce completes', async () => {
+  const { panel, input, callbacks } = mount();
+  await type(input, '#你知');
+  callbacks.searchSections.mockReturnValue([second]);
+  input.value = '#新的';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  panel.actions.copy(first);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(callbacks.resolveSection).not.toHaveBeenCalled();
+  expect(callbacks.copyTitle).not.toHaveBeenCalled();
+  panel.destroy();
+});

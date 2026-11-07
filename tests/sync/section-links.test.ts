@@ -185,7 +185,7 @@ it.each(['revision', 'source', 'delete', 'redirect'])(
   },
 );
 
-it('expires confirmations after five minutes and permits retry after network failure', async () => {
+it('refreshes after five minutes, retains bounded grace, and permits retry after network failure', async () => {
   const p = page();
   await database.pages.put(p);
   let fail = true;
@@ -199,9 +199,16 @@ it('expires confirmations after five minutes and permits retry after network fai
   await resolver.resolve(result(p));
   const now = Date.now();
   vi.spyOn(Date, 'now').mockReturnValue(now + 300_001);
+  expect(resolver.needsRefresh(result(p))).toBe(true);
+  expect(resolver.getFragment(result(p))).toBe('A_&_B');
+  fail = true;
+  await expect(resolver.resolve(result(p))).rejects.toThrow();
+  expect(resolver.getFragment(result(p))).toBe('A_&_B');
+  vi.spyOn(Date, 'now').mockReturnValue(now + 900_001);
   expect(resolver.getFragment(result(p))).toBeUndefined();
+  fail = false;
   await resolver.resolve(result(p));
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(4);
   vi.restoreAllMocks();
 });
 
@@ -414,4 +421,19 @@ it('refuses malformed attribute syntax instead of skipping a later ID', async ()
   await expect(
     new SectionLinkResolver(database, api).resolve(result(p)),
   ).rejects.toThrow('唯一');
+});
+
+it('discards stale evidence when a successful refresh reveals an anchor conflict', async () => {
+  const p = page();
+  await database.pages.put(p);
+  const data = payload();
+  const { api } = apiWith(() => data);
+  const resolver = new SectionLinkResolver(database, api);
+  await resolver.resolve(result(p));
+  const now = Date.now();
+  vi.spyOn(Date, 'now').mockReturnValue(now + 300_001);
+  data.parse.sections[1]!.anchor = data.parse.sections[0]!.anchor;
+  await expect(resolver.resolve(result(p))).rejects.toThrow('唯一');
+  expect(resolver.getFragment(result(p))).toBeUndefined();
+  vi.restoreAllMocks();
 });

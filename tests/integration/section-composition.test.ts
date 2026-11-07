@@ -314,14 +314,15 @@ it('composes real section search, actions, resolver and selected content synchro
     root.querySelector<HTMLButtonElement>('.toggle')!.click();
     query('复杂页面#待核对');
     await vi.waitFor(() =>
-      expect(root.querySelector('.resolve-section')).not.toBeNull(),
+      expect(root.querySelector('.result-title')?.textContent).toContain(
+        '待核对',
+      ),
     );
-    root.querySelector<HTMLButtonElement>('.resolve-section')!.click();
-    await vi.waitFor(() =>
-      expect(root.querySelector('.resolve-section')).toBeNull(),
-    );
+    expect(root.querySelector('.resolve-section')).toBeNull();
     root.querySelector<HTMLButtonElement>('.result-primary')!.click();
-    expect(clipboard).toHaveBeenLastCalledWith('复杂页面#待核对', 'text');
+    await vi.waitFor(() =>
+      expect(clipboard).toHaveBeenLastCalledWith('复杂页面#待核对', 'text'),
+    );
     expect(
       fetcher.mock.calls.some(
         ([url]) =>
