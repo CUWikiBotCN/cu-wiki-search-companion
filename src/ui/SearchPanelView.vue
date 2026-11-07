@@ -4,7 +4,7 @@ import { computed } from 'vue';
 import type { SearchPanel } from './search-panel';
 import PanelResults from './PanelResults.vue';
 import PanelMaintenance from './PanelMaintenance.vue';
-import { SEARCH_MODES, isSectionResult } from './search-panel-model';
+import { SEARCH_MODES } from './search-panel-model';
 const MIRROR_REFRESH_HELP =
   '重新同步本地数据（需要联网）：执行全量页面对账，刷新 Data 代码缓存，并修复或续传正文、Lua 与已加载的 CSS 队列；不会清空本地镜像，也不会修改 wiki 页面。';
 const FILE_REFRESH_HELP =
@@ -131,24 +131,9 @@ const refreshHelp = computed(() =>
         ></select
       >
     </div>
-    <div v-if="state.mode === 'title'" class="section-controls">
-      <label
-        ><input
-          class="include-sections"
-          type="checkbox"
-          :checked="state.includeSections"
-          @change="actions.toggleSections"
-          aria-describedby="cu-section-hint"
-        />包含小节</label
-      >
-      <span id="cu-section-hint"
-        >{{
-          state.sectionSyntax && !state.manualIncludeSections
-            ? '由 # 临时启用 · '
-            : ''
-        }}Ctrl+Alt+S 切换；例：地形 #你知</span
-      >
-    </div>
+    <p v-if="state.mode === 'title'" class="section-hint" id="cu-section-hint"
+      >用 # 搜小节：地形#你知；Ctrl+Alt+S 查看所选页小节</p
+    >
     <div class="panel-body">
       <section
         v-if="state.mode === 'title' && state.includeSections"
@@ -158,7 +143,8 @@ const refreshHelp = computed(() =>
         <p v-if="state.sectionPageId !== undefined"
           >仅此页：{{ state.sectionPageTitle }}</p
         >
-        <p v-else-if="state.sectionSyntax && state.query.split('#')[0]?.trim()"
+        <p
+          v-else-if="state.includeSections && state.query.split('#')[0]?.trim()"
           >页面筛选：{{ state.query.split('#')[0]?.trim() }}</p
         >
         <p role="status">{{
@@ -193,13 +179,6 @@ const refreshHelp = computed(() =>
           title="联网更新共享正文缓存，包含 wikitext、BSON 和 Lua 页面，不限当前筛选范围"
           @click="actions.fetchSectionPage()"
           >下载/更新共享正文源码</button
-        >
-        <button
-          v-if="!state.sectionSyntax && state.results.some(isSectionResult)"
-          class="action jump-sections"
-          type="button"
-          @click="actions.jumpSections"
-          >跳至小节结果</button
         >
       </section>
       <p v-if="state.mode === 'css'" class="css-search-help"
@@ -318,6 +297,7 @@ const refreshHelp = computed(() =>
         <span><kbd>Alt+K</kbd> 开关</span><span><kbd>Enter</kbd> 复制</span>
         <span><kbd>Ctrl/Cmd+Enter</kbd> 打开</span
         ><span><kbd>Shift+Enter</kbd> 插入</span>
+        <span><kbd>↑↓</kbd> 换结果</span><span><kbd>←→</kbd> 换结果动作</span>
         <span><kbd>Tab</kbd> 切换焦点</span><span><kbd>Esc</kbd> 关闭</span>
       </span>
     </footer>

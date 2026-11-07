@@ -167,7 +167,7 @@ describe('SearchPanel result actions', () => {
       [...root.querySelectorAll<HTMLElement>('.result .action')].map(
         (action) => action.textContent,
       ),
-    ).toEqual(['查看小节', '打开', '复制插入内容', '插入']);
+    ).toEqual(['打开', '复制插入内容', '插入']);
 
     const primary = root.querySelector<HTMLButtonElement>(
       '.insert.result-primary',
@@ -921,9 +921,7 @@ describe('SearchPanel keyboard lifecycle', () => {
       handle.dispatchEvent(backward);
       await nextTick();
       expect(backward.defaultPrevented).toBe(true);
-      const sectionToggle =
-        root.querySelector<HTMLInputElement>('.include-sections')!;
-      expect(root.activeElement).toBe(sectionToggle);
+      expect(root.activeElement).toBe(mode);
 
       const forward = new KeyboardEvent('keydown', {
         key: 'Tab',
@@ -931,7 +929,7 @@ describe('SearchPanel keyboard lifecycle', () => {
         composed: true,
         cancelable: true,
       });
-      sectionToggle.dispatchEvent(forward);
+      mode.dispatchEvent(forward);
       await nextTick();
       expect(forward.defaultPrevented).toBe(true);
       expect(root.activeElement).toBe(handle);
@@ -2368,4 +2366,146 @@ it('reveals the A4 launcher before synchronously returning focus to it', async (
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
   focus.mockRestore();
   panel.destroy();
+});
+
+describe('panel-owned keyboard navigation', () => {
+  const rows: TitleSearchResult[] = [
+    { id: 1, title: '页面甲', namespace: 0, namespaceName: '', score: 2 },
+    { id: 2, title: '页面乙', namespace: 0, namespaceName: '', score: 1 },
+  ];
+  const key = (
+    target: EventTarget,
+    name: string,
+    extra: KeyboardEventInit = {},
+  ) => {
+    const event = new KeyboardEvent('keydown', {
+      key: name,
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      ...extra,
+    });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  it('opens with Alt+K and handles query arrows before document capture shortcuts, once per key', async () => {
+    const site = vi.fn((event: Event) => event.stopPropagation());
+    document.addEventListener('keydown', site, true);
+    const panel = new SearchPanel(
+      maintenanceCallbacks({ search: vi.fn(() => rows) }),
+    );
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    try {
+      key(document.body, 'k', { altKey: true });
+      await nextTick();
+      expect(root.activeElement).toBe(input);
+      input.value = '页面';
+      panel.refreshResults();
+      await nextTick();
+      const down = key(input, 'ArrowDown');
+      await nextTick();
+      expect(down.defaultPrevented).toBe(true);
+      expect(panel.state.selectedIndex).toBe(1);
+      key(input, 'ArrowUp');
+      await nextTick();
+      expect(panel.state.selectedIndex).toBe(0);
+      expect(site).not.toHaveBeenCalled();
+      key(document.body, 'ArrowDown');
+      expect(site).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      document.removeEventListener('keydown', site, true);
+    }
+  });
+
+  it('navigates result rows and preserves the action column without leaking to document shortcuts', async () => {
+    const panel = new SearchPanel(
+      maintenanceCallbacks({ search: vi.fn(() => rows) }),
+    );
+    panel.open();
+    await nextTick();
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    input.value = '页面';
+    panel.refreshResults();
+    await nextTick();
+    const primaries = [
+      ...root.querySelectorAll<HTMLButtonElement>('.result-primary'),
+    ];
+    const opens = [...root.querySelectorAll<HTMLButtonElement>('.open-result')];
+    const copies = [
+      ...root.querySelectorAll<HTMLButtonElement>('.copy-result'),
+    ];
+    const site = vi.fn();
+    document.addEventListener('keydown', site, true);
+    try {
+      primaries[0]!.focus();
+      key(primaries[0]!, 'ArrowDown');
+      await nextTick();
+      expect(root.activeElement).toBe(primaries[1]);
+      expect(panel.state.selectedIndex).toBe(1);
+      key(primaries[1]!, 'ArrowRight');
+      await nextTick();
+      expect(root.activeElement).toBe(opens[1]);
+      key(opens[1]!, 'ArrowUp');
+      await nextTick();
+      expect(root.activeElement).toBe(opens[0]);
+      key(opens[0]!, 'ArrowRight');
+      await nextTick();
+      expect(root.activeElement).toBe(copies[0]);
+      key(copies[0]!, 'ArrowLeft');
+      await nextTick();
+      expect(root.activeElement).toBe(opens[0]);
+      expect(key(opens[0]!, 'Enter').defaultPrevented).toBe(false);
+      expect(site).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      document.removeEventListener('keydown', site, true);
+    }
+  });
+
+  it('keeps native input and select arrows while consuming empty-result navigation', async () => {
+    const panel = new SearchPanel(maintenanceCallbacks());
+    panel.open();
+    await nextTick();
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    const mode = root.querySelector<HTMLSelectElement>('.mode')!;
+    expect(key(input, 'ArrowLeft').defaultPrevented).toBe(false);
+    expect(key(input, 'ArrowRight').defaultPrevented).toBe(false);
+    expect(key(input, 'ArrowDown', { shiftKey: true }).defaultPrevented).toBe(
+      false,
+    );
+    expect(
+      key(input, 'ArrowDown', { isComposing: true }).defaultPrevented,
+    ).toBe(false);
+    expect(key(mode, 'ArrowDown').defaultPrevented).toBe(false);
+    expect(key(input, 'ArrowDown').defaultPrevented).toBe(true);
+    panel.destroy();
+  });
+
+  it('uses the focused page for the sections shortcut and returns focus to its # query', async () => {
+    const panel = new SearchPanel(
+      maintenanceCallbacks({ search: vi.fn(() => rows) }),
+    );
+    panel.open();
+    await nextTick();
+    const root = document.querySelector('#cu-wiki-search-host')!.shadowRoot!;
+    const input = root.querySelector<HTMLInputElement>('.query')!;
+    input.value = '页面';
+    panel.refreshResults();
+    await nextTick();
+    const second = root.querySelectorAll<HTMLButtonElement>('.open-result')[1]!;
+    second.focus();
+    key(second, 's', { ctrlKey: true, altKey: true });
+    await nextTick();
+    expect(panel.state.sectionPageId).toBe(2);
+    expect(input.value).toBe('页面乙#');
+    expect(root.activeElement).toBe(input);
+    expect(root.querySelector('.view-sections')).toBeNull();
+    expect(root.querySelector('.include-sections')).toBeNull();
+    panel.destroy();
+  });
 });

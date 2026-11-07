@@ -656,24 +656,13 @@ kbd {
   }
 }
 
-.section-controls,
+.section-hint,
 .section-coverage {
   padding: 6px 12px;
   font-size: 12px;
 }
-.section-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  align-items: center;
-}
-.section-controls label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.section-controls span {
-  color: #aaa;
+.section-hint {
+  margin: 0;
 }
 .section-coverage p {
   margin: 4px 0;

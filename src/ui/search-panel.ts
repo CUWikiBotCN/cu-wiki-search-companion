@@ -109,15 +109,15 @@ export class SearchPanel {
       return;
     }
     owner.handleGlobalShortcut(event);
+    if (owner.state.visible && event.composedPath().includes(owner.panel))
+      owner.handleKeydown(event);
   };
 
   readonly state = shallowReactive({
     visible: false,
     mode: 'title' as SearchMode,
     query: '',
-    manualIncludeSections: false,
     includeSections: false,
-    sectionSyntax: false,
     sectionPageId: undefined as number | undefined,
     sectionPageTitle: '',
     sectionPageNamespace: undefined as number | undefined,
@@ -338,6 +338,7 @@ export class SearchPanel {
       SearchPanel.shortcutWindow?.removeEventListener(
         'keydown',
         SearchPanel.globalShortcutKeydown,
+        true,
       );
       SearchPanel.shortcutOwner = undefined;
       SearchPanel.shortcutWindow = undefined;
@@ -444,11 +445,12 @@ export class SearchPanel {
       this.cancelSectionAction();
       this.refreshResults();
     },
-    toggleSections: () => this.toggleSections(),
     showSections: (result: SearchPanelResult) => {
       this.cancelSectionAction();
-      if ('kind' in result || this.state.mode !== 'title' || result.isRedirect)
-        return;
+      if (this.state.mode !== 'title') return;
+      if ('kind' in result) {
+        if (result.kind !== 'section') return;
+      } else if (result.isRedirect) return;
       this.state.sectionPageId = result.id;
       this.state.sectionPageNamespace = result.namespace;
       this.state.sectionPageTitle = result.title;
@@ -474,13 +476,6 @@ export class SearchPanel {
     openSectionPage: (result: SectionSearchResult) => {
       this.cancelSectionAction();
       this.callbacks.openSectionPage?.(result);
-    },
-    jumpSections: () => {
-      const first = this.state.results.findIndex(isSectionResult);
-      if (first >= 0) {
-        this.state.selectedIndex = first;
-        this.updateSelection();
-      }
     },
     mode: () => {
       this.cancelSectionAction();
@@ -509,8 +504,13 @@ export class SearchPanel {
       SearchPanel.shortcutWindow?.removeEventListener(
         'keydown',
         SearchPanel.globalShortcutKeydown,
+        true,
       );
-      window.addEventListener('keydown', SearchPanel.globalShortcutKeydown);
+      window.addEventListener(
+        'keydown',
+        SearchPanel.globalShortcutKeydown,
+        true,
+      );
       SearchPanel.shortcutWindow = window;
     }
     SearchPanel.shortcutOwner = new WeakRef(panel);
@@ -585,7 +585,7 @@ export class SearchPanel {
     const mode = this.state.mode;
     switch (mode) {
       case 'title': {
-        const pages = this.state.sectionSyntax
+        const pages = this.state.includeSections
           ? []
           : this.callbacks.search(query, namespace);
         const sections = this.state.includeSections
@@ -687,6 +687,14 @@ export class SearchPanel {
 
   private handleKeydown(event: KeyboardEvent): void {
     if (!this.state.visible || this.composing || event.isComposing) return;
+    // Window capture sees the shadow host as target; the composed path retains
+    // the actual input/button. Local handling also supports non-composed events.
+    const target = event.composedPath()[0] ?? event.target;
+    const row =
+      target instanceof Element ? target.closest<HTMLElement>('.result') : null;
+    const focusedIndex =
+      row?.querySelector<HTMLButtonElement>('.result-primary')?.dataset.index;
+
     if (
       event.key.toLowerCase() === 's' &&
       event.altKey &&
@@ -695,11 +703,19 @@ export class SearchPanel {
       !event.shiftKey &&
       !event.repeat &&
       !event.getModifierState('AltGraph') &&
-      this.state.mode === 'title'
+      this.state.mode === 'title' &&
+      (target === this.input || Boolean(row))
     ) {
       event.preventDefault();
-      event.stopPropagation();
-      this.toggleSections();
+      event.stopImmediatePropagation();
+      if (!this.sameSearchConditions()) this.performSearch();
+      const result =
+        this.state.results[
+          focusedIndex === undefined
+            ? this.state.selectedIndex
+            : Number(focusedIndex)
+        ];
+      if (result) this.actions.showSections(result);
       return;
     }
     if (
@@ -713,18 +729,18 @@ export class SearchPanel {
     }
     if (event.key === 'Escape') {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       if (this.geometry.finishDrag(true)) return;
       this.close();
       return;
     }
     const primary =
-      event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>('.result-primary')
+      target instanceof Element
+        ? target.closest<HTMLButtonElement>('.result-primary')
         : null;
-    if (event.key === 'Enter' && (event.target === this.input || primary)) {
+    if (event.key === 'Enter' && (target === this.input || primary)) {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       if (
         event.altKey ||
         event.getModifierState('AltGraph') ||
@@ -732,7 +748,7 @@ export class SearchPanel {
         (event.shiftKey && (event.ctrlKey || event.metaKey))
       )
         return;
-      if (event.target === this.input && !this.sameSearchConditions())
+      if (target === this.input && !this.sameSearchConditions())
         this.performSearch();
       const result =
         this.state.results[
@@ -745,32 +761,71 @@ export class SearchPanel {
       return;
     }
     if (
-      event.target !== this.input ||
       event.altKey ||
       event.ctrlKey ||
       event.metaKey ||
-      event.shiftKey
+      event.shiftKey ||
+      event.getModifierState('AltGraph')
     )
       return;
+    if (target !== this.input && !row) return;
+    if (event.key === 'Enter' && row) {
+      event.stopImmediatePropagation();
+      return;
+    }
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && row) {
+      const buttons = [
+        ...row.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+      ];
+      const at = buttons.indexOf(target as HTMLButtonElement);
+      if (at < 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      buttons[
+        Math.max(
+          0,
+          Math.min(
+            buttons.length - 1,
+            at + (event.key === 'ArrowRight' ? 1 : -1),
+          ),
+        )
+      ]?.focus();
+      return;
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (target === this.input && !this.sameSearchConditions())
+      this.performSearch();
     if (!this.state.results.length) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.state.selectedIndex =
-        (this.state.selectedIndex + 1) % this.state.results.length;
-      this.updateSelection();
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      event.stopPropagation();
-      this.state.selectedIndex =
-        (this.state.selectedIndex - 1 + this.state.results.length) %
-        this.state.results.length;
-      this.updateSelection();
+    const at =
+      focusedIndex === undefined
+        ? this.state.selectedIndex
+        : Number(focusedIndex);
+    this.state.selectedIndex =
+      (at + (event.key === 'ArrowDown' ? 1 : -1) + this.state.results.length) %
+      this.state.results.length;
+    this.updateSelection();
+    if (row) {
+      const selector =
+        target instanceof Element && target.matches('.action')
+          ? [...target.classList].find((name) => name !== 'action')
+          : 'result-primary';
+      const nextRow = this.resultList
+        .querySelector<HTMLButtonElement>(
+          `.result-primary[data-index="${this.state.selectedIndex}"]`,
+        )
+        ?.closest('.result');
+      (
+        nextRow?.querySelector<HTMLButtonElement>(
+          `.${selector}:not(:disabled)`,
+        ) ?? nextRow?.querySelector<HTMLButtonElement>('.result-primary')
+      )?.focus();
     }
   }
 
   private cycleFocus(event: KeyboardEvent): void {
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     const controls = [
       ...this.panel.querySelectorAll<HTMLElement>(
         'button, input, select, textarea, a[href], [tabindex]',
@@ -809,7 +864,7 @@ export class SearchPanel {
       return;
     }
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     if (!this.state.visible) this.open();
     else this.close();
   }
@@ -825,11 +880,8 @@ export class SearchPanel {
       this.state.sectionPageId = undefined;
       this.state.sectionPageTitle = '';
     }
-    this.state.sectionSyntax =
-      this.state.mode === 'title' && parsed.hasSeparator;
     this.state.includeSections =
-      this.state.mode === 'title' &&
-      (this.state.manualIncludeSections || parsed.hasSeparator);
+      this.state.mode === 'title' && parsed.hasSeparator;
     this.callbacks.sectionIntent?.({
       active: this.state.visible && this.state.includeSections,
       query: this.input.value,
@@ -838,20 +890,6 @@ export class SearchPanel {
         : undefined,
       pageId: this.state.sectionPageId,
     });
-  }
-
-  private toggleSections(): void {
-    this.cancelSectionAction();
-    if (this.state.mode !== 'title' || this.composing) return;
-    const enabled = !this.state.includeSections;
-    this.state.manualIncludeSections = enabled;
-    if (!enabled && this.state.sectionSyntax) {
-      this.state.query = parseSectionQuery(this.input.value).pageQuery;
-      this.input.value = this.state.query;
-      this.state.sectionPageId = undefined;
-      this.state.sectionPageTitle = '';
-    }
-    this.refreshResults();
   }
 
   private cancelSectionAction(): void {

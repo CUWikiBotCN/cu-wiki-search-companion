@@ -229,15 +229,6 @@ function label(result: SearchPanelResult): string {
             </span>
           </div>
           <span class="actions">
-            <button
-              v-if="
-                mode === 'title' && !('kind' in result) && !result.isRedirect
-              "
-              class="action view-sections"
-              type="button"
-              @click.stop="actions.showSections(result)"
-              >查看小节</button
-            >
             <template
               v-if="
                 isSectionResult(result) &&

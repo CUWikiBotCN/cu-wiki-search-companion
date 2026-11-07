@@ -85,14 +85,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it('defaults to pages, and # temporarily enables sections without overwriting the manual choice', async () => {
-  const { panel, callbacks, input } = mount();
+it('uses # as the only section scope and restores page search when it is removed', async () => {
+  const { panel, callbacks, input, root } = mount();
   await type(input, '地形');
   expect(panel.state.includeSections).toBe(false);
   expect(callbacks.searchSections).not.toHaveBeenCalled();
+  expect(root.querySelector('.include-sections')).toBeNull();
   await type(input, '地形#你知');
   expect(panel.state.includeSections).toBe(true);
-  expect(panel.state.manualIncludeSections).toBe(false);
   expect(panel.state.results).toEqual([first, second]);
   expect(callbacks.searchSections).toHaveBeenLastCalledWith(
     '地形#你知',
@@ -101,23 +101,6 @@ it('defaults to pages, and # temporarily enables sections without overwriting th
   );
   await type(input, '地形');
   expect(panel.state.includeSections).toBe(false);
-  expect(panel.state.results).toEqual([page]);
-  panel.actions.toggleSections();
-  await type(input, '地形#你知');
-  await type(input, '地形');
-  expect(panel.state.manualIncludeSections).toBe(true);
-  expect(panel.state.includeSections).toBe(true);
-  expect(panel.state.results).toEqual([page, first, second]);
-  panel.destroy();
-});
-
-it('turning off the active scope exits # and keeps only its left side', async () => {
-  const { panel, input } = mount();
-  await type(input, '地形 #你知');
-  panel.actions.toggleSections();
-  expect(input.value).toBe('地形');
-  expect(panel.state.includeSections).toBe(false);
-  expect(panel.state.manualIncludeSections).toBe(false);
   expect(panel.state.results).toEqual([page]);
   panel.destroy();
 });
@@ -188,8 +171,9 @@ it('completes the requested copy after preparing once and ignores duplicate acti
   panel.destroy();
 });
 
-it('only toggles with the title-mode shortcut, ignoring repeat, IME and AltGraph', async () => {
+it('binds the selected page with Ctrl+Alt+S, ignoring repeat, IME and AltGraph', async () => {
   const { panel, input } = mount();
+  await type(input, '地形');
   const key = (extra: KeyboardEventInit = {}) =>
     input.dispatchEvent(
       new KeyboardEvent('keydown', {
@@ -227,24 +211,29 @@ it('only toggles with the title-mode shortcut, ignoring repeat, IME and AltGraph
   panel.state.mode = 'content';
   panel.actions.mode();
   key();
-  expect(panel.state.manualIncludeSections).toBe(true);
+  expect(panel.state.sectionPageId).toBe(7);
   expect(panel.state.includeSections).toBe(false);
   panel.destroy();
 });
 
-it('renders independently counted page and section groups and binds the clicked page', async () => {
+it('keeps the three page actions in order and opens its sections through a shortcut only', async () => {
   const { panel, root, input, callbacks } = mount();
   await type(input, '地形');
-  const checkbox = root.querySelector<HTMLInputElement>('.include-sections')!;
-  expect(checkbox.checked).toBe(false);
-  checkbox.click();
-  await nextTick();
-  expect(checkbox.checked).toBe(true);
-  expect(root.querySelectorAll('.result')).toHaveLength(3);
-  expect(root.querySelector('.results')?.textContent).toContain('页面 · 1');
-  expect(root.querySelector('.results')?.textContent).toContain('小节 · 2');
-  expect(root.querySelectorAll('.resolve-section')).toHaveLength(0);
-  root.querySelector<HTMLButtonElement>('.view-sections')!.click();
+  expect(
+    [...root.querySelectorAll('.result .action')].map(
+      (button) => button.textContent,
+    ),
+  ).toEqual(['打开', '复制插入内容', '插入']);
+  expect(root.querySelector('.view-sections')).toBeNull();
+  expect(root.querySelector('.include-sections')).toBeNull();
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', {
+      key: 's',
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+    }),
+  );
   await nextTick();
   expect(input.value).toBe('地形扫描仪#');
   expect(root.querySelector('.section-coverage')?.textContent).toContain(
@@ -255,11 +244,11 @@ it('renders independently counted page and section groups and binds the clicked 
     undefined,
     7,
   );
-  await type(input, '地形扫描仪#你知');
   expect(root.querySelectorAll('.result')).toHaveLength(2);
-  expect(root.querySelector('.results')?.textContent).not.toContain('页面 · 1');
-  expect(root.querySelector('.results')?.textContent).toContain('地形扫描仪');
   expect(root.querySelector('.results')?.textContent).toContain('介绍');
+  await type(input, '地形');
+  expect(panel.state.includeSections).toBe(false);
+  expect(root.querySelectorAll('.result')).toHaveLength(1);
   panel.destroy();
 });
 
@@ -301,7 +290,7 @@ it('sends results and explicit selection to prefetch without executing actions',
   panel.destroy();
 });
 
-it('defers # interpretation during composition and restores manual scope after changing modes', async () => {
+it('defers # interpretation during composition and restores syntax scope after changing modes', async () => {
   const { panel, input } = mount();
   input.dispatchEvent(
     new CompositionEvent('compositionstart', { bubbles: true }),
@@ -315,7 +304,7 @@ it('defers # interpretation during composition and restores manual scope after c
   );
   await vi.advanceTimersByTimeAsync(0);
   expect(panel.state.includeSections).toBe(true);
-  expect(panel.state.manualIncludeSections).toBe(false);
+
   panel.state.mode = 'content';
   panel.actions.mode();
   expect(panel.state.includeSections).toBe(false);
